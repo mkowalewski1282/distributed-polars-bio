@@ -79,40 +79,46 @@ Ballista Scheduler
 
 ## Konieczne zmiany w polars-bio
 
-### 1. Nowa reguła: `DistributedOverlapRule`
+### 1. Nowa reguła optymalizatora dla trybu rozproszonego
 
-Istniejąca `LocalOverlapRule` zakłada że wszystkie dane są dostępne lokalnie.
-Nowa reguła musi:
-- wykryć wzorzec overlap w planie logicznym (tak samo jak `LocalOverlapRule`)
-- wygenerować plan który najpierw shuffluje dane według chromosomu (przez mechanizm
-  Ballistry), a następnie uruchamia `LocalOverlapRule` na każdej partycji niezależnie
+Istniejąca reguła optymalizatora w polars-bio zakłada że wszystkie dane są dostępne
+lokalnie i od razu podmienia plan na COITrees. Nowa reguła musi działać inaczej:
+- wykryć ten sam wzorzec (warunek nakładania interwałów)
+- wygenerować plan który **najpierw shuffluje dane według chromosomu** przez mechanizm
+  Ballistry, a następnie uruchamia istniejącą lokalną regułę (COITrees) na każdej
+  partycji niezależnie
 
-Docelowo polars-bio ma mieć **dwie reguły optymalizatora**:
-jedną dla obliczeń lokalnych (istniejąca), drugą dla rozproszonych (nowa).
+Polars-bio miałoby więc **dwie reguły optymalizatora**: jedną dla trybu lokalnego
+(istniejąca), drugą dla trybu rozproszonego (nowa).
 
-### 2. Nowy moduł: `ballista_registry`
+### 2. Konfiguracja Ballistry
 
-Kod odpowiedzialny za konfigurację Ballistry:
-- rejestracja UDFów polars-bio przez `override_function_registry`
-- rejestracja reguł optymalizatora przez `override_session_builder`
-- konfiguracja musi być identyczna dla schedulera i każdego executora
+Kod który przy starcie schedulera i każdego executora:
+- dostarcza Ballistce **rejestr funkcji genomicznych** (`override_function_registry`)
+  — żeby SQL z `overlap()` był rozpoznawany jako znana funkcja
+- dostarcza Ballistce **builder sesji z nową regułą optymalizatora** (`override_session_builder`)
+  — żeby zapytania były wykonywane przez COITrees, a nie naiwny join
 
-### 3. Serializacja planów: `PhysicalExtensionCodec`
+Konfiguracja musi być identyczna dla schedulera i każdego executora.
+
+### 3. Serializacja planów wykonania
 
 Ballista przesyła plany zapytań przez sieć w formacie protobuf. Niestandardowe
-plany wykonania (`OverlapExec`, `NearestExec`) muszą implementować
-`PhysicalExtensionCodec` — serializację i deserializację do/z protobuf.
+plany wykonania generowane przez polars-bio muszą umieć się serializować
+i deserializować — wymaga to implementacji `PhysicalExtensionCodec` oraz
+definicji odpowiednich komunikatów protobuf.
 
-Jest to najtrudniejsza część integracji. Przykład implementacji dostępny w projekcie
-[ballista_extensions](https://github.com/milenkovicm/ballista_extensions).
+Jest to najtrudniejsza część integracji. Przykład dla prostego operatora dostępny
+w projekcie [ballista_extensions](https://github.com/milenkovicm/ballista_extensions).
 
 ---
 
 ## Co pozostaje bez zmian
 
-- API użytkownika (`pb.overlap`, `pb.merge` itd.)
-- Algorytmy COITrees / SuperIntervals — działają na każdym executorze lokalnie
-- Obsługa formatów plików (BED, VCF, BAM)
+- **API użytkownika** (`pb.overlap`, `pb.merge` itd.) — bez żadnych zmian
+- **Algorytmy COITrees / SuperIntervals** — działają na każdym executorze lokalnie,
+  po tym jak dane zostaną podzielone według chromosomu
+- **Obsługa formatów plików** (BED, VCF, BAM)
 
 ---
 

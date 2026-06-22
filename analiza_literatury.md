@@ -1,3 +1,11 @@
+# Porównanie udostępnianych na otwartych licencjach rozproszonych silników zapytań pod kątem analiz danych genomicznych
+
+**Miłosz Kowalewski**
+
+Promotor: dr inż. Marek Wiewiórka
+
+---
+
 # Analiza literatury i źródeł
 
 ## Uwaga metodologiczna
