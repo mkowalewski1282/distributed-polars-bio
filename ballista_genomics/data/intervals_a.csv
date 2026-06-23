@@ -1,0 +1,6 @@
+chrom,start,end,name
+chr1,100,200,gene_A1
+chr1,150,300,gene_A2
+chr1,400,500,gene_A3
+chr2,50,150,gene_A4
+chr2,200,350,gene_A5
