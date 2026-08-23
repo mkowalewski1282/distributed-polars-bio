@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ballista = "52.0.0"
-datafusion = "52.0.0"
+ballista = { version = "53.0.0", features = ["standalone"] }
+datafusion = "=53.0.0"
+datafusion-bio-function-ranges = { git = "https://github.com/biodatageeks/datafusion-bio-functions", package = "datafusion-bio-function-ranges" }
 tokio = { version = "1", features = ["full"] }
