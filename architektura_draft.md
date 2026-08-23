@@ -1,135 +1,150 @@
 # Szkic architektury: rozszerzenie polars-bio o obliczenia rozproszone
 
+*Zaktualizowano: sierpień 2026, po doprecyzowaniu wymagań i researchu nt. aktualnego
+stanu Ballisty/Saila. Poprzednia wersja tego dokumentu zakładała odrzucenie Saila — to założenie
+było błędne, patrz niżej.*
+
 ## Kontekst
 
 Celem jest umożliwienie wykonywania genomicznych operacji interwałowych (overlap, merge,
 nearest, coverage, subtract) w środowisku rozproszonym, przy zachowaniu zoptymalizowanych
-algorytmów z polars-bio (COITrees, SuperIntervals).
+algorytmów z polars-bio (COITrees, SuperIntervals — a konkretnie: crate'a
+`datafusion-bio-function-ranges`, który polars-bio już dziś wykorzystuje jako silnik lokalny).
 
-Wybrany silnik: **Apache Ballista** (rozproszony silnik zapytań oparty na DataFusion/Rust).
+Cel projektu: **porównanie DWÓCH silników — Apache Ballista i Sail** — nie wybór
+jednego. Oba mają zostać użyte jako **runtime extension, bez forkowania** (rejestracja UDF/UDTF
+przez publiczne API silnika, nie łatanie jego źródeł).
 
-Odrzucone alternatywy:
-- **Sail** — brak mechanizmu rozszerzeń (issue #1062, w fazie dyskusji)
-- **Apache Comet** — brak zewnętrznego PhysicalOptimizerRule, wymaga JVM/Scali
-- **Apache Gluten** — oparty na Velox (C++), niezgodny ze stosem Rust/DataFusion
-- **Daft** — UDFy tylko przez Python, brak customowych reguł optymalizatora bez forka
+## Dlaczego Sail nie jest odrzucony (korekta wcześniejszego założenia)
 
----
+Wcześniejsza wersja tego dokumentu odrzucała Saila, powołując się na
+[issue lakehq/sail#1062](https://github.com/lakehq/sail/issues/1062) (brak mechanizmu FFI dla
+rozszerzeń). To niepełny obraz:
 
-## Stan obecny: polars-bio lokalnie
+- Issue #1062 dotyczy **głębokiej integracji na poziomie planu zapytania** (logical/physical
+  plan extensions, optimizer rules) — rzeczywiście niezaimplementowanej. Zamknięty 28.05.2026,
+  kontynuacja w [dyskusji #2001](https://github.com/lakehq/sail/discussions/2001) (aktywna min.
+  do 28.07.2026) — maintainerzy projektują `SailExtension`/FFI, ale to wciąż faza projektowa.
+- Sail ma jednak od dawna (PR #1519, merged) **działający mechanizm Python UDTF**
+  (Arrow-native, `spark.udtf.register(...)`), niezależny od powyższej dyskusji. To wystarcza,
+  żeby wywołać polars-bio jako funkcję na każdej partycji danych — bez forka, bez czekania na
+  FFI.
+- Zespół SedonaDB rozwiązuje analogiczny problem (spatial join ≈ interval overlap) forkiem
+  Saila (`james-willis/sail`, branch `sedona-integration`) — to potwierdza, że **głębsza
+  integracja na poziomie planu wymaga dziś forka**, ale nie dyskwalifikuje UDTF jako
+  wystarczającego, legalnego poziomu integracji dla tej pracy.
+
+**Wniosek:** Sail zostaje jako pełnoprawny kandydat, na poziomie UDTF (nie na poziomie
+optymalizatora planu — to poza zasięgiem bez forka).
+
+## Dwa różne wzorce integracji — bo Sail i Ballista to różne rodziny silników
+
+Ballista jest rozszerzeniem samego DataFusion (ta sama rodzina co polars-bio) — integracja może
+być bezpośrednia, na poziomie planu DataFusion. Sail implementuje protokół Spark Connect na
+DataFusion, ale jego jedyny dziś dostępny (bez forka) punkt rozszerzenia to Python UDTF — stąd
+integracja idzie przez pętlę wywołań, nie przez współdzielony plan.
+
+### Ballista — integracja bezpośrednia
 
 ```
-Użytkownik (Python)
+distributed_overlap(df_a, df_b, engine="ballista")     [nasz kod, POZA polars-bio]
     │
-    │  pb.overlap(df_a, df_b)
+    │  buduje plan z operatorem overlap() z crate'a datafusion-bio-function-ranges
     ▼
-polars-bio API
-    │
-    ▼
-DataFusion SessionContext (jedna maszyna)
-    │
-    │  LocalOverlapRule wykrywa warunek nakładania
-    │  → podmienia na COITrees
-    ▼
-COITrees / SuperIntervals (Rust)
-    │
-    ▼
-Polars DataFrame (wynik w RAM)
-```
-
-**Ograniczenie:** dane muszą mieścić się w pamięci RAM jednej maszyny.
-
----
-
-## Stan docelowy: polars-bio + Ballista
-
-```
-Użytkownik (Python)
-    │
-    │  pb.overlap(df_a, df_b)   ← API bez zmian
-    ▼
-polars-bio API
-    │
-    ▼
-Ballista Client
-    │  serializuje plan zapytania → przesyła do schedulera
+Klient Ballista
+    │  wysyła plan do schedulera (wymaga LogicalExtensionCodec/PhysicalExtensionCodec
+    │  dla operatora overlap — patrz sekcja "Problem serializacji planu")
     ▼
 Ballista Scheduler
+    │  repartycja danych wg chromosomu (RepartitionExec — standardowy, serializuje się "za darmo")
+    ▼
+    ├── Executor 1 (partycja: chr1) — overlap() z crate'a → COITrees lokalnie
+    ├── Executor 2 (partycja: chr2) — overlap() z crate'a → COITrees lokalnie
+    └── Executor N (partycja: chrN) — overlap() z crate'a → COITrees lokalnie
     │
-    ├── DistributedOverlapRule  [NOWE w polars-bio]
-    │       wykrywa wzorzec overlap w planie logicznym
-    │       generuje plan rozproszony:
-    │         1. shuffle danych według chromosomu (przez Ballistę)
-    │         2. na każdej partycji uruchom LocalOverlapRule
-    │         3. zbierz i zwróć wyniki
-    │
-    └── rozdziela zadania do executorów
-              │
-              ├── Executor 1 (partycja: chr1)
-              │       DataFusion + LocalOverlapRule → COITrees
-              │
-              ├── Executor 2 (partycja: chr2)
-              │       DataFusion + LocalOverlapRule → COITrees
-              │
-              └── Executor N (partycja: chrN)
-                      DataFusion + LocalOverlapRule → COITrees
+    ▼
+Wyniki zbierane i zwracane jako DataFrame
 ```
 
----
+### Sail — pętla przez UDTF
 
-## Konieczne zmiany w polars-bio
+```
+distributed_overlap(df_a, df_b, engine="sail")     [nasz kod, POZA polars-bio]
+    │
+    │  łączy się z klastrem/serwerem Sail (Spark Connect)
+    ▼
+Sail
+    │  repartycja danych wg chromosomu
+    ▼
+    ├── Partycja chr1 → UDTF (PR #1519) → WOŁA Z POWROTEM pb.overlap() (niezmieniona funkcja
+    │                                       z zainstalowanego pakietu polars-bio)
+    ├── Partycja chr2 → UDTF → pb.overlap()
+    └── Partycja chrN → UDTF → pb.overlap()
+    │
+    ▼
+Wyniki wracają przez Saila do naszego kodu → do użytkownika
+```
 
-### 1. Nowa reguła: `DistributedOverlapRule`
+Różnica kluczowa: w Ballistrze polars-bio (a właściwie jego silnik, `datafusion-bio-function-ranges`)
+staje się **częścią planu DataFusion Ballisty** (widoczną dla optymalizatora Ballisty — przynajmniej
+w teorii, po napisaniu kodeka). W Sailu polars-bio jest **czarną skrzynką wywoływaną z Pythona**
+wewnątrz partycji — Sail nie "wie", co się dzieje w środku UDTF-a.
 
-Istniejąca `LocalOverlapRule` zakłada że wszystkie dane są dostępne lokalnie.
-Nowa reguła musi:
-- wykryć wzorzec overlap w planie logicznym (tak samo jak `LocalOverlapRule`)
-- wygenerować plan który najpierw shuffluje dane według chromosomu (przez mechanizm
-  Ballistry), a następnie uruchamia `LocalOverlapRule` na każdej partycji niezależnie
+## Zakres na start: bez zmian w polars-bio
 
-Docelowo polars-bio ma mieć **dwie reguły optymalizatora**:
-jedną dla obliczeń lokalnych (istniejąca), drugą dla rozproszonych (nowa).
+**Cała powyższa logika (`distributed_overlap`, wybór `engine=`) żyje w repo pracy magisterskiej,
+nie w kodzie źródłowym polars-bio.** Wywołujemy wyłącznie publiczne, niezmienione `pb.overlap()`.
+Prawdziwa zmiana wewnątrz polars-bio (nowa reguła optymalizatora `DistributedOverlapRule`,
+rejestr silników) to opcjonalny, odłożony krok — patrz sekcja "Przyszły krok" niżej — do
+uzgodnienia na dalszym etapie, dopiero po potwierdzeniu wykonalności.
 
-### 2. Nowy moduł: `ballista_registry`
+## Problem serializacji planu (Ballista)
 
-Kod odpowiedzialny za konfigurację Ballistry:
-- rejestracja UDFów polars-bio przez `override_function_registry`
-- rejestracja reguł optymalizatora przez `override_session_builder`
-- konfiguracja musi być identyczna dla schedulera i każdego executora
+Ballista przesyła plany zapytań przez sieć w formacie protobuf. Standardowe operacje (joiny,
+filtry, `RepartitionExec`) mają wbudowany kodek. Niestandardowy operator `overlap()` z
+`datafusion-bio-function-ranges` — nie. Trzeba dostarczyć `LogicalExtensionCodec`/
+`PhysicalExtensionCodec`, które nie serializują samego algorytmu (obie strony — scheduler i
+executor — już mają go lokalnie, zarejestrowanego identycznie przy starcie przez
+`override_function_registry`/`override_session_builder`), tylko informację "które customowe API
+zostało wywołane, z jakimi argumentami" (nazwa + parametry — mały ładunek).
 
-### 3. Serializacja planów: `PhysicalExtensionCodec`
+Punkt odniesienia: [ballista_extensions](https://github.com/milenkovicm/ballista_extensions)
+(autor jest aktywnym committerem Ballisty) — przykład dodania customowego operatora bez forka.
 
-Ballista przesyła plany zapytań przez sieć w formacie protobuf. Niestandardowe
-plany wykonania (`OverlapExec`, `NearestExec`) muszą implementować
-`PhysicalExtensionCodec` — serializację i deserializację do/z protobuf.
-
-Jest to najtrudniejsza część integracji. Przykład implementacji dostępny w projekcie
-[ballista_extensions](https://github.com/milenkovicm/ballista_extensions).
-
----
+Wcześniejszy prototyp (`ballista_genomics/src/main.rs`) unikał tego problemu, używając gołego
+DataFusion zamiast prawdziwej Ballisty i naiwnego predykatu overlap (bez COITrees) zamiast
+prawdziwego silnika polars-bio — do naprawienia w Fazie A planu.
 
 ## Co pozostaje bez zmian
 
-- API użytkownika (`pb.overlap`, `pb.merge` itd.)
-- Algorytmy COITrees / SuperIntervals — działają na każdym executorze lokalnie
-- Obsługa formatów plików (BED, VCF, BAM)
+- Publiczne API polars-bio (`pb.overlap`, `pb.merge` itd.) — niezmodyfikowane.
+- Algorytmy COITrees / SuperIntervals — działają lokalnie na każdym executorze/partycji.
+- Same pakiety Ballista/Sail — używane jako zależności, nie forkowane (poza opcjonalną,
+  osobną ścieżką badawczą inspirowaną forkiem SedonaDB, nieplanowaną na start).
 
----
+## Kolejność implementacji
 
-## Kolejność implementacji (propozycja)
+1. `overlap` — najczęstsza operacja, najlepiej odwzorowuje się na shuffle-by-chromosome.
+2. `merge` — wymaga dodatkowego kroku łączenia wyników między partycjami.
+3. `nearest` — trudniejsza (może wymagać danych z sąsiednich partycji).
+4. `coverage`, `subtract` — zależnie od postępów.
 
-1. `overlap` — najczęstsza operacja, najlepiej odwzorowuje się na shuffle-by-chromosome
-2. `merge` — wymaga dodatkowego kroku łączenia wyników między partycjami
-3. `nearest` — najtrudniejsza (dane z sąsiednich chromosomów mogą być potrzebne)
-4. `coverage`, `subtract` — zależnie od postępów
+(Szczegółowa ocena trudności każdej operacji: `wnioski_claude.md`.)
 
----
+## Przyszły krok (opcjonalny, odłożony): zmiany wewnątrz polars-bio
+
+Docelowo — jeśli czas i wyniki Faz A–D na to pozwolą — integracja mogłaby zostać wbudowana w
+samo polars-bio, tak by `pb.overlap(..., engine=...)` było częścią oficjalnego API:
+
+- **Nowa reguła optymalizatora** `DistributedOverlapRule` obok istniejącej `LocalOverlapRule`
+  (polars-bio dopuszcza posiadanie kilku reguł optymalizacyjnych).
+- **Rejestr silników** (`ballista_registry`/`sail_registry`) — konfiguracja identyczna na
+  wszystkich węzłach klastra.
+- Serializacja planów jak opisano wyżej.
+
+To jest osobna decyzja do podjęcia na dalszym etapie, nie punkt startowy tej pracy.
 
 ## Otwarte pytania
 
-1. Czy `DistributedOverlapRule` i `ballista_registry` mają być częścią głównego
-   repozytorium polars-bio, czy osobnej biblioteki (np. `polars-bio-ballista`)?
-2. Strategia partycjonowania: zawsze po chromosomie, czy dynamicznie na podstawie
-   statystyk danych?
-3. Zakres pracy: implementacja prototypu dla `overlap` + analiza architektoniczna
-   pozostałych operacji, czy pełna implementacja wszystkich pięciu?
+1. Natywne rozproszone obliczenia w samym Polars (Polars Cloud) — trzecia ścieżka warta zbadania?
+2. Dostępność zasobów GCP na wydziale (budżet/projekt) — do ustalenia osobno.
