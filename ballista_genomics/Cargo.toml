@@ -8,3 +8,10 @@ ballista = { version = "53.0.0", features = ["standalone"] }
 datafusion = "=53.0.0"
 datafusion-bio-function-ranges = { git = "https://github.com/biodatageeks/datafusion-bio-functions", package = "datafusion-bio-function-ranges" }
 tokio = { version = "1", features = ["full"] }
+
+# Środowisko ma tylko 3.5GB RAM — linkowanie tej binarki (Ballista scheduler+executor
+# + cały DataFusion + bio-function-ranges) z pełnym debug info (-C debuginfo=2)
+# wykańczało swap i groziło ponownym zawieszeniem WSL (patrz OPIS.md). Wyłączenie
+# debug info drastycznie zmniejsza zużycie pamięci przez linker (rust-lld).
+[profile.dev]
+debug = false

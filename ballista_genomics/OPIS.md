@@ -27,25 +27,46 @@ tym razem faktycznie liczone przez COITrees, nie ręcznie napisany warunek.
 
 ---
 
-## Faza A.3 (W TRAKCIE): prawdziwa Ballista standalone
+## Faza A.3 (ZWERYFIKOWANA): prawdziwa Ballista standalone — błąd LogicalExtensionCodec potwierdzony
 
-`src/main.rs` w obecnej wersji próbuje uruchomić prawdziwy klaster Ballista
-(`SessionContext::standalone_with_state()`, feature `standalone` w `Cargo.toml`)
-zamiast gołego DataFusion jak poprzednio — z tym samym operatorem `overlap()`.
+`src/main.rs` uruchamia prawdziwy klaster Ballista (`SessionContext::standalone_with_state()`,
+feature `standalone` w `Cargo.toml`, sesja skonfigurowana przez `BioSessionExt::new_with_bio`)
+zamiast gołego DataFusion jak w Fazie A.2 — z tym samym operatorem `overlap()`.
+
+### Wynik (zweryfikowany, `cargo run`)
+
+Klaster startuje poprawnie (scheduler + executor in-proc, logi potwierdzają połączenie).
+Zapytanie z `overlap('intervals_a', 'intervals_b', ...)` kończy się błędem:
+
+```
+Error: Internal("failed to serialize logical plan: Context(\"Error serializing custom table
+at .../datafusion-proto-53.1.0/src/logical_plan/mod.rs:1194\",
+NotImplemented(\"LogicalExtensionCodec is not provided\"))")
+```
+
+To dokładnie ten sam problem co w poprzednim prototypie (naiwny UDF), ale teraz udokumentowany
+na PRAWDZIWEJ funkcji silnika polars-bio, nie na placeholderze. Ważny szczegół z treści błędu:
+problem dotyczy konkretnie serializacji **custom table** (`OverlapProvider` jako `TableProvider`
+zarejestrowany przez `register_udtf`) w logicznym planie — czyli potrzebny jest
+`LogicalExtensionCodec` implementujący `try_encode_table_provider`/`try_decode_table_provider`,
+nie ogólny kodek UDF-ów.
 
 ### Dlaczego to jest trudniejsze niż Faza A.2: LogicalExtensionCodec
 
 Ballista to klaster — scheduler i executory to osobne procesy/komponenty
 komunikujące się przez sieć (protobuf). Standardowe operacje DataFusion mają
-wbudowany kodek. Niestandardowy operator `overlap()` (z bio-function-ranges) —
-nie, potrzebuje własnego `LogicalExtensionCodec`/`PhysicalExtensionCodec`.
+wbudowany kodek. Niestandardowy `TableProvider` (`OverlapProvider` z
+bio-function-ranges) — nie, potrzebuje własnego `LogicalExtensionCodec`.
 
-Poprzedni prototyp (naiwny UDF) napotykał błąd nawet na placeholderze:
-```
-LogicalExtensionCodec is not provided for scalar function genomic_overlap
-```
-Obecny cel: udokumentować dokładnie ten sam problem na PRAWDZIWEJ funkcji, a
-następnie zaimplementować kodek.
+**Faza A.4 (kolejny krok, nierozpoczęty w tej sesji):** zaimplementować ten kodek. Ponieważ
+`OverlapProvider::scan()` buduje SQL dynamicznie (`session.sql(query)` w środku `scan()` —
+patrz źródło crate'a), kodek nie musi serializować gotowego planu fizycznego — wystarczy
+zserializować parametry potrzebne do odtworzenia `OverlapProvider` po drugiej stronie
+(nazwy tabel, nazwy kolumn, `filter_op`, `output_mode`) i wywołać ten sam konstruktor
+na executorze, który już ma zarejestrowane te same tabele (przy identycznej konfiguracji
+sesji scheduler+executor). To realnie ogranicza zakres pracy do małego, ręcznie pisanego
+protobuf message + `impl LogicalExtensionCodec` z ~4 polami do zakodowania, a nie
+serializacji całego drzewa planu.
 
 ### Jak podejść do implementacji kodeka
 
