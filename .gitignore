@@ -1,2 +1,6 @@
 ballista_genomics/target/
 output.txt
+*.txt
+__pycache__/
+*.pyc
+.pytest_cache/
