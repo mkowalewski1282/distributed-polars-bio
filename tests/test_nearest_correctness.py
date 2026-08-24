@@ -13,7 +13,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from tests.nearest_oracle import reference_nearest_pairs
+from tests.nearest_oracle import reference_nearest_min_distances, reference_nearest_pairs
 
 INTERVALS_A = [
     ("chr1", 100, 200, "gene_A1"),
@@ -40,6 +40,16 @@ NEAREST_OUTPUT_CSV = BALLISTA_DIR / "output" / "nearest_local_result.csv"
     reason="nearest_local nie jest zbudowane — cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bin nearest_local",
 )
 def test_ballista_local_nearest_matches_oracle():
+    """
+    Porównuje ODLEGŁOŚCI (name_a -> distance), nie dokładnych wybranych
+    partnerów. Znalezisko z tej sesji: gdy interwał A ma kilku kandydatów w
+    tej samej (zerowej) odległości, natywny nearest() z
+    datafusion-bio-function-ranges i pb.nearest() wybierają różnych
+    kandydatów (różne, nieudokumentowane reguły tie-breakingu) — np. dla
+    A2=[150,300) oba B1=[180,250) i B2=[290,420) overlapują (dystans 0),
+    pb.nearest() wybiera B1, Ballista wybiera B2. Obie odpowiedzi są
+    poprawne co do odległości — porównanie 1:1 par nie ma tu sensu.
+    """
     result = subprocess.run(
         [str(NEAREST_BINARY)], cwd=BALLISTA_DIR, capture_output=True, text=True, timeout=30
     )
@@ -47,11 +57,43 @@ def test_ballista_local_nearest_matches_oracle():
     assert NEAREST_OUTPUT_CSV.exists()
 
     df = pd.read_csv(NEAREST_OUTPUT_CSV)
-    actual = set(zip(df["left_name"].tolist(), df["right_name"].tolist()))
-    expected = reference_nearest_pairs(INTERVALS_A, INTERVALS_B)
+    actual_distances = dict(zip(df["left_name"].tolist(), df["distance"].tolist()))
+    expected_distances = reference_nearest_min_distances(INTERVALS_A, INTERVALS_B)
 
-    assert actual == expected, (
-        f"Tylko w pb.nearest(): {expected - actual}\nTylko w Ballistrze: {actual - expected}"
+    assert actual_distances == expected_distances, (
+        f"Różnica w odległościach.\n"
+        f"pb.nearest():  {expected_distances}\n"
+        f"Ballista:      {actual_distances}"
+    )
+
+
+def test_ballista_and_pb_nearest_disagree_on_tie_break():
+    """
+    Dokumentuje (nie tylko przez komentarz, ale przez asercję) znalezisko:
+    dla tego zestawu danych syntetycznych faktycznie istnieje remis, na
+    którym oba silniki różnią się wyborem konkretnego partnera — więc
+    poprzedni test (test_ballista_local_nearest_matches_oracle) faktycznie
+    testuje coś nietrywialnego, nie przechodzi "przez przypadek" bo remisów
+    nie ma. Jeśli kiedyś ten test zacznie failować, to znaczy że dane testowe
+    się zmieniły i ten fakt (istnienie remisu w danych) już nie zachodzi —
+    trzeba by go odtworzyć innymi danymi, żeby test powyżej miał sens.
+    """
+    result = subprocess.run(
+        [str(NEAREST_BINARY)], cwd=BALLISTA_DIR, capture_output=True, text=True, timeout=30
+    )
+    if result.returncode != 0:
+        pytest.skip("nearest_local binary failed to run")
+
+    df = pd.read_csv(NEAREST_OUTPUT_CSV)
+    ballista_pairs = set(zip(df["left_name"].tolist(), df["right_name"].tolist()))
+    pb_pairs = reference_nearest_pairs(INTERVALS_A, INTERVALS_B)
+
+    assert ballista_pairs != pb_pairs, (
+        "Oczekiwano remisu (różnych wyborów partnera) między silnikami na tych "
+        "danych testowych — jeśli ten test failuje, dane się zmieniły i nie "
+        "demonstrują już tie-breakingu; test_ballista_local_nearest_matches_oracle "
+        "wciąż powinien przechodzić, ale bez tej asercji nie wiadomo czy testuje "
+        "coś nietrywialnego."
     )
 
 
