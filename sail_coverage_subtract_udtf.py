@@ -137,7 +137,12 @@ def run_udtfs(udtf_factories: dict):
     server.start(background=True)
     ip, port = server.listening_address
 
-    spark = SparkSession.builder.remote(f"sc://{ip}:{port}").getOrCreate()
+    # .create() zamiast .getOrCreate() — patrz sail_merge_udtf.py (unika
+    # "Connection refused" przy wielu wywołaniach w jednym procesie). Dzięki
+    # temu ta funkcja mogłaby teraz w zasadzie być wołana wielokrotnie z
+    # osobna zamiast wymagać jednej wspólnej sesji — zostawione jak jest
+    # (jedna sesja na wiele UDTF-ów), bo to i tak szybsze (jeden start serwera).
+    spark = SparkSession.builder.remote(f"sc://{ip}:{port}").create()
 
     df_a = spark.createDataFrame(INTERVALS_A, schema=SCHEMA).withColumn("source", F.lit("a"))
     df_b = spark.createDataFrame(INTERVALS_B, schema=SCHEMA).withColumn("source", F.lit("b"))

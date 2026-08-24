@@ -185,10 +185,15 @@ def run_sail_overlap():
     server.start(background=True)
     ip, port = server.listening_address
 
+    # .create() zamiast .getOrCreate() — PySpark cache'uje sesję jako globalny
+    # singleton procesu; przy wielu wywołaniach tej funkcji w jednym procesie
+    # (np. kilka plików testów pytest w jednym przebiegu) .getOrCreate()
+    # zwracałoby STARĄ sesję wskazującą na już zatrzymany serwer, dając
+    # "Connection refused". .create() zawsze tworzy nową, poprawną sesję.
     spark = (
         SparkSession.builder
         .remote(f"sc://{ip}:{port}")
-        .getOrCreate()
+        .create()
     )
 
     spark.udtf.register("overlap_udtf", _make_overlap_udtf())

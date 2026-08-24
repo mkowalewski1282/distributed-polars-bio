@@ -93,7 +93,12 @@ def run_sail_merge():
     server.start(background=True)
     ip, port = server.listening_address
 
-    spark = SparkSession.builder.remote(f"sc://{ip}:{port}").getOrCreate()
+    # .create() zamiast .getOrCreate(): PySpark cache'uje sesję jako globalny
+    # singleton procesu — .getOrCreate() w drugim (i kolejnych) wywołaniu w tym
+    # samym procesie Pythona (np. kilka plików testów pytest w jednym przebiegu)
+    # zwracałoby STARĄ sesję wskazującą na już zatrzymany serwer ("Connection
+    # refused"). .create() zawsze tworzy nową, poprawnie podłączoną sesję.
+    spark = SparkSession.builder.remote(f"sc://{ip}:{port}").create()
     spark.udtf.register("merge_udtf", _make_merge_udtf())
 
     df = spark.createDataFrame(INTERVALS_A, schema=SCHEMA)

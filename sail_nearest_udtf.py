@@ -108,7 +108,9 @@ def run_sail_nearest():
     server.start(background=True)
     ip, port = server.listening_address
 
-    spark = SparkSession.builder.remote(f"sc://{ip}:{port}").getOrCreate()
+    # .create() zamiast .getOrCreate() — patrz sail_merge_udtf.py (unika
+    # "Connection refused" przy wielu wywołaniach w jednym procesie).
+    spark = SparkSession.builder.remote(f"sc://{ip}:{port}").create()
     spark.udtf.register("nearest_udtf", _make_nearest_udtf())
 
     df_a = spark.createDataFrame(INTERVALS_A, schema=SCHEMA).withColumn("source", F.lit("a"))
