@@ -47,6 +47,7 @@ const DATA_LEFT_TABLE: &str = "intervals_a";
 const DATA_LEFT_CSV: &str = "data/intervals_a.csv";
 const DATA_RIGHT_TABLE: &str = "intervals_b";
 const DATA_RIGHT_CSV: &str = "data/intervals_b.csv";
+const OUTPUT_CSV: &str = "output/dist_overlap_result.csv";
 
 // ---------------------------------------------------------------------------
 // DistOverlapProvider: nasz TableProvider, owijający prawdziwy silnik
@@ -416,6 +417,20 @@ async fn main() -> Result<()> {
         );
     }
     println!("============================================================");
+
+    // Zapis do CSV — żeby pakiet testów pytest (tests/) mógł wczytać wynik
+    // niezawodnie (parsowanie ASCII-artowej tabeli z pretty-print byłoby
+    // kruche). Ścieżka stała, czytana przez tests/test_ballista_overlap.py.
+    std::fs::create_dir_all("output")?;
+    let out_file = std::fs::File::create(OUTPUT_CSV)?;
+    let mut writer = datafusion::arrow::csv::WriterBuilder::new()
+        .with_header(true)
+        .build(out_file);
+    for batch in &result {
+        writer.write(batch)?;
+    }
+    drop(writer);
+    println!("Wynik zapisany do {OUTPUT_CSV}");
 
     Ok(())
 }
