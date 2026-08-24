@@ -6,8 +6,10 @@ edition = "2024"
 [dependencies]
 ballista = { version = "53.0.0", features = ["standalone"] }
 datafusion = "=53.0.0"
+datafusion-proto = "53"
 datafusion-bio-function-ranges = { git = "https://github.com/biodatageeks/datafusion-bio-functions", package = "datafusion-bio-function-ranges" }
 tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
 
 # Środowisko ma tylko 3.5GB RAM — linkowanie tej binarki (Ballista scheduler+executor
 # + cały DataFusion + bio-function-ranges) z pełnym debug info (-C debuginfo=2)

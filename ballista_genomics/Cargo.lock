@@ -1036,9 +1036,11 @@ dependencies = [
 name = "ballista_genomics"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "ballista",
  "datafusion",
  "datafusion-bio-function-ranges",
+ "datafusion-proto",
  "tokio",
 ]
 

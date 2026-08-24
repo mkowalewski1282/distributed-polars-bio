@@ -58,56 +58,131 @@ komunikujące się przez sieć (protobuf). Standardowe operacje DataFusion mają
 wbudowany kodek. Niestandardowy `TableProvider` (`OverlapProvider` z
 bio-function-ranges) — nie, potrzebuje własnego `LogicalExtensionCodec`.
 
-**Faza A.4 (kolejny krok, nierozpoczęty w tej sesji):** zaimplementować ten kodek. Ponieważ
-`OverlapProvider::scan()` buduje SQL dynamicznie (`session.sql(query)` w środku `scan()` —
-patrz źródło crate'a), kodek nie musi serializować gotowego planu fizycznego — wystarczy
-zserializować parametry potrzebne do odtworzenia `OverlapProvider` po drugiej stronie
-(nazwy tabel, nazwy kolumn, `filter_op`, `output_mode`) i wywołać ten sam konstruktor
-na executorze, który już ma zarejestrowane te same tabele (przy identycznej konfiguracji
-sesji scheduler+executor). To realnie ogranicza zakres pracy do małego, ręcznie pisanego
-protobuf message + `impl LogicalExtensionCodec` z ~4 polami do zakodowania, a nie
-serializacji całego drzewa planu.
+## Faza A.4 (ZWERYFIKOWANA): LogicalExtensionCodec — pełne, poprawne wykonanie rozproszone
 
-### Jak podejść do implementacji kodeka
+**Wynik: 8/8 par, identyczne z lokalnym `pb.overlap()`, na prawdziwym klastrze Ballista
+(scheduler + executor, z realnym shuffle między nimi — widoczne w planie jako
+`ShuffleReaderExec`).** To zamyka główny cel Fazy A: pokazanie, że silnik polars-bio da się
+"wpiąć" w Ballistę jako runtime extension (rejestracja + kodek), bez forkowania Ballisty.
 
-`ballista::extension::SessionContextExt::standalone()`/`standalone_with_state()`
-używają wewnętrznie `BallistaCodec::default()` — **na sztywno**, bez możliwości
-wstrzyknięcia własnego kodeka przez tę wygodną funkcję. Żeby użyć customowego
-`LogicalExtensionCodec`/`PhysicalExtensionCodec`, trzeba pominąć
-`SessionContextExt::standalone()` i zamiast tego wywołać bezpośrednio niższe
-funkcje z `ballista_scheduler::standalone` / `ballista_executor`
-(`new_standalone_executor(scheduler, concurrent_tasks, custom_codec)`), które
-JUŻ przyjmują `BallistaCodec` jako parametr — dokładnie ten sam wzorzec co
-`ballista::extension::Extension::setup_standalone()` (źródło:
-`~/.cargo/registry/.../ballista-53.0.0/src/extension.rs`), tylko z własnym
-kodekiem zamiast `BallistaCodec::default()`.
+### Jak to zrobiono
 
-Punkt odniesienia dla implementacji samego kodeka:
+Zamiast serializować prywatne pola `OverlapProvider` z bio-function-ranges (niedostępne
+spoza crate'a), zdefiniowano **własny** `TableProvider` — `DistOverlapProvider` — z jawnymi,
+naszymi polami (nazwy tabel, ścieżki CSV, kolumny, `strict`/`weak`), który w `scan()`
+**deleguje** do prawdziwego `OverlapProvider::new(...)` (konstruktory tego typu SĄ publiczne).
+Zarejestrowany pod własną nazwą SQL `dist_overlap(left_table, left_csv, right_table,
+right_csv, col_chrom, col_start, col_end, 'strict')`.
+
+`LogicalExtensionCodec::try_encode_table_provider`/`try_decode_table_provider`
+serializują tylko te jawne parametry (ręczne, minimalne kodowanie binarne — bez protobuf,
+bez `protoc`, bo to tylko kilka stringów + bool) i **odtwarzają** `DistOverlapProvider` po
+drugiej stronie sieci, budując dla niego świeżą, samodzielną sesję (rejestruje CSV od nowa)
+— zgodnie z przewidywaniem z Fazy A.3: nie trzeba serializować planu, tylko "przepis" na
+jego odtworzenie.
+
+**Nie trzeba było omijać `SessionContextExt::standalone_with_state()`** ani dodawać
+`ballista-core`/`-scheduler`/`-executor` jako osobnych zależności — wystarczyło ustawić
+kodek na `SessionConfig` przez `SessionConfigExt::with_ballista_logical_extension_codec(...)`
+(re-eksportowane przez `ballista::prelude`) — Ballista sama czyta go z konfiguracji sesji
+przy starcie schedulera i executora (potwierdzone w źródle:
+`ballista-executor-53.0.0/src/standalone.rs::new_standalone_executor_from_state`).
+
+### Ślepa uliczka po drodze: IntervalJoinExec i dwupoziomowy problem sesji
+
+Po naprawieniu logicznego kodeka pojawił się KOLEJNY, przewidziany błąd: fizyczny węzeł
+`IntervalJoinExec` (algorithm: Coitrees, produkowany przez
+`IntervalJoinPhysicalOptimizationRule`) też nie ma domyślnego kodeka — a jego pola są
+prywatne (tak jak `OverlapProvider`), więc nie da się dla niego łatwo napisać
+`PhysicalExtensionCodec` z zewnątrz crate'a.
+
+Próba obejścia przez `BioConfig.prefer_interval_join = false` **nie zadziałała** — ta flaga
+jest czytana tylko przez `BioQueryPlanner` (custom query planner), a
+`IntervalJoinPhysicalOptimizationRule` to OSOBNY mechanizm (physical optimizer rule),
+instalowany bezwarunkowo przez `BioSessionExt::new_with_bio()` i niezależny od tego configu.
+
+Rzeczywiste rozwiązanie miało DWIE warstwy (obie konieczne):
+1. Wewnętrzna, jednorazowa sesja w `DistOverlapProvider::build()` (ta, która faktycznie
+   wykonuje `OverlapProvider::scan()` → `session.sql(join_query)`) musi być **zwykłą**
+   sesją DataFusion (`SessionContext::new()`), nie bio-ową — bo `join_query()` to zwykły
+   SQL join, nie potrzebuje żadnych funkcji bio.
+2. **To nie wystarczyło samo w sobie** — sesja SCHEDULERA/klienta (budowana w `main()`,
+   przekazywana do `standalone_with_state()`) TEŻ musiała przestać być bio-owa. Powód:
+   reguły fizycznego optymalizatora działają przez `transform_up`/`transform_down` na
+   CAŁYM drzewie planu — nawet jeśli poddrzewo zwrócone przez nasz `TableProvider` zostało
+   zbudowane przez sesję BEZ tej reguły, sesja SCHEDULERA (jeśli bio-owa) i tak ją
+   ponownie zastosuje przy planowaniu całego zapytania, bo widzi cały finalny plan.
+
+**Koszt tego rozwiązania:** ta w pełni rozproszona ścieżka wykonania (`dist_overlap` przez
+prawdziwy klaster Ballista) NIE używa COITrees — dostaje standardowy `HashJoinExec` +
+filtr (serializowalny domyślnym kodekiem Ballisty). Lokalna ścieżka (Faza A.2, `overlap()`
+bez dystrybucji) nadal używa COITrees bez zmian. To udokumentowane ograniczenie **tylko**
+tej jednej, w pełni rozproszonej ścieżki — nie unieważnia wyniku Fazy A.2.
+
+### Otwarte (opcjonalne, nierozpoczęte): PhysicalExtensionCodec dla IntervalJoinExec
+
+Żeby odzyskać COITrees w trybie rozproszonym, trzeba by napisać `PhysicalExtensionCodec`
+dla `IntervalJoinExec`. Ponieważ jego pola są prywatne, wzorzec "własny wrapper delegujący
+do prawdziwego typu" (jak przy `DistOverlapProvider`) nie zadziała bezpośrednio dla
+ExecutionPlan (nie da się "podmienić" węzła w środku już zbudowanego drzewa równie łatwo
+jak przy TableProvider). Realna droga: albo zgłosić upstream (biodatageeks) prośbę o
+publiczne pola/konstruktor dla `IntervalJoinExec`, albo zaimplementować analogiczny,
+własny fizyczny operator interval-join od zera (spory nakład pracy, osobny temat).
+
+### Jak faktycznie zaimplementowano kodek (korekta wcześniejszego przewidywania)
+
+Pierwotnie zakładano (patrz historia commitów), że trzeba ominąć
+`SessionContextExt::standalone_with_state()` i wywoływać niżej-poziomowe funkcje
+`ballista_scheduler`/`ballista_executor` bezpośrednio, bo `BallistaCodec::default()`
+jest tam rzekomo zaszyty na sztywno. **To nieprecyzyjne** — `standalone_with_state()`
+faktycznie tworzy `BallistaCodec::default()` gdy buduje sesję "od zera"
+(`SessionStateExt::new_ballista_state`), ale gdy przekazujemy WŁASNY `SessionState`
+(przez `standalone_with_state`), Ballista wywołuje `upgrade_for_ballista()`, który
+czyta kodek z **konfiguracji przekazanej sesji** — więc wystarczy ustawić go
+WCZEŚNIEJ, na `SessionConfig`, przez `SessionConfigExt::with_ballista_logical_extension_codec(...)`
+(re-eksportowane przez `ballista::prelude`) — potwierdzone w źródle:
+`ballista-executor-53.0.0/src/standalone.rs::new_standalone_executor_from_state`
+czyta `session_state.config().ballista_logical_extension_codec()`. Nie trzeba więc
+dodawać `ballista-core`/`-scheduler`/`-executor` jako osobnych zależności.
+
+Domyślny kodek Ballisty (do delegowania wszystkiego, co nie jest naszym typem) też
+nie wymaga nazywania konkretnego typu `BallistaLogicalExtensionCodec` — wystarczy
+`SessionConfig::new().ballista_logical_extension_codec()`, co zwraca gotowy
+`Arc<dyn LogicalExtensionCodec>` (domyślny, bo config jest pusty).
+
+Punkt odniesienia, który pomógł zrozumieć KSZTAŁT rozwiązania (wzorzec "spróbuj
+obsłużyć nasz typ, inaczej deleguj do `inner`"):
 [ballista_extensions](https://github.com/milenkovicm/ballista_extensions)
 (autor — `milenkovicm` — jest aktywnym committerem Ballisty, potwierdzone w
 release notes 53.0.0/54.0.0).
 
-`BallistaLogicalExtensionCodec` (wbudowany kodek Ballisty) sam w sobie wspiera
-listę kodeków próbowanych po kolei (`try_any`) — więc realistyczne podejście to
-kodek, który najpierw próbuje obsłużyć nasz customowy węzeł planu, a dla
-wszystkiego innego deleguje do domyślnego zachowania Ballisty.
-
 ---
 
-## Wnioski dla pracy magisterskiej (zaktualizowane)
+## Wnioski dla pracy magisterskiej (zaktualizowane po Fazie A.4)
 
 | | DataFusion (lokalnie) | Ballista distributed | Sail + UDTF |
 |---|---|---|---|
-| Rejestracja funkcji | `create_bio_session()` (crate bio-function-ranges) | to samo + LogicalExtensionCodec | Python `@udtf` (PR #1519) |
-| Serializacja planu | nie potrzebna | wymagana dla operatora `overlap` | nie dotyczy (UDTF to Python call, nie węzeł planu DataFusion) |
-| Status w tej pracy | ✅ zweryfikowane, wyniki identyczne z baseline | 🔧 w trakcie (Faza A.3/A.4) | ✅ zweryfikowane (ze znanym, udokumentowanym bugiem partycjonowania w LATERAL+UDTF — patrz `sail_overlap_udtf.py`) |
+| Rejestracja funkcji | `create_bio_session()` (crate bio-function-ranges) | własny wrapper (`DistOverlapProvider`) + `dist_overlap()` | Python `@udtf` (PR #1519) |
+| Serializacja planu | nie potrzebna | `LogicalExtensionCodec` (~50 linii, bez protobuf) | nie dotyczy (UDTF to Python call, nie węzeł planu DataFusion) |
+| Używa COITrees? | ✅ tak | ⚠️ nie w pełni rozproszonej ścieżce (patrz Faza A.4, IntervalJoinExec) | ✅ tak (woła prawdziwe pb.overlap() per grupa) |
+| Status w tej pracy | ✅ zweryfikowane, identyczne z baseline | ✅ **zweryfikowane end-to-end na prawdziwym klastrze** (scheduler+executor, realny shuffle), identyczne z baseline | ✅ zweryfikowane (ze znanym, udokumentowanym bugiem partycjonowania w LATERAL+UDTF — patrz `sail_overlap_udtf.py`) |
 
-**Zaktualizowany kluczowy wniosek:** oba silniki dziś realnie oferują tylko
-*płytką* integrację bez forka: Ballista przez UDF/operator + kodek serializacji
-(dojrzalszy, bardziej pracochłonny mechanizm), Sail przez Python UDTF (prostszy,
-ale ograniczony do argumentów skalarnych — brak wsparcia dla argumentów TABLE, i
-ze znalezionym bugiem w wykonaniu `LATERAL` nad wieloma partycjami). Żaden z
-silników nie ma dziś (sierpień 2026) w pełni dojrzałego, bezforkowego mechanizmu
-integracji na poziomie planu zapytania — dla Saila taki mechanizm
-(`SailExtension`/FFI) jest w aktywnej fazie projektowej (patrz
-`architektura_draft.md`).
+**Zaktualizowany kluczowy wniosek:** oba silniki DAJĄ SIĘ rozszerzyć bez forkowania —
+to jest osiągnięty, zweryfikowany wynik tej pracy dla operacji `overlap`. Różnią się
+jednak głębokością/dojrzałością tej integracji:
+- **Ballista**: mechanizm jest kompletny (UDF/TableProvider + LogicalExtensionCodec +
+  PhysicalExtensionCodec), ale wymaga własnego kodu Rust do serializacji — i ma
+  praktyczne ograniczenie: customowe fizyczne węzły wykonania (jak `IntervalJoinExec`,
+  algorithm=Coitrees) z zewnętrznych bibliotek, jeśli mają prywatne pola, są trudne do
+  poprawnego zserializowania bez zmian po stronie tej biblioteki — w tej pracy
+  rozwiązane kompromisem (rozproszona ścieżka bez COITrees, lokalna z COITrees).
+- **Sail**: mechanizm jest prostszy (Python, brak potrzeby serializacji planu), ale
+  ograniczony funkcjonalnie (tylko argumenty skalarne, nie TABLE) i ma realne bugi
+  wykonania (LATERAL + wiele partycji).
+
+Żaden z silników nie ma dziś (sierpień 2026) w pełni dojrzałego mechanizmu integracji
+NA POZIOMIE PLANU zapytania, który obsłużyłby customowe fizyczne operatory z
+zewnętrznych bibliotek "za darmo" — dla Saila taki mechanizm (`SailExtension`/FFI)
+jest w aktywnej fazie projektowej (patrz `architektura_draft.md`), dla Ballisty
+istnieje (`PhysicalExtensionCodec`), ale wymaga współpracy z autorami biblioteki
+rozszerzającej (publiczne pola/konstruktory) dla pełnej głębi integracji.
