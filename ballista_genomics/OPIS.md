@@ -113,21 +113,94 @@ Rzeczywiste rozwiązanie miało DWIE warstwy (obie konieczne):
    zbudowane przez sesję BEZ tej reguły, sesja SCHEDULERA (jeśli bio-owa) i tak ją
    ponownie zastosuje przy planowaniu całego zapytania, bo widzi cały finalny plan.
 
-**Koszt tego rozwiązania:** ta w pełni rozproszona ścieżka wykonania (`dist_overlap` przez
-prawdziwy klaster Ballista) NIE używa COITrees — dostaje standardowy `HashJoinExec` +
-filtr (serializowalny domyślnym kodekiem Ballisty). Lokalna ścieżka (Faza A.2, `overlap()`
-bez dystrybucji) nadal używa COITrees bez zmian. To udokumentowane ograniczenie **tylko**
-tej jednej, w pełni rozproszonej ścieżki — nie unieważnia wyniku Fazy A.2.
+**Koszt TEGO rozwiązania (Faza A.4, HISTORYCZNY — naprawiony w Fazie A.5 niżej):** ta w
+pełni rozproszona ścieżka wykonania NIE używała COITrees — dostawała standardowy
+`HashJoinExec` + filtr. To zostało naprawione, patrz sekcja poniżej.
 
-### Otwarte (opcjonalne, nierozpoczęte): PhysicalExtensionCodec dla IntervalJoinExec
+## Faza A.5 (ZWERYFIKOWANA): PhysicalExtensionCodec dla IntervalJoinExec — COITrees w pełni rozproszone
 
-Żeby odzyskać COITrees w trybie rozproszonym, trzeba by napisać `PhysicalExtensionCodec`
-dla `IntervalJoinExec`. Ponieważ jego pola są prywatne, wzorzec "własny wrapper delegujący
-do prawdziwego typu" (jak przy `DistOverlapProvider`) nie zadziała bezpośrednio dla
-ExecutionPlan (nie da się "podmienić" węzła w środku już zbudowanego drzewa równie łatwo
-jak przy TableProvider). Realna droga: albo zgłosić upstream (biodatageeks) prośbę o
-publiczne pola/konstruktor dla `IntervalJoinExec`, albo zaimplementować analogiczny,
-własny fizyczny operator interval-join od zera (spory nakład pracy, osobny temat).
+**Wynik: 8/8 par, identyczne z baseline, na prawdziwym klastrze Ballista, TERAZ Z COITrees**
+(`IntervalJoinExec`, `algorithm: Coitrees`, w planie fizycznym executora). Zweryfikowane
+formalnym testem: `tests/test_ballista_overlap.py`.
+
+### Dlaczego wcześniejsza ocena ("prywatne pola, trzeba reimplementować od zera") była zbyt pesymistyczna
+
+Sprawdzone dokładniej: `IntervalJoinExec` **ma publiczny konstruktor** `try_new(...)` i
+publiczne gettery dla większości pól (`left()`, `right()`, `on()`, `filter()`, `join_type()`,
+`partition_mode()`, `null_equals_null()`). Jedyny brakujący element to `ColIntervals`
+(argument `try_new`) — zdefiniowany w module `intervals`, zadeklarowanym jako `mod
+intervals;` (bez `pub`) w `physical_planner/mod.rs`. W Rust to sprawia, że `ColIntervals`
+jest **całkowicie nienazywalny i niekonstruowalny spoza crate'a** mimo bycia `pub struct`
+— cała ścieżka do typu musi być publiczna, nie tylko sam typ.
+
+### Rozwiązanie: lokalna, jednoliniowa łatka widoczności (`vendor/`)
+
+**To NIE jest fork Ballisty ani Saila** — to poprawka widoczności w pomocniczej bibliotece
+`datafusion-bio-function-ranges` (Apache-2.0), zwendorowana lokalnie w
+`ballista_genomics/vendor/datafusion-bio-function-ranges/` (pełna historia i uzasadnienie:
+`vendor/PATCH.md`). Zmiana:
+```diff
+-mod intervals;
++pub mod intervals;
+```
+plus wygodny re-export `ColInterval`/`ColIntervals`/`parse` w `lib.rs`. To bezpieczna,
+bezkonfliktowa zmiana widoczności (żadnej logiki), gotowa do zgłoszenia jako mały PR
+upstream do biodatageeks — gdyby wylądowała, katalog `vendor/` przestałby być potrzebny.
+
+### Implementacja kodeka (`src/physical_codec.rs`)
+
+`IntervalJoinExec` to węzeł BINARNY (join) — DataFusion serializuje jego dzieci (left/right)
+automatycznie i rekurencyjnie (`PhysicalExtensionNode { node, inputs }` — `inputs` już
+zawiera zdeserializowane poddrzewa), więc kodek musi serializować tylko WŁASNE parametry:
+- `on`/`filter.expression()` — `Arc<dyn PhysicalExpr>`, serializowane przez publiczne funkcje
+  `datafusion_proto::physical_plan::{to_proto::serialize_physical_expr, from_proto::parse_physical_expr}`
+  (te same, których DataFusion używa dla standardowych joinów — nic nie trzeba pisać od zera).
+- `filter`'s schema (pośredni schemat) — NIE serializowany osobno, odtwarzany z
+  `column_indices` + schematów left/right (dokładnie do tego `column_indices` służy).
+- `ColIntervals` — NIE serializowany wprost, odtwarzany z `filter` przez `parse_intervals()`
+  (ta sama funkcja, której `IntervalJoinPhysicalOptimizationRule` używa za pierwszym razem —
+  wynik identyczny niezależnie od strony).
+- `join_type`, `partition_mode`, `null_equals_null` — proste enumy/boole.
+- `algorithm`, `low_memory` — BRAK publicznych getterów na `IntervalJoinExec` (sprawdzone),
+  ale nie są potrzebne: to wartości z `BioConfig` sesji, znane kodekowi z góry (identyczne
+  na schedulerze i executorze), nie odczytywane z instancji węzła.
+
+Reszta — ręczne, minimalne kodowanie binarne (jak w `main.rs` dla `DistOverlapProvider`),
+bez protobuf/`.proto` (poza tym, że same `PhysicalExprNode` protobuf messages z
+`serialize_physical_expr` są zagnieżdżone jako bajty przez `prost::Message::encode_to_vec()`).
+
+### Napotkany, nieoczywisty bug runtime: `PartitionMode::Auto`
+
+Pierwsza próba (kodek działał, plan docierał do executora) failowała runtime'owym błędem:
+`"Invalid IntervalSearchJoinExec, unsupported PartitionMode Auto in execute()"`. Przyczyna:
+`with_config_rt_bio()` USUWA standardową regułę `join_selection` (ta, która normalnie
+rozstrzyga `Auto` → `Partitioned`/`CollectLeft` przed wykonaniem) i zastępuje ją wyłącznie
+`IntervalJoinPhysicalOptimizationRule`, która NIE rozstrzyga `Auto` sama — węzeł zostaje z
+`partition_mode=Auto`. Lokalnie (jeden proces) to nie przeszkadzało, ale rozproszony
+executor Ballisty odrzuca `Auto` w `execute()`. Poprawka: kodek wymusza `Partitioned` przy
+odtwarzaniu węzła (dane i tak są partycjonowane wg klucza joina między executory — to
+jedyny sensowny tryb w tym kontekście).
+
+### Zmiana architektoniczna: powrót do sesji bio-owych
+
+Faza A.4 celowo używała ZWYKŁYCH (nie-bio) sesji — i wewnętrznej w `DistOverlapProvider`, i
+schedulera w `main()` — żeby UNIKNĄĆ tworzenia `IntervalJoinExec` (brak kodeka). Teraz, mając
+kodek, obie te sesje wróciły do `new_with_bio()` — inaczej `IntervalJoinPhysicalOptimizationRule`
+w ogóle by nie zadziałała i join zostałby zwykłym `HashJoinExec` (poprawnie, ale bez COITrees).
+
+### Walidacja: czy to przenośne do polars-bio?
+
+Tak, z zastrzeżeniem: cały mechanizm (`DistOverlapProvider` + oba kodeki) żyje w
+`ballista_genomics/` (nasz kod, poza polars-bio — zgodnie z ustaleniami sesji), więc
+przeniesienie do polars-bio wymagałoby: (1) przepisania go z prototypu (Rust binary) na
+faktyczny moduł biblioteki polars-bio (nowa `DistributedOverlapRule`, patrz
+`architektura_draft.md`), (2) decyzji czy wendorowana łatka (`vendor/PATCH.md`) zostaje
+lokalna czy czeka na prawdziwy PR upstream do biodatageeks/datafusion-bio-functions (zalecane:
+zgłosić PR — to jednoliniowa, bezpieczna zmiana widoczności, powinna zostać łatwo
+zaakceptowana), (3) rozszerzenia kodeka na pozostałe operacje (merge/nearest/coverage/subtract),
+z których KAŻDA ma WŁASNY, analogicznie prywatny typ Exec (`MergeExec`, `NearestExec`, itd.) —
+wzorzec z tej sesji (zbadaj gettery/konstruktor, ewentualnie zwenduj+załataj) powinien się
+powtarzać, ale wymaga osobnej pracy per operacja.
 
 ### Jak faktycznie zaimplementowano kodek (korekta wcześniejszego przewidywania)
 
@@ -158,31 +231,33 @@ release notes 53.0.0/54.0.0).
 
 ---
 
-## Wnioski dla pracy magisterskiej (zaktualizowane po Fazie A.4)
+## Wnioski dla pracy magisterskiej (zaktualizowane po Fazie A.5)
 
 | | DataFusion (lokalnie) | Ballista distributed | Sail + UDTF |
 |---|---|---|---|
 | Rejestracja funkcji | `create_bio_session()` (crate bio-function-ranges) | własny wrapper (`DistOverlapProvider`) + `dist_overlap()` | Python `@udtf` (PR #1519) |
-| Serializacja planu | nie potrzebna | `LogicalExtensionCodec` (~50 linii, bez protobuf) | nie dotyczy (UDTF to Python call, nie węzeł planu DataFusion) |
-| Używa COITrees? | ✅ tak | ⚠️ nie w pełni rozproszonej ścieżce (patrz Faza A.4, IntervalJoinExec) | ✅ tak (woła prawdziwe pb.overlap() per grupa) |
-| Status w tej pracy | ✅ zweryfikowane, identyczne z baseline | ✅ **zweryfikowane end-to-end na prawdziwym klastrze** (scheduler+executor, realny shuffle), identyczne z baseline | ✅ zweryfikowane (ze znanym, udokumentowanym bugiem partycjonowania w LATERAL+UDTF — patrz `sail_overlap_udtf.py`) |
+| Serializacja planu | nie potrzebna | `LogicalExtensionCodec` + `PhysicalExtensionCodec` (~50+250 linii, bez protobuf poza reużyciem `PhysicalExprNode`) | nie dotyczy (UDTF to Python call, nie węzeł planu DataFusion) |
+| Używa COITrees? | ✅ tak | ✅ **tak, także w pełni rozproszonej ścieżce** (Faza A.5) | ✅ tak (woła prawdziwe pb.overlap() per grupa) |
+| Status w tej pracy | ✅ zweryfikowane, identyczne z baseline | ✅ **zweryfikowane end-to-end na prawdziwym klastrze** (scheduler+executor, realny shuffle), identyczne z baseline, Z COITrees | ✅ zweryfikowane (ze znanym, udokumentowanym bugiem partycjonowania w LATERAL+UDTF — patrz `sail_overlap_udtf.py`) |
+| Wymagał zmian poza własnym kodem? | nie | ✅ tak — jednoliniowa łatka widoczności w bio-function-ranges (`vendor/PATCH.md`), NIE fork Ballisty | nie |
 
-**Zaktualizowany kluczowy wniosek:** oba silniki DAJĄ SIĘ rozszerzyć bez forkowania —
-to jest osiągnięty, zweryfikowany wynik tej pracy dla operacji `overlap`. Różnią się
-jednak głębokością/dojrzałością tej integracji:
+**Zaktualizowany kluczowy wniosek:** oba silniki DAJĄ SIĘ rozszerzyć bez forkowania SIEBIE —
+to jest osiągnięty, zweryfikowany wynik tej pracy dla operacji `overlap`, **z zachowaniem
+pełnej wydajności algorytmicznej (COITrees) po stronie Ballisty**. Różnią się jednak
+głębokością/dojrzałością tej integracji:
 - **Ballista**: mechanizm jest kompletny (UDF/TableProvider + LogicalExtensionCodec +
-  PhysicalExtensionCodec), ale wymaga własnego kodu Rust do serializacji — i ma
-  praktyczne ograniczenie: customowe fizyczne węzły wykonania (jak `IntervalJoinExec`,
-  algorithm=Coitrees) z zewnętrznych bibliotek, jeśli mają prywatne pola, są trudne do
-  poprawnego zserializowania bez zmian po stronie tej biblioteki — w tej pracy
-  rozwiązane kompromisem (rozproszona ścieżka bez COITrees, lokalna z COITrees).
+  PhysicalExtensionCodec) i osiągalny w praktyce — wymaga własnego kodu Rust do
+  serializacji, a dla operatorów z prywatnymi polami w bibliotekach zewnętrznych (jak
+  `IntervalJoinExec`) dodatkowo małej, bezpiecznej łatki widoczności w TEJ bibliotece
+  (nie w Ballistrze) — ale to się okazało wykonalne, nie ślepą uliczką.
 - **Sail**: mechanizm jest prostszy (Python, brak potrzeby serializacji planu), ale
   ograniczony funkcjonalnie (tylko argumenty skalarne, nie TABLE) i ma realne bugi
   wykonania (LATERAL + wiele partycji).
 
-Żaden z silników nie ma dziś (sierpień 2026) w pełni dojrzałego mechanizmu integracji
-NA POZIOMIE PLANU zapytania, który obsłużyłby customowe fizyczne operatory z
-zewnętrznych bibliotek "za darmo" — dla Saila taki mechanizm (`SailExtension`/FFI)
-jest w aktywnej fazie projektowej (patrz `architektura_draft.md`), dla Ballisty
-istnieje (`PhysicalExtensionCodec`), ale wymaga współpracy z autorami biblioteki
-rozszerzającej (publiczne pola/konstruktory) dla pełnej głębi integracji.
+Żaden z silników nie ma dziś (sierpień 2026) w pełni dojrzałego, GOTOWEGO OD RĘKI mechanizmu
+integracji na poziomie planu zapytania dla DOWOLNEGO customowego operatora zewnętrznej
+biblioteki — dla Saila taki mechanizm (`SailExtension`/FFI) jest w aktywnej fazie
+projektowej (patrz `architektura_draft.md`); dla Ballisty mechanizm (`PhysicalExtensionCodec`)
+istnieje i DZIAŁA, ale dla operatorów z prywatnymi polami wymaga (małej) współpracy/łatki
+po stronie biblioteki rozszerzającej — w tej pracy pokonane bez forkowania Ballisty/Saila,
+tylko wendorowaniem jednoliniowej poprawki widoczności w pomocniczym crate'cie.

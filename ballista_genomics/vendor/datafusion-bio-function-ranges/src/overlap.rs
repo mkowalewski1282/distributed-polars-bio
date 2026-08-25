@@ -1,0 +1,276 @@
+use std::any::Any;
+use std::fmt::{Debug, Formatter};
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use datafusion::arrow::datatypes::{Field, Schema, SchemaRef};
+use datafusion::catalog::Session;
+use datafusion::common::Result;
+use datafusion::datasource::{TableProvider, TableType};
+use datafusion::physical_expr::expressions::Column;
+use datafusion::physical_plan::projection::ProjectionExec;
+use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
+use datafusion::prelude::{Expr, SessionContext};
+
+use crate::filter_op::FilterOp;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OverlapOutputMode {
+    Join,
+    Left,
+    LeftDistinct,
+}
+
+fn wrap_with_projection(
+    plan: Arc<dyn ExecutionPlan>,
+    projection: Option<&Vec<usize>>,
+) -> Result<Arc<dyn ExecutionPlan>> {
+    let Some(indices) = projection else {
+        return Ok(plan);
+    };
+
+    let schema = plan.schema();
+    let is_identity = indices.len() == schema.fields().len()
+        && indices
+            .iter()
+            .copied()
+            .enumerate()
+            .all(|(expected, actual)| expected == actual);
+    if is_identity {
+        return Ok(plan);
+    }
+
+    let exprs = indices
+        .iter()
+        .map(|&idx| {
+            let field = schema.field(idx);
+            let expr = Arc::new(Column::new(field.name(), idx)) as Arc<dyn PhysicalExpr>;
+            (expr, field.name().clone())
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Arc::new(ProjectionExec::try_new(exprs, plan)?))
+}
+
+pub struct OverlapProvider {
+    session: Arc<SessionContext>,
+    left_table: String,
+    right_table: String,
+    left_schema: Schema,
+    right_schema: Schema,
+    columns_1: (String, String, String),
+    columns_2: (String, String, String),
+    filter_op: FilterOp,
+    output_mode: OverlapOutputMode,
+    schema: SchemaRef,
+}
+
+impl OverlapProvider {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        session: Arc<SessionContext>,
+        left_table: String,
+        right_table: String,
+        left_schema: Schema,
+        right_schema: Schema,
+        columns_1: Vec<String>,
+        columns_2: Vec<String>,
+        filter_op: FilterOp,
+    ) -> Self {
+        Self::new_with_output_mode(
+            session,
+            left_table,
+            right_table,
+            left_schema,
+            right_schema,
+            columns_1,
+            columns_2,
+            filter_op,
+            OverlapOutputMode::Join,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_output_mode(
+        session: Arc<SessionContext>,
+        left_table: String,
+        right_table: String,
+        left_schema: Schema,
+        right_schema: Schema,
+        columns_1: Vec<String>,
+        columns_2: Vec<String>,
+        filter_op: FilterOp,
+        output_mode: OverlapOutputMode,
+    ) -> Self {
+        let schema = match output_mode {
+            OverlapOutputMode::Join => {
+                let mut fields = left_schema
+                    .fields()
+                    .iter()
+                    .map(|f| {
+                        Arc::new(Field::new(
+                            format!("left_{}", f.name()),
+                            f.data_type().clone(),
+                            f.is_nullable(),
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+                fields.extend(right_schema.fields().iter().map(|f| {
+                    Arc::new(Field::new(
+                        format!("right_{}", f.name()),
+                        f.data_type().clone(),
+                        f.is_nullable(),
+                    ))
+                }));
+                Arc::new(Schema::new(fields))
+            }
+            OverlapOutputMode::Left | OverlapOutputMode::LeftDistinct => {
+                Arc::new(left_schema.clone())
+            }
+        };
+
+        Self {
+            session,
+            left_table,
+            right_table,
+            left_schema,
+            right_schema,
+            columns_1: (
+                columns_1[0].clone(),
+                columns_1[1].clone(),
+                columns_1[2].clone(),
+            ),
+            columns_2: (
+                columns_2[0].clone(),
+                columns_2[1].clone(),
+                columns_2[2].clone(),
+            ),
+            filter_op,
+            output_mode,
+            schema,
+        }
+    }
+
+    fn join_query(&self, sign: &str) -> String {
+        let select_left = self
+            .left_schema
+            .fields()
+            .iter()
+            .map(|f| format!("a.`{}` AS `left_{}`", f.name(), f.name()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let select_right = self
+            .right_schema
+            .fields()
+            .iter()
+            .map(|f| format!("b.`{}` AS `right_{}`", f.name(), f.name()))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let (c1, s1, e1) = (&self.columns_1.0, &self.columns_1.1, &self.columns_1.2);
+        let (c2, s2, e2) = (&self.columns_2.0, &self.columns_2.1, &self.columns_2.2);
+
+        format!(
+            "SELECT {select_left}, {select_right} \
+             FROM `{}` AS b, `{}` AS a \
+             WHERE a.`{c1}` = b.`{c2}` \
+             AND CAST(a.`{e1}` AS INTEGER) >{sign} CAST(b.`{s2}` AS INTEGER) \
+             AND CAST(a.`{s1}` AS INTEGER) <{sign} CAST(b.`{e2}` AS INTEGER)",
+            self.right_table, self.left_table,
+        )
+    }
+
+    fn left_query(&self, sign: &str) -> String {
+        let select_left = self
+            .left_schema
+            .fields()
+            .iter()
+            .map(|f| format!("a.`{}`", f.name()))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let (c1, s1, e1) = (&self.columns_1.0, &self.columns_1.1, &self.columns_1.2);
+        let (c2, s2, e2) = (&self.columns_2.0, &self.columns_2.1, &self.columns_2.2);
+
+        format!(
+            "SELECT {select_left} \
+             FROM `{}` AS b, `{}` AS a \
+             WHERE a.`{c1}` = b.`{c2}` \
+             AND CAST(a.`{e1}` AS INTEGER) >{sign} CAST(b.`{s2}` AS INTEGER) \
+             AND CAST(a.`{s1}` AS INTEGER) <{sign} CAST(b.`{e2}` AS INTEGER)",
+            self.right_table, self.left_table,
+        )
+    }
+
+    fn left_distinct_query(&self, sign: &str) -> String {
+        let select_left = self
+            .left_schema
+            .fields()
+            .iter()
+            .map(|f| format!("a.`{}`", f.name()))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let (c1, s1, e1) = (&self.columns_1.0, &self.columns_1.1, &self.columns_1.2);
+        let (c2, s2, e2) = (&self.columns_2.0, &self.columns_2.1, &self.columns_2.2);
+
+        format!(
+            "SELECT {select_left} \
+             FROM `{}` AS b \
+             RIGHT SEMI JOIN `{}` AS a \
+             ON a.`{c1}` = b.`{c2}` \
+             AND CAST(a.`{e1}` AS INTEGER) >{sign} CAST(b.`{s2}` AS INTEGER) \
+             AND CAST(a.`{s1}` AS INTEGER) <{sign} CAST(b.`{e2}` AS INTEGER)",
+            self.right_table, self.left_table,
+        )
+    }
+}
+
+impl Debug for OverlapProvider {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "OverlapProvider {{ left: {}, right: {} }}",
+            self.left_table, self.right_table
+        )
+    }
+}
+
+#[async_trait]
+impl TableProvider for OverlapProvider {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    fn table_type(&self) -> TableType {
+        TableType::Temporary
+    }
+
+    async fn scan(
+        &self,
+        _state: &dyn Session,
+        projection: Option<&Vec<usize>>,
+        _filters: &[Expr],
+        _limit: Option<usize>,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
+        let sign = if self.filter_op == FilterOp::Strict {
+            ""
+        } else {
+            "="
+        };
+
+        let query = match self.output_mode {
+            OverlapOutputMode::Join => self.join_query(sign),
+            OverlapOutputMode::Left => self.left_query(sign),
+            OverlapOutputMode::LeftDistinct => self.left_distinct_query(sign),
+        };
+
+        let df = self.session.sql(&query).await?;
+        let plan = df.create_physical_plan().await?;
+        wrap_with_projection(plan, projection)
+    }
+}

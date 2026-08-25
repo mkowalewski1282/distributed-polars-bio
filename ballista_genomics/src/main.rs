@@ -15,13 +15,18 @@ use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::{CsvReadOptions, SessionConfig, SessionContext as DFSessionContext};
 use datafusion::scalar::ScalarValue;
 use datafusion::sql::TableReference;
-use datafusion_bio_function_ranges::{FilterOp, OverlapProvider};
+use datafusion_bio_function_ranges::{BioSessionExt, FilterOp, OverlapProvider};
 use datafusion_proto::logical_plan::LogicalExtensionCodec;
 
+mod physical_codec;
+use physical_codec::IntervalJoinPhysicalCodec;
+
 // ---------------------------------------------------------------------------
-// Faza A.4 (plan pracy magisterskiej): LogicalExtensionCodec dla operatora
-// overlap, żeby prawdziwa Ballista standalone (Faza A.3) mogła faktycznie
-// wykonać zapytanie, a nie tylko odtworzyć błąd serializacji.
+// Faza A.4 + A.5 (plan pracy magisterskiej): LogicalExtensionCodec (A.4) +
+// PhysicalExtensionCodec dla IntervalJoinExec (A.5, physical_codec.rs) —
+// razem dają PEŁNĄ dystrybucję `overlap` w Ballistrze Z COITrees, na
+// prawdziwym klastrze (scheduler + executor, realny shuffle). Zweryfikowane:
+// 8/8 par identyczne z lokalnym pb.overlap(), patrz tests/test_ballista_overlap.py.
 //
 // KLUCZOWE ODKRYCIE (ballista-core-53.0.0/src/extension.rs): nie trzeba omijać
 // wygodnej funkcji SessionContextExt::standalone_with_state() ani dodawać
@@ -72,31 +77,14 @@ impl DistOverlapProvider {
     /// dostępu do pamięci klienta) — więc ten sam kod działa i w in-proc
     /// standalone, i (docelowo) w prawdziwym rozproszeniu wieloprocesowym.
     async fn build(payload: Payload) -> Result<Self> {
-        // FAZA A.4b: IntervalJoinExec (fizyczny węzeł produkowany przez
-        // IntervalJoinPhysicalOptimizationRule, algorithm=Coitrees) ma prywatne
-        // pola — nie da się dla niego napisać PhysicalExtensionCodec z zewnątrz
-        // crate'a tak samo łatwo jak dla OverlapProvider (którego konstruktory
-        // są publiczne).
-        //
-        // Próba #1 (nieudana, zostawiona jako udokumentowana ślepa uliczka):
-        // BioConfig.prefer_interval_join=false NIE wystarcza — ta flaga jest
-        // czytana tylko przez BioQueryPlanner (custom QueryPlanner), a
-        // IntervalJoinPhysicalOptimizationRule to OSOBNY mechanizm (physical
-        // optimizer rule), instalowany bezwarunkowo przez
-        // BioSessionExt::new_with_bio()/with_config_rt_bio() — flaga configu go
-        // nie wyłącza.
-        //
-        // Rozwiązanie: OverlapProvider::scan() (patrz Faza A.3) potrzebuje
-        // sesji tylko do wykonania zwykłego SQL joina (join_query() w
-        // bio-function-ranges nie odwołuje się do żadnych funkcji bio typu
-        // overlap()/coverage()) — więc zwykła, NIE-bio-owa sesja DataFusion
-        // wystarczy i nie instaluje w ogóle IntervalJoinPhysicalOptimizationRule.
-        // Kosztem: ta w pełni rozproszona ścieżka wykonania nie używa COITrees
-        // (dostaje standardowy HashJoinExec+filtr, serializowalny domyślnym
-        // kodekiem Ballisty). Lokalna ścieżka (Faza A.2) nadal używa COITrees
-        // bez zmian — to udokumentowane ograniczenie tylko tej jednej,
-        // w pełni rozproszonej ścieżki, patrz OPIS.md.
-        let session = Arc::new(DFSessionContext::new());
+        // FAZA A.5: teraz UŻYWAMY sesji bio (nie zwykłej DataFusion jak w Fazie
+        // A.4), specjalnie po to, żeby IntervalJoinPhysicalOptimizationRule
+        // faktycznie zadziałała i przepisała join na IntervalJoinExec
+        // (algorithm=Coitrees) — mamy już PhysicalExtensionCodec (physical_codec.rs)
+        // żeby ten węzeł zserializować, więc nie trzeba już tego unikać.
+        // (Wcześniejsza wersja Fazy A.4 celowo używała zwykłej sesji, żeby
+        // ODROCZYĆ ten problem — historia w git log / OPIS.md.)
+        let session = Arc::new(DFSessionContext::new_with_bio(SessionConfig::new()));
 
         // Rejestracja może się powtórzyć (ta sama sesja bio bywa budowana
         // wielokrotnie w jednym procesie w trybie in-proc standalone) — błąd
@@ -367,22 +355,25 @@ impl LogicalExtensionCodec for DistOverlapLogicalCodec {
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("============================================================");
-    println!("  Faza A.4: dist_overlap + LogicalExtensionCodec + Ballista standalone");
+    println!("  Faza A.5: dist_overlap + COITrees w pełni rozproszone");
     println!("============================================================\n");
 
-    // UWAGA (druga, subtelniejsza przyczyna IntervalJoinExec w planie
-    // rozproszonym): nie wystarczy, że WEWNĘTRZNA sesja w DistOverlapProvider
-    // jest "plain" — fizyczne reguły optymalizatora działają na CAŁYM drzewie
-    // planu (transform_up/down), więc jeśli sesja SCHEDULERA (ta budowana
-    // tutaj, przekazywana do standalone_with_state) jest bio-owa, jej
-    // IntervalJoinPhysicalOptimizationRule i tak ponownie przepisze join
-    // ukryty w poddrzewie zwróconym przez nasz TableProvider — niezależnie od
-    // tego, jaka sesja go zbudowała. Sesja schedulera/klienta MUSI więc też
-    // być zwykła (nie new_with_bio), skoro ta w pełni rozproszona ścieżka i
-    // tak rezygnuje z COITrees (patrz komentarz w DistOverlapProvider::build).
+    // Sesja SCHEDULERA/klienta MUSI być bio-owa (new_with_bio), żeby
+    // IntervalJoinPhysicalOptimizationRule w ogóle zadziałała — reguły
+    // fizycznego optymalizatora działają na CAŁYM drzewie planu
+    // (transform_up/down), więc nawet gdyby wewnętrzna sesja w
+    // DistOverlapProvider była "zwykła", sesja SCHEDULERA (ta budowana tutaj)
+    // i tak decyduje, czy join zostanie przepisany na IntervalJoinExec.
+    // W Fazie A.4 to było CELOWO wyłączone (żeby uniknąć problemu
+    // serializacji), teraz WŁĄCZAMY z powrotem, bo mamy już
+    // IntervalJoinPhysicalCodec (physical_codec.rs) do serializacji.
     let logical_codec: Arc<dyn LogicalExtensionCodec> = Arc::new(DistOverlapLogicalCodec::default());
-    let config = SessionConfig::new().with_ballista_logical_extension_codec(logical_codec);
-    let bio_ctx = DFSessionContext::new_with_config(config);
+    let physical_codec: Arc<dyn datafusion_proto::physical_plan::PhysicalExtensionCodec> =
+        Arc::new(IntervalJoinPhysicalCodec::default());
+    let config = SessionConfig::new()
+        .with_ballista_logical_extension_codec(logical_codec)
+        .with_ballista_physical_extension_codec(physical_codec);
+    let bio_ctx = DFSessionContext::new_with_bio(config);
     let state = bio_ctx.state();
 
     println!("Łączenie z Ballista standalone (scheduler + executor in-proc)...");
