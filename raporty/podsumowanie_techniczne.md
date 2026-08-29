@@ -133,11 +133,13 @@ Po drodze natrafiono na dwa istotne ograniczenia pysail 0.5.3:
    (`TABLE(...) PARTITION BY` w SQL, to samo przez DataFrame API/`TableArg`, argument TABLE bez
    opcji) — każdy kończy się innym błędem parsera/silnika. PR #1519 dodał rejestrację UDTF i
    argumenty **skalarne**, ale nie TABLE.
-2. **Błąd: `LATERAL <skalarny UDTF>` nad danymi rozłożonymi na więcej niż jedną partycję fizyczną
-   gubi lub duplikuje wiersze** (zweryfikowane: 2 grupy na 2 partycjach → jedna zgubiona
-   całkowicie, druga zdublowana dwukrotnie). Wymuszenie jednej partycji (`.repartition(1)`) przed
-   wywołaniem UDTF naprawia poprawność w 100%, kosztem realnej równoległości na tym etapie — do
-   uwzględnienia przy przyszłych benchmarkach.
+2. **Gubienie/duplikowanie wierszy przy więcej niż jednej partycji fizycznej** (zweryfikowane:
+   2 grupy na 2 partycjach → jedna zgubiona całkowicie, druga zdublowana dwukrotnie). Obejściem
+   było wymuszenie jednej partycji (`.repartition(1)`) przed wywołaniem UDTF — naprawiało
+   poprawność w 100%, ale kosztem całej równoległości.
+
+   **Uwaga: pierwotna atrybucja tego objawu do błędu Saila okazała się nieprawidłowa.**
+   Faza H wykazała, że przyczyna leży po stronie polars-bio — szczegóły i dowody w sekcji 4.4.
 
 Finalne, działające podejście: `groupBy("chrom").agg(collect_list(struct(...)))` →
 `.repartition(1)` (workaround na błąd 2) → `LATERAL overlap_udtf(chrom, rows_a, rows_b)`.
@@ -160,11 +162,11 @@ coverage, subtract) — każda zweryfikowana na obu silnikach względem wyroczni
 
 | Operacja  | Ballista (lokalnie) | Ballista (rozproszone) | Sail (UDTF) | Znalezisko |
 |-----------|:---:|:---:|:---:|---|
-| overlap   | TAK: | TAK: (COITrees, Faza A.5) | TAK: | — |
-| merge     | TAK: | lokalnie tylko | TAK: | — |
-| nearest   | TAK: | lokalnie tylko | TAK: | inna reguła rozstrzygania remisów niż `pb.nearest()` |
-| coverage  | TAK: | lokalnie tylko | TAK: | odwrócona konwencja argumentów względem `pb.coverage()` |
-| subtract  | TAK: | lokalnie tylko | TAK: | — |
+| overlap   | TAK | TAK (COITrees, Faza A.5) | TAK | — |
+| merge     | TAK | początkowo lokalnie; **rozproszone od Fazy H** | TAK | — |
+| nearest   | TAK | początkowo lokalnie; **rozproszone od Fazy H** | TAK | inna reguła rozstrzygania remisów niż `pb.nearest()` |
+| coverage  | TAK | początkowo lokalnie; **rozproszone od Fazy H** | TAK | odwrócona konwencja argumentów względem `pb.coverage()` |
+| subtract  | TAK | początkowo lokalnie; **rozproszone od Fazy H** | TAK | — |
 
 Pełny pakiet testów: `tests/test_*_correctness.py` (5 plików), łącznie z `test_oracle_sanity.py`
 i `test_ballista_overlap.py` — 18 testów przechodzących.
@@ -316,15 +318,120 @@ architektur dystrybucji obu silników, wart odnotowania w pracy: Ballista osiąg
 zweryfikowaną dystrybucję na tej samej maszynie (Część 1), Sail — nie, ze zidentyfikowaną,
 udokumentowaną przyczyną.
 
+## 4.3 Część 3 — pełna dystrybucja dla merge, subtract, nearest i coverage (Faza H)
+
+**Punkt wyjścia i korekta wcześniejszej oceny.** Faza C zakończyła się wnioskiem, że pełna
+dystrybucja pozostanie osiągnięciem specyficznym dla `overlap`, bo pozostałe operacje budują
+prywatne, niestandardowe węzły `*Exec` bezpośrednio w `scan()`, więc „wymagałyby współpracy
+z autorami crate'a albo reimplementacji od zera". **Ta ocena była nieaktualna** — powstała,
+zanim crate został zvendorowany. Ponowna analiza źródeł wykazała, że moduły (`pub mod merge`,
+`pub mod nearest`, …) **są** publiczne; blokadą są same struktury, zadeklarowane bez `pub`
+i pozbawione jakichkolwiek konstruktorów i getterów. Wystarczyła więc łatka tej samej natury
+co Łatka 1: **38 słów `pub` i 5 re-eksportów, zero linii logiki** (`vendor/PATCH.md`, Łatka 2).
+
+**Nowy, maszynowo sprawdzalny dowód dystrybucji.** Wcześniej „rozproszoność" potwierdzano
+pośrednio — brakiem błędu serializacji i obecnością `ShuffleReaderExec` w wydruku. Ballista
+implementuje jednak `EXPLAIN ANALYZE` tak, że zwraca sekcje
+`=========SuccessfulStage[stage_id=N, partitions=M]=========` z drzewem operatorów i metrykami
+per etap. Każde uruchomienie zrzuca to teraz do `output/dist_<op>_explain.txt`, a osobny pakiet
+testów (`tests/test_ballista_distribution_evidence.py`, 16 asercji) sprawdza strukturę planu
+automatycznie. Ten pakiet celowo nie importuje polars-bio, więc wykonuje się w 0,03 s zamiast
+4,5 minuty.
+
+**Wyniki dla poszczególnych operacji.**
+
+| Operacja | Wzorzec | Etapy | Dowód w planie |
+|---|---|---|---|
+| merge | hash-shuffle po kontigu | 3 | `Hash([chrom@0], 4)`; `MergeExec` czyta z `ShuffleReaderExec` |
+| subtract | dwustronny hash-shuffle | 4 | dwa `Hash([chrom@0], 4)`; `SubtractExec` z **dwoma** `ShuffleReaderExec` |
+| nearest | broadcast lewej tabeli | 2 | `NearestExec` na 2 partycjach; lewa tabela **nieobecna** jako skan |
+| coverage | broadcast + węzeł-nośnik | 2 | `DistCoverageExec: coverage=true, broadcast_rows=5` |
+
+**Test poprawności jako test dystrybucji.** Dane wejściowe rozbito na dwa pliki na tabelę
+i podzielono celowo: nakładające się `gene_A1=[100,200)` i `gene_A2=[150,300)` leżą w **różnych**
+plikach, więc trafiają do różnych partycji źródłowych. Poprawny wynik `[100,300)` może powstać
+wyłącznie wtedy, gdy hash-shuffle po `chrom` faktycznie przeniósł wiersze między partycjami.
+Gdyby dystrybucja przestała działać, test zwróciłby dwa osobne interwały zamiast jednego —
+głośno i jednoznacznie. To zamienia „test poprawności" w „test, czy rozproszenie jest prawdziwe".
+
+**Trzy problemy warte odnotowania.**
+
+1. **`target_partitions == 1` cicho likwiduje dystrybucję.** Przy tej wartości DataFusion
+   w ogóle nie wstawia hash-repartycji, więc zapytanie liczy się poprawnie, ale w jednym etapie.
+   Objawu brak; wykrywalne wyłącznie przez `EXPLAIN ANALYZE`. Stąd jawne
+   `with_target_partitions(4)` we wspólnej konfiguracji sesji.
+2. **Ballista usuwa z planu rozproszonego każdą repartycję inną niż hash.** `RoundRobinBatch`,
+   wstawiany przez `CountOverlapsProvider::scan()`, znika — dlatego nasz provider dla coverage
+   celowo go nie wstawia, żeby plan lokalny i rozproszony miały ten sam kształt.
+3. **Coverage wymagał czegoś więcej niż łatki widoczności.** `CountOverlapsProvider::scan()`
+   materializuje lewą tabelę, przenosi ją do konstruktora indeksu i **porzuca** — powstały węzeł
+   nie przechowuje ani jej danych, ani nazw jej kolumn, ani flagi `coverage`. Rozwiązaniem jest
+   `DistCoverageExec`: transparentny dekorator delegujący wszystko do węzła vendora, ale
+   przenoszący dodatkowo to, co tamten gubi.
+
+**Wynik negatywny: `cluster` pozostaje niewykonalny.** `ClusterIdCoordinator` to bariera
+rendez-vous z `Vec<Waker>` w `Mutex`, działająca wyłącznie w obrębie jednego procesu — czeka,
+aż zgłoszą się **wszystkie** partycje, i dopiero wtedy liczy globalne przesunięcia identyfikatorów.
+Po rozproszeniu każdy executor dostałby własną kopię koordynatora, więc plan albo zawisłby
+w oczekiwaniu na partycje, które nigdy się nie zarejestrują, albo cicho zduplikowałby ID klastrów.
+To bloker **semantyczny**, którego żadna łatka widoczności nie usuwa. Wniosek wart zapisania
+w pracy: granica dystrybucji przebiega nie po widoczności API, lecz po tym, czy algorytm zakłada
+współdzieloną pamięć.
+
+**Skalowalność podejścia broadcast.** Dla `nearest` i `coverage` lewa tabela jedzie w całości
+w ładunku planu fizycznego, który Ballista przesyła przez gRPC z limitem **16 MB**. To twarda
+granica tego wzorca i należy ją raportować jako właściwość rozwiązania, a nie obchodzić.
+
+## 4.4 Część 4 — Sail odzyskuje równoległość; korekta diagnozy z Fazy B
+
+Wszystkie pięć operacji działało już w Sailu, ale każda wymagała `.repartition(1)` przed
+wywołaniem UDTF-a. To obejście dawało poprawność kosztem **całej** równoległości — Sail liczył
+wszystko w jednej partycji, więc benchmarki nie mogłyby pokazać żadnego przyspieszenia
+ze skalowania.
+
+Serię eksperymentów przeprowadzono na operacji `merge`, za każdym razem **bez** `.repartition(1)`,
+z wielokrotnymi powtórzeniami (objaw był niedeterministyczny, więc pojedyncze przejście niczego
+by nie dowodziło):
+
+| Wariant | Poprawnych |
+|---|---|
+| UDTF czysto pythonowy (merge napisany ręcznie, zero polars-bio) | 3/3 |
+| UDTF → `pb.merge()` bez resetu kontekstu | 1/3 |
+| UDTF → `pb.merge()` z `_reset_pb_context()` | 0/3 |
+| `applyInPandas` → `pb.merge()` (zupełnie inna ścieżka kodowa Saila) | 0/3 |
+| UDTF → `pb.merge()` przez lock w importowalnym module | **5/5** |
+
+**Wniosek odwraca wcześniejszą atrybucję.** Ten sam kształt zapytania — `LATERAL` nad UDTF-em
+nad tabelą na wielu partycjach — z funkcją czysto pythonową jest w 100% poprawny. Dodatkowo
+`applyInPandas`, całkowicie odrębna ścieżka kodowa, gubi grupy tak samo, co wyklucza wyjaśnienie
+specyficzne dla `LATERAL`. **W Sailu nie ma tu błędu.**
+
+Prawdziwą przyczyną jest **globalny, mutowalny kontekst DataFusion w polars-bio**: gdy kilka
+partycji wykonuje `pb.*()` współbieżnie w jednym procesie, wywołania nadpisują sobie nawzajem
+zarejestrowane tabele (`s1`/`s2`). Co gorsza, pomocnik `_reset_pb_context()`, który wprowadziliśmy
+sami we wcześniejszych fazach, pogarszał sytuację — jawnie derejestrował tabele, zamieniając
+wyścig w błąd deterministyczny (0/3 zamiast 1/3).
+
+**Rozwiązanie:** moduł `sail_pb_guard` z lockiem serializującym dostęp do polars-bio. Lock musi
+mieszkać w **osobnym, importowalnym module**: obiektu `threading.Lock` nie da się umieścić
+w domknięciu UDTF-a, bo cloudpickle go nie zserializuje (`cannot pickle '_thread.lock' object`),
+natomiast moduł importowany po nazwie serializuje się przez **referencję**, więc wszystkie
+partycje w procesie sięgają po ten sam obiekt.
+
+Znaczenie dla pracy jest potrójne: z Saila zdjęta zostaje niesłuszna krytyka; Sail odzyskuje
+realną równoległość, co ma bezpośrednie znaczenie dla przyszłych benchmarków; a przy okazji
+zidentyfikowane zostaje **realne i usuwalne ograniczenie polars-bio** — istotne tym bardziej,
+że dotyczy to bezpośrednio tej biblioteki.
+
 # 5. Stan względem założeń projektu
 
 | Założenie | Status |
 |---|---|
-| Mechanizm UDF/UDTF jako runtime extension, bez forka silnika | TAK: Zrealizowane dla obu silników (Ballista: `LogicalExtensionCodec`/`PhysicalExtensionCodec`; Sail: UDTF z PR #1519) |
-| Porównanie dwóch silników, pełna implementacja w obu | TAK: Zrealizowane dla wszystkich 5 operacji z pierwotnego zakresu |
+| Mechanizm UDF/UDTF jako runtime extension, bez forka silnika | TAK: Zrealizowane dla obu silników (Ballista: `LogicalExtensionCodec`/`PhysicalExtensionCodec`; Sail: UDTF z PR #1519). Żaden z silników nie został sforkowany — jedyne modyfikacje to łatki **widoczności** w pomocniczej bibliotece |
+| Porównanie dwóch silników, pełna implementacja w obu | TAK: Zrealizowane dla wszystkich 5 operacji z pierwotnego zakresu; po Fazie H **wszystkie pięć działa w pełni rozproszone w Ballistrze** |
 | Wydajna implementacja + dobór algorytmów + benchmarki | CZĘŚCIOWO: Dobór algorytmu (COITrees) potwierdzony w pełni rozproszonej ścieżce Ballisty; benchmarki liczbowe — Faza D, nierozpoczęta |
 | Zmiany docelowo wewnątrz polars-bio | ODŁOŻONE: Świadomie odłożone (Faza F, opcjonalna), wymaga osobnej decyzji dotyczącej biblioteki |
-| Zmiana planu zapytania (repartycja wg chromosomu) w obu silnikach | TAK: Zweryfikowane w obu (Ballista: shuffle w planie fizycznym; Sail: `groupBy("chrom")`) |
+| Zmiana planu zapytania (repartycja wg chromosomu) w obu silnikach | TAK: Zweryfikowane w obu, maszynowo. Ballista: `partitioning=Hash([chrom@0], 4)` w `EXPLAIN ANALYZE` (merge, subtract). Sail: `groupBy("chrom")`, od Fazy H bez wymuszania jednej partycji |
 | UDF/UDTF faktycznie woła polars-bio, nie reimplementuje algorytmu | TAK: Potwierdzone w obu (Ballista woła `datafusion-bio-function-ranges` — silnik pod polars-bio; Sail UDTF woła `pb.overlap()` wprost) |
 
 # 6. Znaleziska i różnice semantyczne między silnikami/bibliotekami
@@ -334,15 +441,29 @@ udokumentowaną przyczyną.
   odpowiedzi poprawne co do dystansu, różny wybór konkretnego partnera.
 - **`coverage`**: `pb.coverage(a, b)` i natywne SQL-owe `coverage('reads', 'targets', ...)` mają
   odwróconą konwencję argumentów — to rzeczywista różnica API między bibliotekami, nie błąd.
-- **Sail/pysail 0.5.3**: brak wsparcia dla argumentów TABLE w UDTF; błąd `LATERAL` nad danymi na
-  wielu partycjach (gubi/duplikuje wiersze, workaround: `.repartition(1)`); `SparkSession.
+- **Sail/pysail 0.5.3**: brak wsparcia dla argumentów TABLE w UDTF; `SparkSession.
   getOrCreate()` jako proces-globalny singleton powodujący błędy „Connection refused” po
   wielokrotnym tworzeniu serwera w jednym procesie (naprawione globalnie przejściem na
   `.create()`); `@udtf` sprawdza tryb (lokalny/zdalny) w momencie definicji klasy, nie
   rejestracji — klasy trzeba budować przez funkcje fabrykujące wywoływane po utworzeniu sesji.
-- **polars-bio**: globalny, mutowalny kontekst DataFusion nie jest bezpieczny przy współbieżnym
-  dostępie z wielu wątków w tym samym procesie (ujawnione przy próbie wielopartycyjnego
-  wykonania UDTF w trybie `local-cluster`).
+- **polars-bio — najistotniejsze znalezisko dla samej biblioteki**: globalny, mutowalny kontekst
+  DataFusion nie jest bezpieczny przy współbieżnym dostępie z wielu wątków w tym samym procesie.
+  Wywołania `pb.*()` z różnych partycji nadpisują sobie zarejestrowane tabele (`s1`/`s2`), przez
+  co część grup cicho gubi wynik. To właśnie temu — a nie żadnemu błędowi Saila — przypisać należy
+  objaw, który przez wcześniejsze fazy wymuszał obejście `.repartition(1)` (sekcja 4.4).
+  Ograniczenie jest usuwalne bez modyfikowania polars-bio (lock po stronie wywołującego,
+  `sail_pb_guard`), ale docelowo warto je usunąć w samej bibliotece.
+
+- **Ballista — dwa zachowania, które cicho zmieniają plan rozproszony**: (1) przy
+  `target_partitions == 1` hash-repartycja nie jest wstawiana w ogóle, więc zapytanie liczy się
+  poprawnie, lecz w jednym etapie — bez objawu, wykrywalne tylko przez `EXPLAIN ANALYZE`;
+  (2) z planu rozproszonego usuwana jest każda repartycja inna niż hash, więc `RoundRobinBatch`
+  wstawiony przez providera znika i nie daje żadnej równoległości.
+
+- **Granica dystrybucji przebiega po założeniach algorytmu, nie po widoczności API**: `cluster`
+  jest jedyną operacją, której nie da się rozproszyć — jego koordynator identyfikatorów to
+  bariera rendez-vous działająca wyłącznie w obrębie jednego procesu. Żadna zmiana widoczności
+  tego nie naprawi (sekcja 4.3).
 
 # 7. Ograniczenia środowiskowe
 
@@ -353,11 +474,100 @@ profilu kompilacji (unikanie wielogodzinnego narzutu linkera), nieuruchamianie c
 Rusta i Pythona równolegle, oraz — jak opisano w sekcji 4.2 — bezpośredni wpływ na wykonalność
 eksperymentu z Kubernetesem/k3s.
 
-# 8. Otwarte kroki i dalsze fazy
+# 8. Przeniesienie prac na GCP
 
-- **Faza D (benchmarking i GCP)** — nierozpoczęta. Wymaga konteneryzacji obu silników,
-  ustalenia dostępu do budżetu/projektu GCP, oraz właściwych pomiarów
-  wydajnościowych przy skalowaniu liczby węzłów i rozmiaru danych.
+Rozdział odpowiada wprost na pytanie postawione przy planowaniu tej fazy: czy do pracy
+z Google Cloud potrzebne jest jakieś IDE od Google, czy można zostać przy VS Code.
+
+## 8.1 Nie, żadne IDE od Google nie jest potrzebne
+
+Dostępne są cztery drogi; wszystkie pozwalają zostać przy VS Code:
+
+1. **VS Code lokalnie + `gcloud` z terminala** — praca dokładnie jak dotąd w WSL, wdrożenie
+   komendą. Wystarcza do wszystkiego, co przygotowano w katalogu `deploy/`.
+2. **Rozszerzenie Cloud Code** — oficjalne, darmowe rozszerzenie Google do VS Code; wciąga
+   do IDE obsługę GKE, Skaffold, `kubectl` i uwierzytelnianie. Przydatne przy pracy
+   z Kubernetesem (czyli przy Sailu). Dalej jest to zwykły VS Code.
+3. **VS Code Remote-SSH do maszyny GCE — rekomendowane dla tego projektu.** Ten sam model
+   pracy co dziś z WSL, tylko „maszyna" stoi w chmurze. Rozwiązuje przy okazji ograniczenie
+   3,5 GB RAM: na `e2-standard-4` (16 GB) kompilacja Rusta może iść równolegle zamiast
+   `CARGO_BUILD_JOBS=1`, a kilkudziesięciominutowe buildy schodzą do kilku minut.
+4. **Cloud Shell / Cloud Workstations** — środowiska hostowane przez Google, dostępne
+   z przeglądarki. Do tego projektu zbędne; wymienione dla kompletności.
+
+**Pułapka specyficzna dla WSL**, warta odnotowania z góry: `gcloud` uruchomiony w WSL zapisuje
+klucze SSH do systemu plików WSL (`~/.ssh/google_compute_engine`), natomiast rozszerzenie
+Remote-SSH w wersji VS Code dla Windows czyta `C:\Users\<user>\.ssh\`. Jeśli VS Code nie
+widzi hosta, klucze trzeba skopiować — albo uruchamiać VS Code z poziomu WSL.
+
+## 8.2 Dlaczego dwa różne modele wdrożenia
+
+Podział nie wynika z wygody, lecz z architektury obu silników:
+
+| | Ballista | Sail |
+|---|---|---|
+| Model | scheduler + executory | driver + workery |
+| Co wystarczy | maszyny GCE + Docker Compose | **wymagany Kubernetes (GKE)** |
+| Dlaczego | Ballista ma udokumentowane wdrożenia Docker / Docker Compose / Kubernetes | Sail ma tylko dwie implementacje `WorkerManager`: `LocalWorkerManager` (workery jako aktory w jednym procesie — używana zarówno przez tryb `local`, jak i `local-cluster`) oraz `KubernetesWorkerManager` |
+
+Ustalenie dotyczące Saila jest potwierdzone empirycznie (sekcja 4.2), nie tylko z lektury
+źródeł. GKE jest zatem bezpośrednim rozwiązaniem problemu, który lokalnie okazał się nie do
+przejścia przy 3,5 GB RAM.
+
+## 8.3 Przygotowane artefakty
+
+Katalog `deploy/` zawiera gotowy punkt startu — **nic nie zostało jeszcze uruchomione w chmurze**:
+
+- `deploy/ballista/` — `Dockerfile` (kompilacja dwuetapowa) i `docker-compose.yml` uruchamiający
+  scheduler i dwa executory jako osobne kontenery. To krok pośredni między trybem `standalone`
+  a GCP: łapie błędy pakowania i konfiguracji sieci lokalnie, czyli tanio.
+- `deploy/sail/` — obraz z pysail, polars-bio i naszymi UDTF-ami (wraz z `sail_pb_guard`,
+  bez którego współbieżne partycje gubią wyniki) oraz manifesty dla trybu `KubernetesCluster`.
+  Workery celowo nie mają własnego manifestu: tworzy je sam sterownik przez API Kubernetesa,
+  stąd potrzebne uprawnienia RBAC do zarządzania podami.
+- `deploy/gcp/` — skrypty `gcloud`: konfiguracja projektu i bucketa, maszyna GCE dla Ballisty,
+  klaster GKE dla Saila, oraz przewodnik po połączeniu VS Code z GCP.
+
+## 8.4 Dane
+
+polars-bio czyta `gs://` przez OpenDAL, więc pliki BED/VCF wgrywa się raz do bucketa GCS
+i podaje ścieżkę `gs://...` zamiast lokalnej — bez kopiowania czegokolwiek na maszyny.
+
+## 8.5 Koszty i jak ich nie przepalić
+
+| Zasób | Koszt orientacyjny (sierpień 2026, `europe-central2`) |
+|---|---|
+| `e2-medium` (2 vCPU / 4 GB) | ok. 0,055 USD/h on-demand; ok. 0,033 USD/h spot |
+| `e2-standard-4` (4 vCPU / 16 GB) | ok. 0,15 USD/h on-demand |
+| Warstwa sterowania GKE | 0,10 USD/h za klaster, ale **pierwszy klaster zonalny darmowy** (kredyt ok. 74,40 USD/mies.) |
+| GCS | ok. 0,02 USD za GB/mies. — przy danych testowych pomijalne |
+| Nowe konto | 300 USD kredytów na 90 dni |
+
+Ponieważ pierwszy darmowy klaster GKE musi być **zonalny**, przygotowany skrypt świadomie
+używa `--zone`, a nie `--region` — klaster regionalny tego kredytu nie otrzymuje.
+
+Dwa nawyki obniżają rachunek najbardziej: zatrzymywanie maszyn po pracy (płaci się za czas
+działania, nie za samo istnienie) oraz używanie maszyn spot do benchmarków (60–70% taniej;
+ryzyko wywłaszczenia jest przy powtarzalnych testach akceptowalne). Warto też od razu ustawić
+budżet z alertem mailowym.
+
+# 9. Otwarte kroki i dalsze fazy
+
+- **Faza D (benchmarking i GCP)** — nierozpoczęta, ale przygotowana: artefakty wdrożeniowe
+  są gotowe (sekcja 8.3). Pozostaje ustalenie dostępu do budżetu/projektu GCP
+  oraz właściwe pomiary przy skalowaniu liczby węzłów i rozmiaru danych. Dopiero teraz mają
+  one sens po obu stronach: Ballista rozprasza cztery operacje z realnym shuffle, a Sail
+  odzyskał równoległość po zdjęciu obejścia `.repartition(1)`.
+- **Klaster Ballista jako osobne procesy** — dotychczasowe wyniki pochodzą z trybu
+  `standalone` (scheduler i executor w jednym procesie). Plan jest tam realnie serializowany
+  i przechodzi przez shuffle, ale nie przez prawdziwą sieć. `deploy/ballista/docker-compose.yml`
+  jest przygotowany; wymaga drobnej zmiany w kodzie: `remote_with_state()` zamiast
+  `standalone_with_state()`.
+- **Zgłoszenie łatek widoczności upstream** do `biodatageeks/datafusion-bio-functions` —
+  obie są czystymi zmianami widoczności, gotowymi jako jeden mały PR. Po ich przyjęciu katalog
+  `vendor/` przestałby być potrzebny.
+- **Usunięcie ograniczenia współbieżności w polars-bio** (sekcja 4.4) — do rozważenia razem
+  na poziomie samej biblioteki.
 - **Synchronizacja i domknięcie zakresu** — aktualizacja `architektura_draft.md` wynikami Faz
   A–C i dotychczasowych prac; pytania nadal otwarte: natywny distributed
   Polars jako trzecia ścieżka porównawcza? Dostępność zasobów GCP?

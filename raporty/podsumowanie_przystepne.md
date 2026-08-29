@@ -185,12 +185,13 @@ liczenie overlap dalej robi polars-bio — tylko wywoływane osobno na każdej p
    się przekazać do UDTF tylko pojedyncze wartości (np. nazwę chromosomu, listę odcinków jako
    jedną skomplikowaną wartość), a nie „prawdziwą” tabelę z wieloma wierszami jako osobny
    argument. Trzeba było to obejść, pakując dane w listy przekazywane jako pojedyncza wartość.
-2. **Błąd przy wielu partycjach jednocześnie** — kiedy dane były podzielone na więcej niż jeden
-   kawałek i UDTF uruchamiał się na kilku kawałkach naraz, część wyników znikała, a część się
-   duplikowała. To błąd samego Saila (a nie naszego kodu) w sposobie łączenia wyników z
-   wieloma kawałkami przy tego typu wywołaniu. Obejście: wymuszenie jednego kawałka danych przed
-   wywołaniem UDTF — naprawia poprawność wyniku, ale kosztem tego, że na tym etapie nie widać
-   jeszcze przyspieszenia z posiadania wielu komputerów (to do poprawy/zbadania w przyszłości).
+2. **Znikające wyniki przy wielu kawałkach naraz** — kiedy dane były podzielone na więcej niż
+   jeden kawałek i UDTF uruchamiał się na kilku kawałkach jednocześnie, część wyników znikała.
+   Obejściem było wymuszenie jednego kawałka danych przed wywołaniem UDTF: naprawiało poprawność,
+   ale kosztem tego, że nie było widać żadnego przyspieszenia z posiadania wielu komputerów.
+
+   **Przez długi czas myśleliśmy, że to błąd Saila. Okazało się, że nie — i to jest jedna
+   z ciekawszych rzeczy, które wyszły w tej pracy.** Wyjaśnienie w Rozdziale 5.
 3. **Rejestracja funkcji „w złym momencie”** — sposób, w jaki Sail sprawdza czy program działa w
    trybie lokalnym czy rozproszonym, robi to zbyt wcześnie (w momencie pisania kodu funkcji, a
    nie w momencie jej faktycznego zarejestrowania) — trzeba było zmienić sposób organizacji kodu,
@@ -300,23 +301,282 @@ pracy: na tej samej maszynie Ballista osiągnęła pełną, prawdziwą dystrybuc
 Sail — nie, z jasno wskazanym i udokumentowanym powodem: jego jedyna lokalnie dostępna,
 naprawdę-wieloprocesowa ścieżka wymaga Kubernetesa, a ten akurat na tym sprzęcie się nie mieści.
 
-# Rozdział 4 — Co to wszystko znaczy dla całej pracy magisterskiej
+# Rozdział 4 — Reszta operacji też rusza z miejsca
+
+Do tej pory rozproszona (czyli licząca się naprawdę na wielu „robotnikach") była tylko jedna
+operacja: **overlap**. Pozostałe cztery — merge, subtract, nearest, coverage — działały tylko
+na jednym komputerze. Ten rozdział opisuje, jak i one ruszyły.
+
+## Najpierw: skąd w ogóle wiadomo, czy coś liczy się rozproszone?
+
+To jest ważniejsze pytanie, niż się wydaje. Zapytanie może dać **w stu procentach poprawny
+wynik** i jednocześnie policzyć się w całości na jednym robotniku — bo poprawność i szybkość to
+dwie różne rzeczy. Gdyby ktoś oceniał tylko wynik, mógłby ogłosić sukces tam, gdzie nic się
+nie rozproszyło.
+
+Na szczęście Ballista potrafi pokazać „paragon" z wykonania zapytania. Wystarczy poprosić ją
+o `EXPLAIN ANALYZE`, a wypisze coś takiego:
+
+```
+=====Etap 1, liczba kawałków: 2=====
+  Rozeslij dane, dzielac je wg chromosomu na 4 kubelki
+    Czytaj pliki: [a_part1.csv], [a_part2.csv]     <- dwa pliki, dwa osobne zadania
+
+=====Etap 2, liczba kawałków: 4=====
+  MergeExec (nasza operacja genomiczna)
+    Odbierz dane z sieci, podzielone wg chromosomu  <- dane przyszły od innego etapu
+```
+
+To jest twardy dowód: widać, że zapytanie zostało pocięte na etapy, że dane faktycznie poszły
+przez sieć i że na końcu pracowały cztery kawałki naraz. Napisaliśmy zestaw testów, które
+czytają taki paragon i **sprawdzają go automatycznie** — żeby nikt (łącznie z nami) nie musiał
+wierzyć na słowo.
+
+## Sprytna sztuczka: dane ułożone tak, żeby błąd był widoczny
+
+Jest jeszcze drugi, jeszcze lepszy dowód — ukryty w samych danych testowych.
+
+Mamy dwa odcinki, które się nakładają: `gene_A1` od 100 do 200 i `gene_A2` od 150 do 300.
+Operacja `merge` powinna je skleić w jeden odcinek od 100 do 300.
+
+Celowo umieściliśmy je w **dwóch różnych plikach wejściowych**. Dzięki temu na starcie trafiają
+do dwóch różnych robotników. Żeby dały się skleić, muszą najpierw zostać przeniesione przez sieć
+do jednego miejsca — właśnie po to jest „rozsyłanie wg chromosomu".
+
+Efekt: jeśli rozpraszanie kiedykolwiek przestanie działać, wynik nie będzie po prostu wolniejszy
+— będzie **zły**, i to w bardzo widoczny sposób (dwa osobne odcinki zamiast jednego sklejonego).
+Test poprawności stał się w ten sposób testem rozproszenia.
+
+## Co trzeba było zrobić
+
+Przypomnijmy problem z Rozdziału 2: żeby przesłać niestandardowy krok przepisu do robotnika,
+trzeba napisać „tłumacza" (kodek). Żeby napisać tłumacza dla danej operacji, trzeba móc ją
+z zewnątrz **nazwać** i **odtworzyć**.
+
+Wcześniej uznaliśmy, że dla tych czterech operacji to niewykonalne. **Ta ocena była
+przedwczesna** — powstała, zanim zrobiliśmy sobie lokalną kopię biblioteki. Po ponownym
+sprawdzeniu okazało się, że wystarczy ta sama drobna zmiana co poprzednio: dopisanie słowa
+`pub` („to jest publiczne") w kilkudziesięciu miejscach. Zero zmian w tym, *co* kod robi —
+wyłącznie w tym, *kto może się do niego odwołać*. Wracając do wcześniejszej analogii: znów
+chodziło o zostawienie klucza do szuflady, a nie o zmianę jej zawartości.
+
+## Dwa różne sposoby rozpraszania
+
+Operacje podzieliły się na dwie grupy — i to nie jest przypadek, tylko konsekwencja tego, co
+która operacja robi:
+
+**Grupa pierwsza — „roześlij wszystkich wg chromosomu" (merge, subtract).**
+Te operacje przetwarzają odcinki chromosom po chromosomie. Wystarczy więc rozesłać dane tak,
+żeby wszystko z `chr1` trafiło do jednego robotnika, a wszystko z `chr2` do drugiego. Potem każdy
+pracuje niezależnie. To najczystsza postać rozproszenia.
+
+Przy `subtract` dzieje się to po **obu** stronach naraz (bo odejmujemy jedne odcinki od drugich),
+więc plan ma cztery etapy zamiast trzech — najbardziej rozbudowany przypadek w całej pracy.
+
+**Grupa druga — „rozdaj wszystkim kopię książki" (nearest, coverage).**
+Tu jest inaczej. Żeby znaleźć najbliższego sąsiada, trzeba móc przeszukać *całą* drugą tabelę,
+a nie tylko jej kawałek. Rozwiązanie: mniejsza tabela jest **wysyłana w całości do każdego
+robotnika** razem z przepisem, a zrównoleglone jest przetwarzanie tej większej. To znany wzorzec
+i ma swoją nazwę: *broadcast join*.
+
+Ma też swoją granicę, którą trzeba uczciwie odnotować: przepis wraz z dołączoną tabelą wędruje
+przez sieć jako jedna paczka, a Ballista ma limit **16 MB** na taką paczkę. Dla małych tabel
+adnotacji to bez znaczenia; dla dużych ta metoda przestanie działać i trzeba by innej.
+
+## Jedna operacja, której nie da się rozproszyć — i dlaczego to dobra wiadomość
+
+Piąta operacja z biblioteki, **cluster**, nie poddaje się i nie podda się żadną sztuczką
+z widocznością. Warto zrozumieć dlaczego, bo to mówi coś ogólnego.
+
+`cluster` numeruje znalezione skupiska odcinków: 1, 2, 3... Żeby nadać numery, musi wiedzieć,
+ile skupisk znaleźli **wszyscy pozostali**, bo inaczej dwóch robotników przydzieliłoby ten sam
+numer dwóm różnym skupiskom. W kodzie jest to zrobione tak, że wszyscy zatrzymują się i czekają
+na siebie nawzajem w jednym miejscu — jak zbiórka przed wyjściem.
+
+Taka zbiórka działa, dopóki wszyscy są w tym samym pokoju (procesie). Po rozproszeniu na osobne
+maszyny każdy robotnik miałby **własną, osobną zbiórkę** — i albo czekałby w nieskończoność na
+kolegów, którzy nigdy nie przyjdą, albo ruszyłby sam i nadał numery kolidujące z cudzymi.
+
+To jest ważny wniosek, wart zapisania w pracy: **granica rozpraszania nie przebiega tam, gdzie
+kończy się dostępność API, tylko tam, gdzie algorytm zakłada, że wszyscy widzą wspólną pamięć.**
+Czterech operacji dało się rozproszyć, bo każda przetwarza swój kawałek niezależnie. Piątej nie,
+bo z założenia wymaga uzgodnienia między wszystkimi.
+
+# Rozdział 5 — Sail: oskarżyliśmy niewinnego
+
+To jest historia o pomyłce, którą udało się naprawić — i chyba najciekawszy pojedynczy wynik
+całej tej części pracy.
+
+## Co myśleliśmy
+
+Przypomnijmy problem #2 z Rozdziału 3: gdy UDTF uruchamiał się na kilku kawałkach danych naraz,
+część wyników znikała. Wniosek wydawał się oczywisty: **Sail ma błąd**. Zapisaliśmy to jako
+usterkę Saila i zastosowaliśmy obejście — wymuszenie jednego kawałka.
+
+Obejście działało, ale miało poważny koszt: skoro wszystko liczy się w jednym kawałku, to Sail
+nie może pokazać *żadnego* przyspieszenia z posiadania wielu komputerów. Dla pracy, która ma
+porównywać wydajność dwóch silników, to poważny problem.
+
+## Jak sprawdziliśmy
+
+Zamiast dalej zakładać, zrobiliśmy serię eksperymentów — za każdym razem **bez** obejścia,
+i za każdym razem po kilka powtórzeń (bo błąd pojawiał się losowo, więc jedno przejście niczego
+by nie dowiodło):
+
+| Co uruchomiliśmy | Ile razy poprawnie |
+|---|---|
+| UDTF liczący merge **własnym kodem w Pythonie**, bez polars-bio | 3 na 3 |
+| UDTF wołający polars-bio | 1 na 3 |
+| UDTF wołający polars-bio + nasza funkcja „czyszcząca" | 0 na 3 |
+| Zupełnie inny mechanizm Saila (`applyInPandas`) + polars-bio | 0 na 3 |
+
+Pierwszy wiersz przesądza sprawę. **Dokładnie ten sam kształt zapytania**, ta sama liczba
+kawałków, ten sam mechanizm Saila — ale operacja policzona zwykłym kodem w Pythonie zamiast
+przez polars-bio. Wynik: bezbłędnie, za każdym razem.
+
+Czyli Sail rozsyła dane i zbiera wyniki prawidłowo. Winowajca jest gdzie indziej.
+
+## Co się naprawdę działo
+
+polars-bio trzyma **jedną wspólną „tablicę roboczą"** dla całego programu. Gdy wywołujesz
+`pb.merge()`, biblioteka zapisuje na niej dane wejściowe pod ustalonymi nazwami, liczy i sprząta.
+
+Dopóki liczy jedna rzecz naraz, wszystko gra. Ale gdy dwóch robotników w tym samym procesie
+zacznie liczyć **jednocześnie**, obaj piszą po tej samej tablicy. Jeden zamazuje dane drugiego —
+i ten drugi dostaje pusty albo błędny wynik. Nie ma żadnego komunikatu o błędzie; wynik po prostu
+cicho znika.
+
+Gorzej: nasza własna funkcja „czyszcząca tablicę przed użyciem", którą dodaliśmy wcześniej
+w dobrej wierze, **pogarszała sprawę**. Skoro jawnie wycierała tablicę, to robotnik potrafił
+wytrzeć dane koledze w trakcie liczenia — i z losowego błędu robił się błąd systematyczny.
+Stąd 0 na 3 zamiast 1 na 3.
+
+## Naprawa
+
+Rozwiązanie okazało się proste: **kolejka do tablicy**. Zanim robotnik zacznie liczyć, bierze
+„klucz"; kto nie ma klucza, czeka. Po skończeniu oddaje klucz następnemu. W programowaniu nazywa
+się to *lock*.
+
+Był jeden haczyk. Sail wysyła funkcję użytkownika do robotników, „pakując" ją — a kluczy tego
+typu nie da się zapakować (dostawaliśmy błąd wprost o tym mówiący). Rozwiązanie: klucz nie
+podróżuje razem z funkcją. Leży w osobnym, wspólnym pliku (module), a funkcja tylko mówi „weź
+klucz stamtąd". Wtedy pakowana jest sama *notatka, gdzie leży klucz*, a nie klucz.
+
+Wynik: **5 uruchomień na 5 poprawnych, bez obejścia.** Sail znów liczy na wielu kawałkach naraz.
+
+## Dlaczego to ważne dla pracy
+
+Po pierwsze, **z Saila zdjęty został niesłuszny zarzut**. Praca ma porównywać silniki uczciwie,
+a przypisanie komuś błędu, którego nie popełnił, jest po prostu nierzetelne.
+
+Po drugie, **Sail odzyskał równoległość** — bez tego przyszłe pomiary wydajności nie miałyby dla
+niego sensu.
+
+Po trzecie — i to być może najciekawsze — po drodze zidentyfikowaliśmy **prawdziwe ograniczenie
+polars-bio**: biblioteka nie jest przygotowana na to, że kilka rzeczy będzie ją wołać naraz
+w jednym procesie. Da się to obejść z zewnątrz (i obeszliśmy), ale docelowo warto naprawić
+u źródła.
+
+# Rozdział 6 — Jak przenieść to wszystko do chmury Google
+
+## Czy trzeba jakiegoś specjalnego programu od Google?
+
+**Nie.** Można zostać przy VS Code. Są cztery drogi:
+
+1. **VS Code jak dotąd + jedno narzędzie do wpisywania komend** (`gcloud`). Piszesz kod
+   dokładnie tak jak teraz, a wysyłasz go do chmury komendą. To wystarcza do wszystkiego.
+2. **Dodatek „Cloud Code"** — oficjalna, darmowa wtyczka Google do VS Code. Wciąga podgląd
+   chmury do okna edytora. Przydatna, ale nieobowiązkowa. To dalej jest VS Code.
+3. **Podłączenie VS Code do komputera stojącego w chmurze** (Remote-SSH) — **to polecam
+   najbardziej**. Wygląda i działa dokładnie tak, jak dzisiejsza praca w WSL: to samo okno, te
+   same pliki, ten sam terminal. Różnica jest jedna: „komputer" pod spodem stoi w serwerowni
+   Google i ma na przykład 16 GB pamięci zamiast 3,5 GB. To znaczy koniec z kompilacją na
+   jednym rdzeniu i koniec z zawieszaniem się przy większych zadaniach.
+4. **Środowisko w przeglądarce** (Cloud Shell) — istnieje, ale do tego projektu niepotrzebne.
+
+Jedna praktyczna pułapka, o której warto wiedzieć zawczasu: klucze dostępowe generowane
+w Linuksie pod Windowsem (WSL) lądują w innym miejscu, niż szuka ich VS Code w wersji dla
+Windows. Jeśli połączenie nie zadziała za pierwszym razem, to najpewniej dlatego — wystarczy
+skopiować pliki kluczy. Dokładna instrukcja jest w repozytorium.
+
+## Co gdzie postawić
+
+Dwa silniki wymagają dwóch różnych układów — i to nie jest widzimisię, tylko wynika z tego, jak
+są zbudowane:
+
+**Ballista** wystarczy postawić na **jednej albo kilku zwykłych maszynach w chmurze**. Ballista
+ma gotową, opisaną w dokumentacji obsługę kontenerów, więc uruchamia się to jedną komendą.
+
+**Sail wymaga Kubernetesa** — i to nie jest wybór, tylko konieczność. Jak ustaliliśmy wcześniej
+(Rozdział 3), Sail ma tylko dwa sposoby uruchamiania robotników: „wszyscy w jednym procesie"
+albo „każdy jako osobny kontener zarządzany przez Kubernetes". Trzeciej opcji nie ma. Właśnie
+dlatego lokalna próba się nie powiodła — Kubernetes nie zmieścił się w 3,5 GB pamięci.
+W chmurze ten problem znika.
+
+## Co to jest Kubernetes (raz jeszcze, krótko)
+
+To „brygadzista" dla kontenerów. Sam decyduje, na której maszynie co uruchomić, restartuje to,
+co padło, i dokłada mocy, gdy trzeba. Google udostępnia go jako gotową usługę (GKE), więc nie
+trzeba go instalować ani utrzymywać — wystarczy poprosić o klaster jedną komendą.
+
+## Co jest już przygotowane
+
+W repozytorium leży katalog `deploy/` z gotowymi „przepisami": jak zapakować oba silniki do
+kontenerów, jak poprosić Google o maszyny, jak wgrać dane. **Nic z tego nie zostało jeszcze
+uruchomione w chmurze** — to punkt startu na moment, gdy będzie dostęp do projektu i budżetu.
+
+## Ile to kosztuje
+
+| Co | Ile mniej więcej |
+|---|---|
+| Zwykła maszyna (2 rdzenie, 4 GB) | ok. 0,055 USD za godzinę |
+| Mocniejsza maszyna (4 rdzenie, 16 GB) | ok. 0,15 USD za godzinę |
+| Kubernetes | pierwszy klaster **za darmo**, płaci się tylko za maszyny |
+| Nowe konto | 300 USD kredytu na start (90 dni) |
+
+Dla porównania: cały dzień pracy na mocniejszej maszynie to jakieś 1,2 USD. Kredyt na start
+spokojnie wystarczy na wszystkie eksperymenty tej pracy.
+
+Dwie zasady, które najbardziej chronią budżet: **wyłączaj maszyny, gdy ich nie używasz** (płaci
+się za czas działania, nie za samo posiadanie) i **do pomiarów używaj maszyn „z odzysku"**
+(60–70% taniej; mogą zostać zabrane w trakcie, co przy powtarzalnych testach nie przeszkadza).
+Warto też od razu ustawić alert mailowy o przekroczeniu budżetu.
+
+# Rozdział 7 — Co to wszystko znaczy dla całej pracy magisterskiej
 
 Założenia projektu były jasne: mechanizm dodawania własnych funkcji do silnika rozproszonego
 bez jego modyfikowania (forkowania), i to dla **obu** silników — Ballista i Sail. Oba te warunki
 zostały spełnione dla wszystkich pięciu podstawowych operacji genomicznych (overlap, merge,
-nearest, coverage, subtract), a dla najważniejszej z nich (overlap) osiągnięto dodatkowo pełną
-dystrybucję z zachowaniem najszybszego znanego algorytmu (COITrees) — i to tylko w Ballistrze,
-co samo w sobie jest ciekawym wynikiem porównawczym (Ballista, będąca bezpośrednią nakładką na
-DataFusion, ma dziś dojrzalszy mechanizm rozszerzeń niż Sail, który dopiero projektuje swój
-odpowiednik).
+nearest, coverage, subtract).
+
+Co więcej, **wszystkie pięć liczy się dziś w Ballistrze rozproszone**, a nie tylko jedna, jak
+było na wcześniejszym etapie. Cztery z nich (merge, subtract, nearest, coverage) doszły do tego
+w ostatniej turze prac — i to po tym, jak wcześniejsza ocena uznała to za niewykonalne. Warto
+z tego wyciągnąć wniosek metodologiczny: ta ocena nie była zmyślona, tylko **przedwczesna** —
+opierała się na stanie rzeczy sprzed pewnej zmiany (zrobienia lokalnej kopii biblioteki) i nie
+została ponownie sprawdzona po tej zmianie.
+
+Piąta operacja z biblioteki, `cluster`, pozostaje niewykonalna — ale z konkretnego, dobrze
+zrozumianego powodu (jej algorytm zakłada, że wszyscy pracują we wspólnej pamięci), co samo
+w sobie jest wynikiem wartym opisania.
+
+Po stronie Saila najważniejsze okazało się coś, czego nikt nie planował: **naprawienie własnej
+pomyłki**. Objaw, który przez kilka etapów pracy przypisywaliśmy błędowi Saila, okazał się
+ograniczeniem polars-bio. Po jego obejściu Sail odzyskał równoległość, a praca — uczciwe
+podstawy do porównania obu silników.
 
 Właściwe „wpisanie” tego mechanizmu na stałe do samej biblioteki polars-bio (żeby użytkownik
 mógł po prostu napisać `pb.overlap(..., engine="ballista")`) zostało świadomie odłożone — bo to
 decyzja dotycząca samej biblioteki, a nie coś, co powinno
 zostać „przy okazji” wpisane na stałe bez jego zgody.
 
-Do zrobienia zostają przede wszystkim: prawdziwe pomiary wydajności na większych danych i
-większej liczbie komputerów (najpewniej w chmurze, bo lokalna maszyna, jak pokazał ten rozdział,
-ma zbyt mało zasobów na cięższe eksperymenty), oraz omówienie podsumowujące te
-wyniki i ustalająca dalsze priorytety.
+Do zrobienia zostają przede wszystkim: **prawdziwe pomiary wydajności** na większych danych
+i większej liczbie komputerów — i dopiero teraz mają one sens po obu stronach, bo oba silniki
+faktycznie coś zrównoleglają. Najpewniej w chmurze, bo lokalna maszyna, jak pokazały te
+rozdziały, po prostu nie ma na to zasobów; przepisy wdrożeniowe są już przygotowane
+(Rozdział 6).
+
+Poza tym: zgłoszenie obu drobnych poprawek widoczności autorom biblioteki (po ich przyjęciu
+lokalna kopia przestanie być potrzebna) oraz omówienie wyników — zarówno podsumowujące te
+wyniki, jak i dotycząca tego, czy warto usunąć wykryte ograniczenie współbieżności w samym
+polars-bio.
