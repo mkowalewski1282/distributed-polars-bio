@@ -132,6 +132,13 @@ pub enum DistPayload {
         min_dist: i64,
         strict: bool,
     },
+    Subtract {
+        left: TableRef,
+        right: TableRef,
+        lcols: Cols,
+        rcols: Cols,
+        strict: bool,
+    },
 }
 
 impl DistPayload {
@@ -139,6 +146,7 @@ impl DistPayload {
         match self {
             DistPayload::Overlap { .. } => DistOp::Overlap,
             DistPayload::Merge { .. } => DistOp::Merge,
+            DistPayload::Subtract { .. } => DistOp::Subtract,
         }
     }
 
@@ -147,6 +155,7 @@ impl DistPayload {
         match self {
             DistPayload::Overlap { left, right, .. } => vec![left, right],
             DistPayload::Merge { table, .. } => vec![table],
+            DistPayload::Subtract { left, right, .. } => vec![left, right],
         }
     }
 
@@ -177,6 +186,19 @@ impl DistPayload {
                 write_i64(&mut buf, *min_dist);
                 write_bool(&mut buf, *strict);
             }
+            DistPayload::Subtract {
+                left,
+                right,
+                lcols,
+                rcols,
+                strict,
+            } => {
+                write_table(&mut buf, left);
+                write_table(&mut buf, right);
+                write_cols(&mut buf, &lcols.as_tuple());
+                write_cols(&mut buf, &rcols.as_tuple());
+                write_bool(&mut buf, *strict);
+            }
         }
         buf
     }
@@ -199,6 +221,13 @@ impl DistPayload {
                 table: read_table(buf, &mut pos).ok()?,
                 cols: read_cols_struct(buf, &mut pos).ok()?,
                 min_dist: read_i64(buf, &mut pos).ok()?,
+                strict: read_bool(buf, &mut pos).ok()?,
+            }),
+            DistOp::Subtract => Some(DistPayload::Subtract {
+                left: read_table(buf, &mut pos).ok()?,
+                right: read_table(buf, &mut pos).ok()?,
+                lcols: read_cols_struct(buf, &mut pos).ok()?,
+                rcols: read_cols_struct(buf, &mut pos).ok()?,
                 strict: read_bool(buf, &mut pos).ok()?,
             }),
             // Pozostałe operacje dochodzą w kolejnych krokach Fazy H.

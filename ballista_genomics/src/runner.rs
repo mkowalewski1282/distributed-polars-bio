@@ -84,6 +84,21 @@ pub fn spec(op: DistOp) -> OpSpec {
             explain_txt: "output/dist_merge_explain.txt",
             title: "dist_merge w pełni rozproszony (hash-shuffle po chrom)",
         },
+        DistOp::Subtract => OpSpec {
+            // Wezel BINARNY: obie strony musza byc ko-partycjonowane po chrom,
+            // bo SubtractExec::execute(partition) siega po TE SAMA partycje z
+            // lewej i prawej strony. DataFusion wymusza to przez needs_alignment
+            // (gdy choc jedno dziecko wymaga hasha, wszystkie hash-owe dzieci
+            // dostaja hash_necessary=true) — stad oczekiwane 2x Hash([chrom.
+            sql: "SELECT * FROM dist_subtract('intervals_a', 'data/parts_a', \
+                                              'intervals_b', 'data/parts_b', \
+                                              'chrom', 'start', 'end', 'strict') \
+                  ORDER BY chrom, start"
+                .to_string(),
+            output_csv: "output/dist_subtract_result.csv",
+            explain_txt: "output/dist_subtract_explain.txt",
+            title: "dist_subtract w pełni rozproszony (dwustronny hash-shuffle)",
+        },
         other => panic!("runner::spec: brak specyfikacji dla operacji {other:?}"),
     }
 }

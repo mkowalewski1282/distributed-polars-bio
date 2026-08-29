@@ -27,5 +27,5 @@ pub use physical_planner::IntervalJoinPhysicalOptimizationRule;
 pub use physical_planner::intervals::{ColInterval, ColIntervals, parse as parse_intervals}; // PATCH, patrz ../PATCH.md
 pub use physical_planner::joins::interval_join::IntervalJoinExec;
 pub use session_context::{Algorithm, BioConfig, BioSessionExt, create_bio_session};
-pub use subtract::SubtractProvider;
+pub use subtract::{SubtractExec, SubtractProvider}; // PATCH: SubtractExec, patrz ../PATCH.md
 pub use table_function::register_ranges_functions;

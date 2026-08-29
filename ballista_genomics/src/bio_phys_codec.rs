@@ -26,7 +26,7 @@ use datafusion::execution::TaskContext;
 use datafusion::physical_expr::{EquivalenceProperties, Partitioning};
 use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::{ExecutionPlan, PlanProperties};
-use datafusion_bio_function_ranges::MergeExec;
+use datafusion_bio_function_ranges::{MergeExec, SubtractExec};
 use datafusion_proto::physical_plan::PhysicalExtensionCodec;
 
 use crate::codec_io::*;
@@ -35,6 +35,7 @@ use crate::physical_codec::IntervalJoinPhysicalCodec;
 pub const BIO_PHYS_MAGIC: u32 = 0xD157_0003;
 
 const TAG_MERGE: u8 = 1;
+const TAG_SUBTRACT: u8 = 2;
 
 #[derive(Debug)]
 pub struct BioRangesPhysicalCodec {
@@ -83,6 +84,80 @@ fn build_merge_exec(
     Arc::new(exec).with_new_children(vec![input])
 }
 
+/// Wezel BINARNY - pierwszy z dwojgiem dzieci. DataFusion serializuje oba
+/// poddrzewa rekurencyjnie PRZED wywolaniem kodeka i podaje je w `inputs`,
+/// wiec my zapisujemy wylacznie wlasne parametry wezla.
+fn build_subtract_exec(
+    left: Arc<dyn ExecutionPlan>,
+    right: Arc<dyn ExecutionPlan>,
+    schema: datafusion::arrow::datatypes::SchemaRef,
+    left_columns: (String, String, String),
+    right_columns: (String, String, String),
+    left_contig_col_idx: usize,
+    strict: bool,
+    has_extra_cols: bool,
+) -> Result<Arc<dyn ExecutionPlan>> {
+    let exec = SubtractExec {
+        schema: Arc::clone(&schema),
+        left: Arc::clone(&left),
+        right: Arc::clone(&right),
+        left_columns: Arc::new(left_columns),
+        right_columns: Arc::new(right_columns),
+        left_contig_col_idx,
+        strict,
+        has_extra_cols,
+        cache: placeholder_props(schema),
+    };
+    Arc::new(exec).with_new_children(vec![left, right])
+}
+
+fn encode_subtract(sx: &SubtractExec, buf: &mut Vec<u8>) -> Result<()> {
+    write_magic(buf, BIO_PHYS_MAGIC);
+    write_u8(buf, TAG_SUBTRACT);
+    write_bool(buf, sx.strict);
+    write_schema(buf, sx.schema.as_ref())?;
+    write_cols(buf, sx.left_columns.as_ref());
+    write_cols(buf, sx.right_columns.as_ref());
+    write_u32(buf, sx.left_contig_col_idx as u32);
+    // `has_extra_cols` zapisujemy JAWNIE, mimo ze dalo by sie je wyprowadzic ze
+    // schematu (`fields().len() > 3`). Wyprowadzanie powielaloby logike
+    // SubtractProvider::new i rozjechaloby sie przy tabeli o dokladnie trzech
+    // kolumnach o innej semantyce.
+    write_bool(buf, sx.has_extra_cols);
+    Ok(())
+}
+
+fn decode_subtract(
+    buf: &[u8],
+    pos: &mut usize,
+    inputs: &[Arc<dyn ExecutionPlan>],
+) -> Result<Arc<dyn ExecutionPlan>> {
+    let strict = read_bool(buf, pos)?;
+    let schema = read_schema(buf, pos)?;
+    let left_columns = read_cols(buf, pos)?;
+    let right_columns = read_cols(buf, pos)?;
+    let left_contig_col_idx = read_u32(buf, pos)? as usize;
+    let has_extra_cols = read_bool(buf, pos)?;
+    let left = inputs
+        .first()
+        .ok_or_else(|| DataFusionError::Internal("SubtractExec: brak lewego wejscia".into()))?
+        .clone();
+    let right = inputs
+        .get(1)
+        .ok_or_else(|| DataFusionError::Internal("SubtractExec: brak prawego wejscia".into()))?
+        .clone();
+    build_subtract_exec(
+        left,
+        right,
+        schema,
+        left_columns,
+        right_columns,
+        left_contig_col_idx,
+        strict,
+        has_extra_cols,
+    )
+}
+
 fn encode_merge(m: &MergeExec, buf: &mut Vec<u8>) -> Result<()> {
     write_magic(buf, BIO_PHYS_MAGIC);
     write_u8(buf, TAG_MERGE);
@@ -114,6 +189,9 @@ impl PhysicalExtensionCodec for BioRangesPhysicalCodec {
         if let Some(m) = node.as_any().downcast_ref::<MergeExec>() {
             return encode_merge(m, buf);
         }
+        if let Some(sx) = node.as_any().downcast_ref::<SubtractExec>() {
+            return encode_subtract(sx, buf);
+        }
         self.inner.try_encode(node, buf)
     }
 
@@ -130,6 +208,7 @@ impl PhysicalExtensionCodec for BioRangesPhysicalCodec {
         let tag = read_u8(buf, &mut pos)?;
         match tag {
             TAG_MERGE => decode_merge(buf, &mut pos, inputs),
+            TAG_SUBTRACT => decode_subtract(buf, &mut pos, inputs),
             other => Err(DataFusionError::Internal(format!(
                 "BioRangesPhysicalCodec: nieznany tag operacji {other}"
             ))),

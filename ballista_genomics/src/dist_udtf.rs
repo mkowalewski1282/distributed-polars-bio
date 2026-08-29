@@ -83,6 +83,34 @@ fn parse_merge(args: &[Expr]) -> Result<DistPayload> {
     })
 }
 
+fn parse_subtract(args: &[Expr]) -> Result<DistPayload> {
+    if args.len() < 7 {
+        return Err(DataFusionError::Plan(
+            "dist_subtract() oczekuje: left_table, left_path, right_table, right_path, \
+             col_chrom, col_start, col_end [, 'strict'|'weak']"
+                .to_string(),
+        ));
+    }
+    let cols = Cols(
+        expect_string_literal(args, 4, "dist_subtract")?,
+        expect_string_literal(args, 5, "dist_subtract")?,
+        expect_string_literal(args, 6, "dist_subtract")?,
+    );
+    Ok(DistPayload::Subtract {
+        left: TableRef::new(
+            expect_string_literal(args, 0, "dist_subtract")?,
+            expect_string_literal(args, 1, "dist_subtract")?,
+        ),
+        right: TableRef::new(
+            expect_string_literal(args, 2, "dist_subtract")?,
+            expect_string_literal(args, 3, "dist_subtract")?,
+        ),
+        lcols: cols.clone(),
+        rcols: cols,
+        strict: optional_strict(args, 7),
+    })
+}
+
 fn parse_overlap(args: &[Expr]) -> Result<DistPayload> {
     if args.len() < 7 {
         return Err(DataFusionError::Plan(
@@ -114,6 +142,7 @@ impl TableFunctionImpl for DistTableFunction {
         let payload = match self.op {
             DistOp::Overlap => parse_overlap(args)?,
             DistOp::Merge => parse_merge(args)?,
+            DistOp::Subtract => parse_subtract(args)?,
             other => {
                 return Err(DataFusionError::Plan(format!(
                     "{}(): operacja jeszcze nie zaimplementowana w tej wersji",

@@ -100,6 +100,48 @@ def test_merge_compute_stage_is_parallel():
 
 
 # --------------------------------------------------------------------------
+# subtract — wzorzec DWUSTRONNEGO hash-shuffle (węzeł binarny)
+# --------------------------------------------------------------------------
+
+
+def test_subtract_has_two_shuffled_inputs():
+    """
+    SubtractExec jest węzłem binarnym: `execute(partition)` sięga po tę samą
+    partycję z OBU stron. Obie muszą więc zostać ko-partycjonowane po `chrom`
+    — w planie widać to jako dwa osobne stage'e źródłowe z hash-shuffle.
+    """
+    txt, stages = _explain("subtract")
+    assert len(stages) >= 3, f"subtract potrzebuje >=3 stage'ów:\n{txt}"
+    assert txt.count("partitioning=Hash([chrom") >= 2, (
+        f"obie strony subtract powinny być hash-partycjonowane po chrom:\n{txt}"
+    )
+
+
+def test_subtract_operator_reads_both_sides_from_network():
+    """SubtractExec musi mieć DWA ShuffleReaderExec jako dzieci."""
+    txt, _ = _explain("subtract")
+    assert "SubtractExec" in txt, txt
+    after = txt[txt.index("SubtractExec"):]
+    # obcinamy do konca tego stage'a, zeby nie liczyc czytnikow z nastepnych
+    stage_end = after.find("=========SuccessfulStage")
+    block = after if stage_end == -1 else after[:stage_end]
+    readers = len(re.findall(r"ShuffleReaderExec: partitioning: Hash\(\[chrom", block))
+    assert readers == 2, (
+        f"SubtractExec powinien czytać z 2 ShuffleReaderExec (Hash po chrom), "
+        f"znalazłem {readers}:\n{block}"
+    )
+
+
+def test_subtract_both_source_stages_are_parallel():
+    """Oba stage'e źródłowe (parts_a i parts_b) muszą być równoległe."""
+    txt, stages = _explain("subtract")
+    assert stages[0][1] >= 2 and stages[1][1] >= 2, (
+        f"oba stage'e źródłowe powinny mieć >=2 partycji:\n{txt}"
+    )
+    assert txt.count("file_groups={2 groups:") >= 2, txt
+
+
+# --------------------------------------------------------------------------
 # overlap — asercja DOKUMENTUJĄCA znalezisko (Faza H)
 # --------------------------------------------------------------------------
 

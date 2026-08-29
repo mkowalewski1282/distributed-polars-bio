@@ -26,6 +26,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from tests.coverage_subtract_oracle import reference_subtract
 from tests.merge_oracle import reference_merge_intervals
 
 BALLISTA_DIR = Path(__file__).resolve().parent.parent / "ballista_genomics"
@@ -129,4 +130,29 @@ def test_ballista_distributed_merge_matches_oracle():
     assert ("chr1", 100, 300) in actual, (
         "Brak scalonego [100,300) — interwały z RÓŻNYCH plików wejściowych nie "
         "zostały połączone, co oznacza że hash-shuffle po chrom nie zadziałał."
+    )
+
+
+def test_ballista_distributed_subtract_matches_oracle():
+    """
+    Subtract w pełni rozproszony: DWUSTRONNY hash-shuffle po chromosomie.
+
+    To najsilniejszy demonstrator dystrybucji w tym zestawie — SubtractExec jest
+    węzłem binarnym, a `execute(partition)` sięga po TĘ SAMĄ partycję z lewej
+    i z prawej strony. Poprawny wynik wymaga więc, żeby obie strony zostały
+    ko-partycjonowane po `chrom` na tę samą liczbę partycji. Obie tabele są
+    rozbite na po 2 pliki, więc obie mają równoległy stage źródłowy.
+    """
+    _run_dist("subtract")
+    out = OUTPUT_DIR / "dist_subtract_result.csv"
+    assert out.exists(), f"nie znaleziono {out}"
+
+    df = pd.read_csv(out)
+    actual = {(r.chrom, int(r.start), int(r.end)) for _, r in df.iterrows()}
+    expected = reference_subtract(INTERVALS_A, INTERVALS_B)
+
+    assert actual == expected, (
+        f"Różnica względem wyroczni pb.subtract().\n"
+        f"Tylko w pb.subtract():         {expected - actual}\n"
+        f"Tylko w rozproszonym subtract: {actual - expected}"
     )

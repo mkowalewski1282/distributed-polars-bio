@@ -172,17 +172,18 @@ impl TableProvider for SubtractProvider {
     }
 }
 
+// PATCH (praca magisterska, patrz ../../PATCH.md, Latka 2) - czysta widocznosc.
 #[derive(Debug)]
-struct SubtractExec {
-    schema: SchemaRef,
-    left: Arc<dyn ExecutionPlan>,
-    right: Arc<dyn ExecutionPlan>,
-    left_columns: Arc<(String, String, String)>,
-    right_columns: Arc<(String, String, String)>,
-    left_contig_col_idx: usize,
-    strict: bool,
-    has_extra_cols: bool,
-    cache: Arc<PlanProperties>,
+pub struct SubtractExec {
+    pub schema: SchemaRef,
+    pub left: Arc<dyn ExecutionPlan>,
+    pub right: Arc<dyn ExecutionPlan>,
+    pub left_columns: Arc<(String, String, String)>,
+    pub right_columns: Arc<(String, String, String)>,
+    pub left_contig_col_idx: usize,
+    pub strict: bool,
+    pub has_extra_cols: bool,
+    pub cache: Arc<PlanProperties>,
 }
 
 impl DisplayAs for SubtractExec {

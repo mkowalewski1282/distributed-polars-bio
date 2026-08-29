@@ -23,7 +23,9 @@ use datafusion::error::Result;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::{CsvReadOptions, SessionContext as DFSessionContext};
-use datafusion_bio_function_ranges::{BioSessionExt, FilterOp, MergeProvider, OverlapProvider};
+use datafusion_bio_function_ranges::{
+    BioSessionExt, FilterOp, MergeProvider, OverlapProvider, SubtractProvider,
+};
 
 use crate::dist_payload::DistPayload;
 use crate::runner::bio_session_config;
@@ -106,6 +108,24 @@ impl DistBioProvider {
                 *min_dist,
                 if *strict { FilterOp::Strict } else { FilterOp::Weak },
             )),
+            DistPayload::Subtract {
+                left,
+                right,
+                lcols,
+                rcols,
+                strict,
+            } => {
+                let left_schema = session.table(&left.name).await?.schema().as_arrow().clone();
+                Arc::new(SubtractProvider::new(
+                    Arc::clone(&session),
+                    left.name.clone(),
+                    right.name.clone(),
+                    lcols.as_tuple(),
+                    rcols.as_tuple(),
+                    if *strict { FilterOp::Strict } else { FilterOp::Weak },
+                    left_schema,
+                ))
+            }
         };
 
         Ok(Self { inner, payload })
