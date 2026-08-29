@@ -116,7 +116,22 @@ pub fn spec(op: DistOp) -> OpSpec {
             explain_txt: "output/dist_nearest_explain.txt",
             title: "dist_nearest w pełni rozproszony (broadcast lewej tabeli)",
         },
-        other => panic!("runner::spec: brak specyfikacji dla operacji {other:?}"),
+        DistOp::Coverage => OpSpec {
+            // ODWROCONA KONWENCJA ARGUMENTOW, udokumentowana w Fazie C:
+            // pb.coverage(a, b) raportuje pokrycie interwalow `a` przez `b`,
+            // a SQL-owe coverage('reads','targets',...) odwrotnie. Zeby dostac
+            // wynik identyczny z pb.coverage(INTERVALS_A, INTERVALS_B), wolamy
+            // z intervals_b jako 'reads' i intervals_a jako 'targets' —
+            // dokladnie tak jak coverage_local.rs.
+            sql: "SELECT * FROM dist_coverage('intervals_b', 'data/parts_b', \
+                                              'intervals_a', 'data/parts_a', \
+                                              'chrom', 'start', 'end', 'strict') \
+                  ORDER BY chrom, start"
+                .to_string(),
+            output_csv: "output/dist_coverage_result.csv",
+            explain_txt: "output/dist_coverage_explain.txt",
+            title: "dist_coverage w pełni rozproszony (broadcast + węzeł-nośnik)",
+        },
     }
 }
 

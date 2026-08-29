@@ -158,6 +158,35 @@ fn parse_nearest(args: &[Expr]) -> Result<DistPayload> {
     })
 }
 
+fn parse_coverage(args: &[Expr]) -> Result<DistPayload> {
+    if args.len() < 7 {
+        return Err(DataFusionError::Plan(
+            "dist_coverage() oczekuje: reads_table, reads_path, targets_table, targets_path, \
+             col_chrom, col_start, col_end [, 'strict'|'weak']"
+                .to_string(),
+        ));
+    }
+    let cols = Cols(
+        expect_string_literal(args, 4, "dist_coverage")?,
+        expect_string_literal(args, 5, "dist_coverage")?,
+        expect_string_literal(args, 6, "dist_coverage")?,
+    );
+    Ok(DistPayload::Coverage {
+        left: TableRef::new(
+            expect_string_literal(args, 0, "dist_coverage")?,
+            expect_string_literal(args, 1, "dist_coverage")?,
+        ),
+        right: TableRef::new(
+            expect_string_literal(args, 2, "dist_coverage")?,
+            expect_string_literal(args, 3, "dist_coverage")?,
+        ),
+        lcols: cols.clone(),
+        rcols: cols,
+        strict: optional_strict(args, 7),
+        coverage: true,
+    })
+}
+
 fn parse_overlap(args: &[Expr]) -> Result<DistPayload> {
     if args.len() < 7 {
         return Err(DataFusionError::Plan(
@@ -191,12 +220,7 @@ impl TableFunctionImpl for DistTableFunction {
             DistOp::Merge => parse_merge(args)?,
             DistOp::Subtract => parse_subtract(args)?,
             DistOp::Nearest => parse_nearest(args)?,
-            other => {
-                return Err(DataFusionError::Plan(format!(
-                    "{}(): operacja jeszcze nie zaimplementowana w tej wersji",
-                    other.udtf_name()
-                )));
-            }
+            DistOp::Coverage => parse_coverage(args)?,
         };
 
         // TableFunctionImpl::call jest synchroniczne, a budowa providera wymaga

@@ -149,6 +149,14 @@ pub enum DistPayload {
         include_overlaps: bool,
         compute_distance: bool,
     },
+    Coverage {
+        left: TableRef,
+        right: TableRef,
+        lcols: Cols,
+        rcols: Cols,
+        strict: bool,
+        coverage: bool,
+    },
 }
 
 impl DistPayload {
@@ -158,6 +166,7 @@ impl DistPayload {
             DistPayload::Merge { .. } => DistOp::Merge,
             DistPayload::Subtract { .. } => DistOp::Subtract,
             DistPayload::Nearest { .. } => DistOp::Nearest,
+            DistPayload::Coverage { .. } => DistOp::Coverage,
         }
     }
 
@@ -168,6 +177,7 @@ impl DistPayload {
             DistPayload::Merge { table, .. } => vec![table],
             DistPayload::Subtract { left, right, .. } => vec![left, right],
             DistPayload::Nearest { left, right, .. } => vec![left, right],
+            DistPayload::Coverage { left, right, .. } => vec![left, right],
         }
     }
 
@@ -230,6 +240,21 @@ impl DistPayload {
                 write_bool(&mut buf, *include_overlaps);
                 write_bool(&mut buf, *compute_distance);
             }
+            DistPayload::Coverage {
+                left,
+                right,
+                lcols,
+                rcols,
+                strict,
+                coverage,
+            } => {
+                write_table(&mut buf, left);
+                write_table(&mut buf, right);
+                write_cols(&mut buf, &lcols.as_tuple());
+                write_cols(&mut buf, &rcols.as_tuple());
+                write_bool(&mut buf, *strict);
+                write_bool(&mut buf, *coverage);
+            }
         }
         buf
     }
@@ -271,8 +296,14 @@ impl DistPayload {
                 include_overlaps: read_bool(buf, &mut pos).ok()?,
                 compute_distance: read_bool(buf, &mut pos).ok()?,
             }),
-            // Pozostałe operacje dochodzą w kolejnych krokach Fazy H.
-            _ => None,
+            DistOp::Coverage => Some(DistPayload::Coverage {
+                left: read_table(buf, &mut pos).ok()?,
+                right: read_table(buf, &mut pos).ok()?,
+                lcols: read_cols_struct(buf, &mut pos).ok()?,
+                rcols: read_cols_struct(buf, &mut pos).ok()?,
+                strict: read_bool(buf, &mut pos).ok()?,
+                coverage: read_bool(buf, &mut pos).ok()?,
+            }),
         }
     }
 }

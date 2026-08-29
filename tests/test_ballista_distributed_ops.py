@@ -26,7 +26,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from tests.coverage_subtract_oracle import reference_subtract
+from tests.coverage_subtract_oracle import reference_coverage, reference_subtract
 from tests.merge_oracle import reference_merge_intervals
 from tests.nearest_oracle import reference_nearest_min_distances
 
@@ -224,4 +224,32 @@ def test_distributed_nearest_agrees_with_local_nearest():
         f"left_batch się rozjechała.\n"
         f"Tylko lokalnie:    {local_pairs - dist_pairs}\n"
         f"Tylko rozproszony: {dist_pairs - local_pairs}"
+    )
+
+
+def test_ballista_distributed_coverage_matches_oracle():
+    """
+    Coverage w pełni rozproszony — jedyna operacja wymagająca WŁASNEGO
+    węzła-nośnika (DistCoverageExec), bo CountOverlapsProvider::scan() gubi
+    dane lewej tabeli, nazwy jej kolumn i flagę coverage (patrz coverage_node.rs).
+
+    Uwaga na ODWRÓCONĄ KONWENCJĘ ARGUMENTÓW, udokumentowaną w Fazie C:
+    pb.coverage(a, b) raportuje pokrycie interwałów `a` przez `b`, a SQL-owe
+    coverage('reads','targets') odwrotnie — dlatego dist_coverage jest wołane
+    z intervals_b jako 'reads' i intervals_a jako 'targets'.
+    """
+    _run_dist("coverage")
+    out = OUTPUT_DIR / "dist_coverage_result.csv"
+    assert out.exists(), f"nie znaleziono {out}"
+
+    df = pd.read_csv(out)
+    actual = {
+        (r.chrom, int(r.start), int(r.end), int(r.coverage)) for _, r in df.iterrows()
+    }
+    expected = reference_coverage(INTERVALS_A, INTERVALS_B)
+
+    assert actual == expected, (
+        f"Różnica względem wyroczni pb.coverage().\n"
+        f"Tylko w pb.coverage():         {expected - actual}\n"
+        f"Tylko w rozproszonym coverage: {actual - expected}"
     )

@@ -32,6 +32,7 @@ use datafusion_bio_function_ranges::{
 use datafusion_proto::physical_plan::PhysicalExtensionCodec;
 
 use crate::codec_io::*;
+use crate::coverage_node::{build_count_overlaps_exec, DistCoverageExec};
 use crate::physical_codec::IntervalJoinPhysicalCodec;
 
 pub const BIO_PHYS_MAGIC: u32 = 0xD157_0003;
@@ -39,6 +40,7 @@ pub const BIO_PHYS_MAGIC: u32 = 0xD157_0003;
 const TAG_MERGE: u8 = 1;
 const TAG_SUBTRACT: u8 = 2;
 const TAG_NEAREST: u8 = 3;
+const TAG_COVERAGE: u8 = 4;
 
 #[derive(Debug)]
 pub struct BioRangesPhysicalCodec {
@@ -60,7 +62,7 @@ impl Default for BioRangesPhysicalCodec {
 /// operacja jest `Incremental` czy `Final` - i eliminujemy cala klase bledow
 /// typu "wezel zbudowany lokalnie ma stan, ktory rozproszony executor odrzuca"
 /// (bug `PartitionMode::Auto` z Fazy A.5).
-fn placeholder_props(schema: datafusion::arrow::datatypes::SchemaRef) -> Arc<PlanProperties> {
+pub fn placeholder_props(schema: datafusion::arrow::datatypes::SchemaRef) -> Arc<PlanProperties> {
     Arc::new(PlanProperties::new(
         EquivalenceProperties::new(schema),
         Partitioning::UnknownPartitioning(1),
@@ -265,6 +267,54 @@ fn decode_nearest(
     )
 }
 
+fn encode_coverage(c: &DistCoverageExec, buf: &mut Vec<u8>) -> Result<()> {
+    write_magic(buf, BIO_PHYS_MAGIC);
+    write_u8(buf, TAG_COVERAGE);
+    write_u8(buf, filter_op_to_byte(&c.filter_op));
+    write_schema(buf, c.inner.schema().as_ref())?;
+    // columns_1 i flaga coverage NIE ISTNIEJA w CountOverlapsExec - to wlasnie
+    // po to jest nasz wezel-nosnik (patrz coverage_node.rs).
+    write_cols(buf, c.columns_1.as_ref());
+    write_cols(buf, c.columns_2.as_ref());
+    write_bool(buf, c.coverage);
+    write_batch_ipc(buf, c.left_batch.as_ref())?;
+    Ok(())
+}
+
+fn decode_coverage(
+    buf: &[u8],
+    pos: &mut usize,
+    inputs: &[Arc<dyn ExecutionPlan>],
+) -> Result<Arc<dyn ExecutionPlan>> {
+    let filter_op = byte_to_filter_op(read_u8(buf, pos)?)?;
+    let schema = read_schema(buf, pos)?;
+    let columns_1 = read_cols(buf, pos)?;
+    let columns_2 = read_cols(buf, pos)?;
+    let coverage = read_bool(buf, pos)?;
+    let left_batch = read_batch_ipc(buf, pos)?;
+    let right = inputs
+        .first()
+        .ok_or_else(|| DataFusionError::Internal("DistCoverageExec: brak wejscia".into()))?
+        .clone();
+    let inner = build_count_overlaps_exec(
+        right,
+        schema,
+        &left_batch,
+        &columns_1,
+        columns_2.clone(),
+        filter_op.clone(),
+        coverage,
+    )?;
+    Ok(Arc::new(DistCoverageExec {
+        left_batch: Arc::new(left_batch),
+        columns_1: Arc::new(columns_1),
+        columns_2: Arc::new(columns_2),
+        filter_op,
+        coverage,
+        inner,
+    }))
+}
+
 fn encode_merge(m: &MergeExec, buf: &mut Vec<u8>) -> Result<()> {
     write_magic(buf, BIO_PHYS_MAGIC);
     write_u8(buf, TAG_MERGE);
@@ -302,6 +352,9 @@ impl PhysicalExtensionCodec for BioRangesPhysicalCodec {
         if let Some(n) = node.as_any().downcast_ref::<NearestExec>() {
             return encode_nearest(n, buf);
         }
+        if let Some(c) = node.as_any().downcast_ref::<DistCoverageExec>() {
+            return encode_coverage(c, buf);
+        }
         self.inner.try_encode(node, buf)
     }
 
@@ -320,6 +373,7 @@ impl PhysicalExtensionCodec for BioRangesPhysicalCodec {
             TAG_MERGE => decode_merge(buf, &mut pos, inputs),
             TAG_SUBTRACT => decode_subtract(buf, &mut pos, inputs),
             TAG_NEAREST => decode_nearest(buf, &mut pos, inputs),
+            TAG_COVERAGE => decode_coverage(buf, &mut pos, inputs),
             other => Err(DataFusionError::Internal(format!(
                 "BioRangesPhysicalCodec: nieznany tag operacji {other}"
             ))),

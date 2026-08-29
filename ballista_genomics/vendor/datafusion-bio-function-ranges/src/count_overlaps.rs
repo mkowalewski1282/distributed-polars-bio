@@ -24,8 +24,9 @@ use crate::interval_tree::{
     get_count_stream, get_stream,
 };
 
+// PATCH (praca magisterska, patrz ../../PATCH.md, Latka 2) - czysta widocznosc.
 #[derive(Clone)]
-enum CountOverlapsIndex {
+pub enum CountOverlapsIndex {
     Count(Arc<AHashMap<String, CountOverlapIndex>>),
     Coverage(Arc<AHashMap<String, COITree<(), u32>>>),
 }
@@ -169,13 +170,14 @@ impl TableProvider for CountOverlapsProvider {
     }
 }
 
-struct CountOverlapsExec {
-    schema: SchemaRef,
-    index: CountOverlapsIndex,
-    right: Arc<dyn ExecutionPlan>,
-    columns_2: Arc<(String, String, String)>,
-    filter_op: FilterOp,
-    cache: Arc<PlanProperties>,
+// PATCH (praca magisterska, patrz ../../PATCH.md, Latka 2) - czysta widocznosc.
+pub struct CountOverlapsExec {
+    pub schema: SchemaRef,
+    pub index: CountOverlapsIndex,
+    pub right: Arc<dyn ExecutionPlan>,
+    pub columns_2: Arc<(String, String, String)>,
+    pub filter_op: FilterOp,
+    pub cache: Arc<PlanProperties>,
 }
 
 impl Debug for CountOverlapsExec {

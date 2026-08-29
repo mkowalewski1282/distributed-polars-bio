@@ -27,6 +27,7 @@ use datafusion_bio_function_ranges::{
     BioSessionExt, FilterOp, MergeProvider, NearestProvider, OverlapProvider, SubtractProvider,
 };
 
+use crate::coverage_node::DistCoverageProvider;
 use crate::dist_payload::DistPayload;
 use crate::runner::bio_session_config;
 
@@ -150,6 +151,26 @@ impl DistBioProvider {
                     *include_overlaps,
                     *k as usize,
                     *compute_distance,
+                ))
+            }
+            DistPayload::Coverage {
+                left,
+                right,
+                lcols,
+                rcols,
+                strict,
+                coverage,
+            } => {
+                let right_schema = session.table(&right.name).await?.schema().as_arrow().clone();
+                Arc::new(DistCoverageProvider::new(
+                    Arc::clone(&session),
+                    left.name.clone(),
+                    right.name.clone(),
+                    right_schema,
+                    lcols.as_tuple(),
+                    rcols.as_tuple(),
+                    if *strict { FilterOp::Strict } else { FilterOp::Weak },
+                    *coverage,
                 ))
             }
         };

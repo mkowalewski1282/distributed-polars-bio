@@ -187,6 +187,45 @@ def test_nearest_left_table_travels_in_plan_not_as_scan():
 
 
 # --------------------------------------------------------------------------
+# coverage — broadcast + własny węzeł-nośnik
+# --------------------------------------------------------------------------
+
+
+def test_coverage_uses_carrier_node_with_broadcast():
+    """
+    W planie musi być NASZ węzeł-nośnik z widoczną liczbą broadcastowanych
+    wierszy. `broadcast_rows` w DisplayAs jest celowe: to jednocześnie dowód,
+    że lewa tabela pojechała w ładunku planu, i materiał do oceny, jak blisko
+    jesteśmy limitu 16 MB na wiadomość gRPC.
+    """
+    txt, _ = _explain("coverage")
+    assert re.search(r"DistCoverageExec: coverage=true, broadcast_rows=\d+", txt), txt
+
+
+def test_coverage_compute_stage_is_parallel():
+    """Węzeł coverage musi liczyć się na >1 partycji (równoległość ze źródła)."""
+    txt, stages = _explain("coverage")
+    assert max(p for _, p in stages) >= 2, txt
+    assert re.search(r"file_groups=\{2 groups:", txt), txt
+
+
+def test_coverage_roundrobin_is_absent():
+    """
+    ASERCJA DOKUMENTUJĄCA ZNALEZISKO: `CountOverlapsProvider::scan()` w vendorze
+    wstawia RepartitionExec(RoundRobinBatch), ale Ballista USUWA z planu
+    rozproszonego każdą repartycję inną niż hash
+    (ballista-scheduler/src/planner.rs). Nasz DistCoverageProvider celowo jej
+    więc nie wstawia — dzięki temu plan lokalny i rozproszony mają ten sam
+    kształt, a równoległość bierze się z partycjonowania źródła.
+    """
+    txt, _ = _explain("coverage")
+    assert "RoundRobinBatch" not in txt, (
+        f"RoundRobinBatch pojawił się w planie rozproszonym — sprawdź, czy "
+        f"Ballista zmieniła zachowanie:\n{txt}"
+    )
+
+
+# --------------------------------------------------------------------------
 # overlap — asercja DOKUMENTUJĄCA znalezisko (Faza H)
 # --------------------------------------------------------------------------
 
