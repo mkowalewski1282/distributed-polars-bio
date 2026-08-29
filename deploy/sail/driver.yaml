@@ -1,0 +1,40 @@
+# Sterownik Sail. Workery NIE sa tu opisane celowo — w trybie KubernetesCluster
+# tworzy je sam sterownik przez API Kubernetesa (KubernetesWorkerManager),
+# korzystajac z uprawnien z rbac.yaml.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sail-driver
+  labels:
+    app: sail
+    role: driver
+spec:
+  serviceAccountName: sail-driver
+  restartPolicy: Never
+  containers:
+    - name: driver
+      # PODMIEN na swoj obraz po wypchnieciu do Artifact Registry:
+      #   <REGION>-docker.pkg.dev/<PROJEKT>/genomics/sail-genomics:latest
+      image: sail-genomics:latest
+      imagePullPolicy: IfNotPresent
+      env:
+        # Konfiguracja Saila idzie przez Figment: prefiks SAIL_, zagniezdzenie
+        # przez podwojny underscore.
+        - name: SAIL_MODE
+          value: "kubernetes-cluster"
+        - name: SAIL_CLUSTER__WORKER_INITIAL_COUNT
+          value: "2"
+        # Obraz uzywany dla podow workerow — ten sam co sterownika.
+        - name: SAIL_KUBERNETES__IMAGE
+          value: "sail-genomics:latest"
+        - name: SAIL_KUBERNETES__NAMESPACE
+          value: "default"
+        - name: PYTHONPATH
+          value: "/app"
+      resources:
+        requests:
+          memory: "2Gi"
+          cpu: "1"
+        limits:
+          memory: "4Gi"
+          cpu: "2"

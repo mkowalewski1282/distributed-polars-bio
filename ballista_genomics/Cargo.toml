@@ -4,5 +4,19 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-datafusion = "52.0.0"
+ballista = { version = "53.0.0", features = ["standalone"] }
+datafusion = "=53.0.0"
+datafusion-proto = "53"
+# Lokalna, załatana kopia (jedna linijka widoczności: mod -> pub mod) — patrz
+# vendor/PATCH.md. Potrzebna do PhysicalExtensionCodec dla IntervalJoinExec (Faza A.4b).
+datafusion-bio-function-ranges = { path = "vendor/datafusion-bio-function-ranges" }
 tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+prost = "0.14"
+
+# Środowisko ma tylko 3.5GB RAM — linkowanie tej binarki (Ballista scheduler+executor
+# + cały DataFusion + bio-function-ranges) z pełnym debug info (-C debuginfo=2)
+# wykańczało swap i groziło ponownym zawieszeniem WSL (patrz OPIS.md). Wyłączenie
+# debug info drastycznie zmniejsza zużycie pamięci przez linker (rust-lld).
+[profile.dev]
+debug = false

@@ -74,7 +74,7 @@ def run_sail():
     spark = (
         SparkSession.builder
         .remote(f"sc://{ip}:{port}")
-        .getOrCreate()
+        .create()  # nie .getOrCreate() — patrz sail_overlap_udtf.py
     )
 
     df_a = spark.createDataFrame(INTERVALS_A, schema=SCHEMA)

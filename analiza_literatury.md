@@ -173,14 +173,19 @@ rejestrację zewnętrznych funkcji bez modyfikacji kodu źródłowego Ballistry.
 
 ---
 
-**[12] LakeSail — issue #1062: Supporting Sail Extensions**
-> https://github.com/lakehq/sail/issues/1062
-> Dostęp: 2025
+**[12] LakeSail — issue #1062 / discussion #2001: Supporting Sail Extensions**
+> https://github.com/lakehq/sail/issues/1062 (zamknięty 28.05.2026 jako "completed")
+> https://github.com/lakehq/sail/discussions/2001 (kontynuacja dyskusji, aktywna min. do 28.07.2026)
+> Dostęp: 2026-08
 
-Dyskusja architektoniczna dotycząca mechanizmu rozszerzeń w silniku Sail
-(Spark Connect przez DataFusion). Dokumentuje brak gotowego interfejsu FFI
-dla zewnętrznych rozszerzeń — uzasadnienie odrzucenia Sail jako kandydata
-w niniejszej pracy.
+Dyskusja architektoniczna maintainerów Saila dot. mechanizmu rozszerzeń (`SailExtension`/FFI
+dla UDF/UDTF/optimizer rules/plan extensions, bez forka). **Aktualizacja (sierpień 2026):**
+mechanizm jest wciąż w fazie projektowej, niezaimplementowany — zespół SedonaDB prowadzi
+równoległą, analogiczną integrację (spatial join ≈ genomic interval overlap) na forku
+`james-willis/sail` (branch `sedona-integration`), co stanowi wartościowy precedens/materiał
+porównawczy. Bez forka Sail oferuje dziś jedynie rejestrację Python UDTF (PR #1519, merged) —
+to jest w tej pracy traktowane jako docelowy, legalny (bez forka) poziom integracji dla Saila,
+nie jako powód odrzucenia kandydata.
 
 ---
 
@@ -212,3 +217,28 @@ Implementacja struktury danych Cache Oblivious Interval Trees używanej przez
 polars-bio jako domyślny algorytm dla operacji overlap i nearest. Istotna dla
 rozdziału o algorytmach — w scenariuszu rozproszonym COITrees działa lokalnie
 na każdym węźle po partycjonowaniu danych według chromosomu.
+
+---
+
+**[16] datafusion-bio-functions — repozytorium**
+> https://github.com/biodatageeks/datafusion-bio-functions
+> Dostęp: 2026-08
+
+Rodzina cratów Rust (m.in. `datafusion-bio-function-ranges`) implementująca faktyczny silnik
+algorytmiczny stojący za polars-bio — eksponuje `overlap(table1, table2)` jako gotową DataFusion
+table function z wyborem algorytmu (Coitrees, IntervalTree, Lapper, SuperIntervals). Apache-2.0,
+"designed to be consumed by downstream libraries" — kluczowa zależność dla prototypów w tej pracy
+(zamiast reimplementacji naiwnego warunku overlap).
+
+---
+
+**[17] SedonaDB × Sail — integracja jako precedens**
+> https://github.com/james-willis/sail (branch `sedona-integration`)
+> Dyskusja projektowa: https://github.com/lakehq/sail/discussions/2001
+> Dostęp: 2026-08
+
+Równoległy, analogiczny problem badawczy: SedonaDB (silnik danych przestrzennych) integruje
+spatial join z Sailem — strukturalnie ten sam problem co genomic interval overlap (warunek
+zasięgu zamiast warunku równości w joinie). Aktualny fork potwierdza, że natywna integracja na
+poziomie planu zapytania w Sailu wymaga dziś forka; oficjalny, bezforkowy mechanizm
+(`SailExtension`/FFI) jest w fazie projektowej.

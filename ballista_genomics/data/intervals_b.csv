@@ -1,0 +1,6 @@
+chrom,start,end,name
+chr1,180,250,peak_B1
+chr1,290,420,peak_B2
+chr1,450,600,peak_B3
+chr2,100,220,peak_B4
+chr2,300,400,peak_B5
