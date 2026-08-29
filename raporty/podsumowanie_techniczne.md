@@ -13,8 +13,7 @@ silników zapytań pod kątem analiz danych genomicznych, na przykładzie integr
 **polars-bio** z dwoma silnikami: **Apache
 Ballista** oraz **LakeSail/Sail**.
 
-Projekt realizuje
-następujące założenia:
+Projekt realizuje następujące założenia:
 
 1. Cel: ogólny mechanizm dodawania funkcji użytkownika (UDF/UDTF/UDA) na poziomie DataFusion,
    wpinany do silnika rozproszonego jako *runtime extension*, **bez forkowania** samego silnika.
@@ -568,8 +567,8 @@ budżet z alertem mailowym.
   `vendor/` przestałby być potrzebny.
 - **Usunięcie ograniczenia współbieżności w polars-bio** (sekcja 4.4) — do rozważenia razem
   na poziomie samej biblioteki.
-- **Synchronizacja i domknięcie zakresu** — aktualizacja `architektura_draft.md` wynikami Faz
-  A–C i dotychczasowych prac; pytania nadal otwarte: natywny distributed
+- **Synchronizacja i domknięcie zakresu** — aktualizacja `architektura_draft.md` wynikami
+  dotychczasowych prac; pytania nadal otwarte: natywny distributed
   Polars jako trzecia ścieżka porównawcza? Dostępność zasobów GCP?
   Kwestia zakresu `cluster`/`complement` (poza pierwotną piątką operacji).
 - **Faza F (zmiany wewnątrz polars-bio, opcjonalna)** — odłożona do czasu potwierdzenia
