@@ -18,7 +18,7 @@ use datafusion_proto::physical_plan::PhysicalExtensionCodec;
 use crate::dist_payload::DistOp;
 use crate::dist_udtf::DistTableFunction;
 use crate::logical_codec::BioDistLogicalCodec;
-use crate::physical_codec::IntervalJoinPhysicalCodec;
+use crate::bio_phys_codec::BioRangesPhysicalCodec;
 
 /// Konfiguracja sesji używana ZARÓWNO przez sesję klienta/schedulera, JAK I
 /// przez wewnętrzne sesje budowane w `DistBioProvider::build()`.
@@ -69,6 +69,21 @@ pub fn spec(op: DistOp) -> OpSpec {
             explain_txt: "output/dist_overlap_explain.txt",
             title: "dist_overlap + COITrees w pełni rozproszone",
         },
+        DistOp::Merge => OpSpec {
+            // Dane celowo rozbite na DWA pliki (data/parts_a/): nakładające się
+            // gene_A1=[100,200) i gene_A2=[150,300) są w RÓŻNYCH plikach, więc
+            // poprawny wynik [100,300) powstanie TYLKO jeśli hash-shuffle po
+            // chrom faktycznie przeniósł wiersze między partycjami. Bez tego
+            // MergeExec scaliłby je osobno i zwrócił dwa interwały zamiast
+            // jednego — test poprawności zawali się głośno.
+            sql: "SELECT * FROM dist_merge('intervals_a', 'data/parts_a', \
+                                           'chrom', 'start', 'end', 0, 'strict') \
+                  ORDER BY chrom, start"
+                .to_string(),
+            output_csv: "output/dist_merge_result.csv",
+            explain_txt: "output/dist_merge_explain.txt",
+            title: "dist_merge w pełni rozproszony (hash-shuffle po chrom)",
+        },
         other => panic!("runner::spec: brak specyfikacji dla operacji {other:?}"),
     }
 }
@@ -86,8 +101,10 @@ pub async fn run(op: DistOp) -> Result<()> {
     // gdyby wewnętrzna sesja providera była "zwykła", to sesja schedulera
     // decyduje, czy join zostanie przepisany na IntervalJoinExec.
     let logical_codec: Arc<dyn LogicalExtensionCodec> = Arc::new(BioDistLogicalCodec::default());
+    // BioRangesPhysicalCodec deleguje do IntervalJoinPhysicalCodec (Faza A.5),
+    // a ten do domyślnego kodeka Ballisty — patrz bio_phys_codec.rs.
     let physical_codec: Arc<dyn PhysicalExtensionCodec> =
-        Arc::new(IntervalJoinPhysicalCodec::default());
+        Arc::new(BioRangesPhysicalCodec::default());
     let config = bio_session_config()
         .with_ballista_logical_extension_codec(logical_codec)
         .with_ballista_physical_extension_codec(physical_codec);

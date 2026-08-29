@@ -108,3 +108,31 @@ pub fn has_magic(buf: &[u8], magic: u32) -> bool {
 pub fn write_magic(buf: &mut Vec<u8>, magic: u32) {
     buf.extend_from_slice(&magic.to_le_bytes());
 }
+
+// --- schemat Arrow ---------------------------------------------------------
+//
+// Schemat wyjsciowy serializujemy ZAWSZE, przez protobuf datafusion-proto.
+// Alternatywa (odtwarzanie go po stronie executora z parametrow) oznaczalaby
+// powielenie logiki konstruktorow providerow vendora - a ta logika jest rozna
+// dla kazdej operacji i moglaby sie z nia cicho rozjechac.
+
+use datafusion::arrow::datatypes::{Schema, SchemaRef};
+use datafusion_proto::protobuf;
+use prost::Message;
+use std::sync::Arc;
+
+pub fn write_schema(buf: &mut Vec<u8>, schema: &Schema) -> Result<()> {
+    let proto = protobuf::Schema::try_from(schema)
+        .map_err(|e| DataFusionError::Internal(format!("codec_io: schema -> proto: {e}")))?;
+    write_bytes(buf, &proto.encode_to_vec());
+    Ok(())
+}
+
+pub fn read_schema(buf: &[u8], pos: &mut usize) -> Result<SchemaRef> {
+    let bytes = read_bytes(buf, pos)?;
+    let proto = protobuf::Schema::decode(bytes)
+        .map_err(|e| DataFusionError::Internal(format!("codec_io: proto decode: {e}")))?;
+    let schema = Schema::try_from(&proto)
+        .map_err(|e| DataFusionError::Internal(format!("codec_io: proto -> schema: {e}")))?;
+    Ok(Arc::new(schema))
+}

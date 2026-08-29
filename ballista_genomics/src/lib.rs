@@ -6,6 +6,7 @@
 //!
 //! Mapa modułów:
 //! - `codec_io`        — prymitywy kodowania binarnego wspólne dla kodeków
+//! - `bio_phys_codec`  — `BioRangesPhysicalCodec`: serializacja węzłów operacji zakresowych (Faza H)
 //! - `dist_payload`    — `DistOp`, `DistPayload`: parametry konstrukcyjne operacji
 //! - `dist_provider`   — `DistBioProvider`: TableProvider owijający provider vendora
 //! - `logical_codec`   — `BioDistLogicalCodec`: serializacja providera (klient → scheduler)
@@ -13,6 +14,7 @@
 //! - `dist_udtf`       — rejestracja operacji jako funkcji tabelowych SQL
 //! - `runner`          — konfiguracja sesji, SQL-e, uruchomienie, dowód dystrybucji
 
+pub mod bio_phys_codec;
 pub mod codec_io;
 pub mod dist_payload;
 pub mod dist_provider;

@@ -19,7 +19,7 @@ pub use cluster::ClusterProvider;
 pub use complement::ComplementProvider;
 pub use count_overlaps::CountOverlapsProvider;
 pub use filter_op::FilterOp;
-pub use merge::MergeProvider;
+pub use merge::{MergeExec, MergeProvider}; // PATCH: MergeExec, patrz ../PATCH.md (Latka 2)
 pub use nearest::NearestProvider;
 pub use overlap::{OverlapOutputMode, OverlapProvider};
 pub use physical_planner::BioQueryPlanner;

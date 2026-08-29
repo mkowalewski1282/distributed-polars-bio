@@ -23,7 +23,7 @@ use datafusion::error::Result;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::{CsvReadOptions, SessionContext as DFSessionContext};
-use datafusion_bio_function_ranges::{BioSessionExt, FilterOp, OverlapProvider};
+use datafusion_bio_function_ranges::{BioSessionExt, FilterOp, MergeProvider, OverlapProvider};
 
 use crate::dist_payload::DistPayload;
 use crate::runner::bio_session_config;
@@ -94,6 +94,18 @@ impl DistBioProvider {
                     filter_op,
                 ))
             }
+            DistPayload::Merge {
+                table,
+                cols,
+                min_dist,
+                strict,
+            } => Arc::new(MergeProvider::new(
+                Arc::clone(&session),
+                table.name.clone(),
+                cols.as_tuple(),
+                *min_dist,
+                if *strict { FilterOp::Strict } else { FilterOp::Weak },
+            )),
         };
 
         Ok(Self { inner, payload })

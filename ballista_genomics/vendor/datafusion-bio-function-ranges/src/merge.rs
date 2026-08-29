@@ -112,14 +112,21 @@ impl TableProvider for MergeProvider {
     }
 }
 
+// PATCH (praca magisterska, patrz ../../PATCH.md, Latka 2): `struct` -> `pub struct`
+// oraz `pub` przy wszystkich polach. Bez tego MergeExec jest spoza crate'a
+// calkowicie nienazywalny (nie da sie zrobic downcast_ref ani zbudowac literalu),
+// wiec nie da sie napisac PhysicalExtensionCodec, a bez niego Ballista nie
+// przesle planu do executora. Rust nie ma literalu czesciowego, wiec musza byc
+// publiczne WSZYSTKIE pola - i to zalatwia jednoczesnie konstruktor i gettery.
+// Zmiana czysto widocznosciowa: 0 linii logiki.
 #[derive(Debug)]
-struct MergeExec {
-    schema: SchemaRef,
-    input: Arc<dyn ExecutionPlan>,
-    columns: Arc<(String, String, String)>,
-    min_dist: i64,
-    strict: bool,
-    cache: Arc<PlanProperties>,
+pub struct MergeExec {
+    pub schema: SchemaRef,
+    pub input: Arc<dyn ExecutionPlan>,
+    pub columns: Arc<(String, String, String)>,
+    pub min_dist: i64,
+    pub strict: bool,
+    pub cache: Arc<PlanProperties>,
 }
 
 impl DisplayAs for MergeExec {

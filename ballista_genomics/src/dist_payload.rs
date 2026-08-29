@@ -126,12 +126,19 @@ pub enum DistPayload {
         cols: Cols,
         strict: bool,
     },
+    Merge {
+        table: TableRef,
+        cols: Cols,
+        min_dist: i64,
+        strict: bool,
+    },
 }
 
 impl DistPayload {
     pub fn op(&self) -> DistOp {
         match self {
             DistPayload::Overlap { .. } => DistOp::Overlap,
+            DistPayload::Merge { .. } => DistOp::Merge,
         }
     }
 
@@ -139,6 +146,7 @@ impl DistPayload {
     pub fn tables(&self) -> Vec<&TableRef> {
         match self {
             DistPayload::Overlap { left, right, .. } => vec![left, right],
+            DistPayload::Merge { table, .. } => vec![table],
         }
     }
 
@@ -158,6 +166,17 @@ impl DistPayload {
                 write_cols(&mut buf, &cols.as_tuple());
                 write_bool(&mut buf, *strict);
             }
+            DistPayload::Merge {
+                table,
+                cols,
+                min_dist,
+                strict,
+            } => {
+                write_table(&mut buf, table);
+                write_cols(&mut buf, &cols.as_tuple());
+                write_i64(&mut buf, *min_dist);
+                write_bool(&mut buf, *strict);
+            }
         }
         buf
     }
@@ -174,6 +193,12 @@ impl DistPayload {
                 left: read_table(buf, &mut pos).ok()?,
                 right: read_table(buf, &mut pos).ok()?,
                 cols: read_cols_struct(buf, &mut pos).ok()?,
+                strict: read_bool(buf, &mut pos).ok()?,
+            }),
+            DistOp::Merge => Some(DistPayload::Merge {
+                table: read_table(buf, &mut pos).ok()?,
+                cols: read_cols_struct(buf, &mut pos).ok()?,
+                min_dist: read_i64(buf, &mut pos).ok()?,
                 strict: read_bool(buf, &mut pos).ok()?,
             }),
             // Pozostałe operacje dochodzą w kolejnych krokach Fazy H.
