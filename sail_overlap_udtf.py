@@ -30,7 +30,7 @@ Rozwiązanie — UDTF czysto skalarny, wołany przez LATERAL JOIN:
      wołany jako zwykła funkcja skalarna przez `LATERAL overlap_udtf(chrom,
      rows_a, rows_b)` — eval() wywoływane raz na wiersz wejściowy = raz na
      chromosom, z całą zawartością dwóch list interwałów jako argumentami.
-     Wewnątrz eval() wołane pb.overlap().
+     Wewnątrz eval() wołane pb.overlap() (przez sail_pb_guard, patrz niżej).
 
 Wniosek #2 (KOLEJNY udokumentowany bug Sail/pysail 0.5.3, znaleziony empirycznie
 w tej sesji): `LATERAL <skalarny UDTF>` nad tabelą zewnętrzną rozłożoną na >1
@@ -82,7 +82,6 @@ OVERLAP_UDTF_RETURN_TYPE = (
     "start_b: long, end_b: long, name_b: string"
 )
 
-
 def _reset_pb_context():
     """
     polars-bio używa globalnego kontekstu DataFusion i rejestruje tabele jako
@@ -95,7 +94,6 @@ def _reset_pb_context():
             _pb_ctx.deregister_table(table)
         except Exception:
             pass
-
 
 def _make_overlap_udtf():
     """
@@ -134,9 +132,13 @@ def _make_overlap_udtf():
             df_a.attrs["coordinate_system_zero_based"] = True
             df_b.attrs["coordinate_system_zero_based"] = True
 
-            _reset_pb_context()
+            # Import WEWNATRZ eval(): to tutaj wykonuje sie worker. Modul jest
+            # importowalny po nazwie, wiec cloudpickle serializuje REFERENCJE,
+            # a nie obiekt locka (ten nie jest picklowalny). Dzieki temu wszystkie
+            # partycje w danym procesie dziela ten sam lock. Patrz sail_pb_guard.py.
+            import sail_pb_guard
 
-            result = pb.overlap(
+            result = sail_pb_guard.overlap(
                 df_a, df_b,
                 cols1=["chrom", "start", "end"],
                 cols2=["chrom", "start", "end"],
@@ -154,7 +156,6 @@ def _make_overlap_udtf():
                 )
 
     return OverlapUDTF
-
 
 # ---------------------------------------------------------------------------
 # Referencja: polars-bio lokalnie
@@ -174,7 +175,6 @@ def run_polars_bio():
     elapsed = time.perf_counter() - t0
 
     return result, elapsed
-
 
 # ---------------------------------------------------------------------------
 # Sail: prawdziwy UDTF (PR #1519), skalarny, dane zgrupowane wcześniej wg chrom
@@ -210,7 +210,6 @@ def run_sail_overlap():
     # DIAGNOSTYKA: hipoteza -- LATERAL + UDTF w Sailu (pysail 0.5.3) źle obsługuje
     # >1 partycję fizyczną tabeli zewnętrznej (obserwowano: brak wierszy z jednej
     # grupy, duplikacja innej). Wymuszamy 1 partycję, żeby to zweryfikować.
-    grouped = grouped.repartition(1)
 
     t0 = time.perf_counter()
     # UDTF wołany dla każdego wiersza źródła (jeden wiersz = jeden chromosom) —
@@ -228,7 +227,6 @@ def run_sail_overlap():
     server.stop()
 
     return result, elapsed
-
 
 # ---------------------------------------------------------------------------
 # Main
@@ -268,7 +266,6 @@ def main():
         print(f"  Tylko w polars-bio: {pb_pairs - sail_pairs}")
         print(f"  Tylko w Sail:       {sail_pairs - pb_pairs}")
     print("=" * 60)
-
 
 if __name__ == "__main__":
     main()

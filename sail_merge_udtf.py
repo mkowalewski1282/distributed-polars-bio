@@ -1,14 +1,13 @@
 """
 Genomic merge przez Sail z użyciem polars-bio, wzorowane na sail_overlap_udtf.py
 (Faza C, ten sam sprawdzony wzorzec: groupBy/collect_list + LATERAL skalarny UDTF,
-.repartition(1) jako obejście udokumentowanego buga Saila w LATERAL nad wieloma
 partycjami — patrz komentarze w sail_overlap_udtf.py po pełne wyjaśnienie).
 
 Architektura:
   1. Dane grupowane wg chrom, interwały zbierane w listę (collect_list)
   2. Prawdziwy zarejestrowany UDTF (PR #1519) wołany przez LATERAL — raz na
      chromosom, z całą listą interwałów jako argumentem
-  3. eval() woła pb.merge() na zebranych interwałach danego chromosomu
+  3. eval() woła pb.merge() (przez sail_pb_guard) na interwałach danego chromosomu
 
 Uruchomienie:
   python sail_merge_udtf.py
@@ -33,7 +32,6 @@ SCHEMA = ["chrom", "start", "end", "name"]
 
 MERGE_UDTF_RETURN_TYPE = "chrom: string, start: long, end: long, n_intervals: long"
 
-
 def _reset_pb_context():
     from polars_bio.context import ctx as _pb_ctx
     for table in ["s1", "s2"]:
@@ -41,7 +39,6 @@ def _reset_pb_context():
             _pb_ctx.deregister_table(table)
         except Exception:
             pass
-
 
 def _make_merge_udtf():
     @udtf(returnType=MERGE_UDTF_RETURN_TYPE)
@@ -56,9 +53,13 @@ def _make_merge_udtf():
             )
             df.attrs["coordinate_system_zero_based"] = True
 
-            _reset_pb_context()
+            # Import WEWNATRZ eval(): to tutaj wykonuje sie worker. Modul jest
+            # importowalny po nazwie, wiec cloudpickle serializuje REFERENCJE,
+            # a nie obiekt locka (ten nie jest picklowalny). Dzieki temu wszystkie
+            # partycje w danym procesie dziela ten sam lock. Patrz sail_pb_guard.py.
+            import sail_pb_guard
 
-            result = pb.merge(df, cols=["chrom", "start", "end"], output_type="pandas.DataFrame")
+            result = sail_pb_guard.merge(df, cols=["chrom", "start", "end"], output_type="pandas.DataFrame")
 
             if result is None or len(result) == 0:
                 return
@@ -75,7 +76,6 @@ def _make_merge_udtf():
 
     return MergeUDTF
 
-
 def run_polars_bio():
     import polars as pl
 
@@ -86,7 +86,6 @@ def run_polars_bio():
     result = pb.merge(df).collect()
     elapsed = time.perf_counter() - t0
     return result, elapsed
-
 
 def run_sail_merge():
     server = SparkConnectServer()
@@ -106,7 +105,6 @@ def run_sail_merge():
     grouped = (
         df.groupBy("chrom")
         .agg(F.collect_list(interval_struct).alias("rows"))
-        .repartition(1)  # patrz sail_overlap_udtf.py: obejście buga LATERAL+wiele partycji
     )
     grouped.createOrReplaceTempView("grouped_by_chrom")
 
@@ -119,7 +117,6 @@ def run_sail_merge():
     spark.stop()
     server.stop()
     return result, elapsed
-
 
 def main():
     print("=" * 60)
@@ -156,7 +153,6 @@ def main():
         print(f"  Tylko w polars-bio: {pb_set - sail_set}")
         print(f"  Tylko w Sail:       {sail_set - pb_set}")
     print("=" * 60)
-
 
 if __name__ == "__main__":
     main()

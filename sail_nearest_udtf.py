@@ -1,7 +1,6 @@
 """
 Genomic nearest przez Sail z użyciem polars-bio — ten sam sprawdzony wzorzec co
 sail_overlap_udtf.py (skalarny UDTF, groupBy/collect_list, LATERAL,
-.repartition(1) jako obejście buga Saila — patrz komentarze tam).
 
 Uruchomienie:
   python sail_nearest_udtf.py
@@ -36,7 +35,6 @@ NEAREST_UDTF_RETURN_TYPE = (
     "start_b: long, end_b: long, name_b: string, distance: long"
 )
 
-
 def _reset_pb_context():
     from polars_bio.context import ctx as _pb_ctx
     for table in ["s1", "s2"]:
@@ -44,7 +42,6 @@ def _reset_pb_context():
             _pb_ctx.deregister_table(table)
         except Exception:
             pass
-
 
 def _make_nearest_udtf():
     @udtf(returnType=NEAREST_UDTF_RETURN_TYPE)
@@ -62,9 +59,13 @@ def _make_nearest_udtf():
             df_a.attrs["coordinate_system_zero_based"] = True
             df_b.attrs["coordinate_system_zero_based"] = True
 
-            _reset_pb_context()
+            # Import WEWNATRZ eval(): to tutaj wykonuje sie worker. Modul jest
+            # importowalny po nazwie, wiec cloudpickle serializuje REFERENCJE,
+            # a nie obiekt locka (ten nie jest picklowalny). Dzieki temu wszystkie
+            # partycje w danym procesie dziela ten sam lock. Patrz sail_pb_guard.py.
+            import sail_pb_guard
 
-            result = pb.nearest(
+            result = sail_pb_guard.nearest(
                 df_a, df_b,
                 cols1=["chrom", "start", "end"],
                 cols2=["chrom", "start", "end"],
@@ -88,7 +89,6 @@ def _make_nearest_udtf():
 
     return NearestUDTF
 
-
 def run_polars_bio():
     import polars as pl
 
@@ -101,7 +101,6 @@ def run_polars_bio():
     result = pb.nearest(df_a, df_b).collect()
     elapsed = time.perf_counter() - t0
     return result, elapsed
-
 
 def run_sail_nearest():
     server = SparkConnectServer()
@@ -124,7 +123,6 @@ def run_sail_nearest():
             F.collect_list(F.when(F.col("source") == F.lit("a"), interval_struct)).alias("rows_a"),
             F.collect_list(F.when(F.col("source") == F.lit("b"), interval_struct)).alias("rows_b"),
         )
-        .repartition(1)
     )
     grouped.createOrReplaceTempView("grouped_by_chrom")
 
@@ -137,7 +135,6 @@ def run_sail_nearest():
     spark.stop()
     server.stop()
     return result, elapsed
-
 
 def main():
     print("=" * 60)
@@ -165,7 +162,6 @@ def main():
         print(f"  Tylko w polars-bio: {pb_pairs - sail_pairs}")
         print(f"  Tylko w Sail:       {sail_pairs - pb_pairs}")
     print("=" * 60)
-
 
 if __name__ == "__main__":
     main()

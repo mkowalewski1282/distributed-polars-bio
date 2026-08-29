@@ -1,7 +1,6 @@
 """
 Genomic coverage i subtract przez Sail z użyciem polars-bio — ten sam sprawdzony
 wzorzec co poprzednie skrypty (skalarny UDTF, groupBy/collect_list, LATERAL,
-.repartition(1) — patrz komentarze w sail_overlap_udtf.py).
 
 Jeden plik dla obu operacji (coverage i subtract), bo obie biorą dwie tabele
 (reads/targets, left/right) i mają identyczny kształt integracji co overlap/nearest
@@ -38,7 +37,6 @@ SCHEMA = ["chrom", "start", "end", "name"]
 COVERAGE_RETURN_TYPE = "chrom: string, start: long, end: long, name: string, coverage: long"
 SUBTRACT_RETURN_TYPE = "chrom: string, start: long, end: long, name: string"
 
-
 def _reset_pb_context():
     from polars_bio.context import ctx as _pb_ctx
     for table in ["s1", "s2"]:
@@ -47,12 +45,10 @@ def _reset_pb_context():
         except Exception:
             pass
 
-
 def _to_df(rows, chrom):
     return pd.DataFrame(
         [(chrom, r["start"], r["end"], r["name"]) for r in rows], columns=SCHEMA
     )
-
 
 def _make_coverage_udtf():
     @udtf(returnType=COVERAGE_RETURN_TYPE)
@@ -65,8 +61,13 @@ def _make_coverage_udtf():
             df_reads.attrs["coordinate_system_zero_based"] = True
             df_targets.attrs["coordinate_system_zero_based"] = True
 
-            _reset_pb_context()
-            result = pb.coverage(
+            # Import WEWNATRZ eval(): to tutaj wykonuje sie worker. Modul jest
+            # importowalny po nazwie, wiec cloudpickle serializuje REFERENCJE,
+            # a nie obiekt locka (ten nie jest picklowalny). Dzieki temu wszystkie
+            # partycje w danym procesie dziela ten sam lock. Patrz sail_pb_guard.py.
+            import sail_pb_guard
+
+            result = sail_pb_guard.coverage(
                 df_reads, df_targets,
                 cols1=["chrom", "start", "end"],
                 cols2=["chrom", "start", "end"],
@@ -81,7 +82,6 @@ def _make_coverage_udtf():
 
     return CoverageUDTF
 
-
 def _make_subtract_udtf():
     @udtf(returnType=SUBTRACT_RETURN_TYPE)
     class SubtractUDTF:
@@ -93,8 +93,13 @@ def _make_subtract_udtf():
             df_left.attrs["coordinate_system_zero_based"] = True
             df_right.attrs["coordinate_system_zero_based"] = True
 
-            _reset_pb_context()
-            result = pb.subtract(
+            # Import WEWNATRZ eval(): to tutaj wykonuje sie worker. Modul jest
+            # importowalny po nazwie, wiec cloudpickle serializuje REFERENCJE,
+            # a nie obiekt locka (ten nie jest picklowalny). Dzieki temu wszystkie
+            # partycje w danym procesie dziela ten sam lock. Patrz sail_pb_guard.py.
+            import sail_pb_guard
+
+            result = sail_pb_guard.subtract(
                 df_left, df_right,
                 cols1=["chrom", "start", "end"],
                 cols2=["chrom", "start", "end"],
@@ -106,7 +111,6 @@ def _make_subtract_udtf():
                 yield (r["chrom"], int(r["start"]), int(r["end"]), r["name"])
 
     return SubtractUDTF
-
 
 def run_udtfs(udtf_factories: dict):
     """
@@ -155,7 +159,6 @@ def run_udtfs(udtf_factories: dict):
             F.collect_list(F.when(F.col("source") == F.lit("a"), interval_struct)).alias("rows_a"),
             F.collect_list(F.when(F.col("source") == F.lit("b"), interval_struct)).alias("rows_b"),
         )
-        .repartition(1)
     )
     grouped.createOrReplaceTempView("grouped_by_chrom")
 
@@ -169,7 +172,6 @@ def run_udtfs(udtf_factories: dict):
     spark.stop()
     server.stop()
     return results
-
 
 def main():
     print("=" * 60)
@@ -226,7 +228,6 @@ def main():
         print(f"    Tylko w Sail:       {sail_sub_set - pb_sub_set}")
 
     print("=" * 60)
-
 
 if __name__ == "__main__":
     main()
