@@ -40,6 +40,8 @@ use datafusion_proto::physical_plan::to_proto::serialize_physical_expr;
 use datafusion_proto::protobuf::PhysicalExprNode;
 use prost::Message;
 
+use crate::codec_io::{has_magic, read_bytes, read_u32, write_bytes, write_u32};
+
 #[derive(Debug)]
 pub struct IntervalJoinPhysicalCodec {
     inner: Arc<dyn PhysicalExtensionCodec>,
@@ -66,32 +68,6 @@ impl Default for IntervalJoinPhysicalCodec {
 // --- pomocnicze, ręczne kodowanie binarne (te same konwencje co Payload w main.rs) ---
 
 const MAGIC: u32 = 0xD157_0002;
-
-fn write_u32(buf: &mut Vec<u8>, v: u32) {
-    buf.extend_from_slice(&v.to_le_bytes());
-}
-
-fn read_u32(buf: &[u8], pos: &mut usize) -> Result<u32> {
-    let bytes = buf
-        .get(*pos..*pos + 4)
-        .ok_or_else(|| DataFusionError::Internal("IntervalJoinPhysicalCodec: buffer truncated".into()))?;
-    *pos += 4;
-    Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
-}
-
-fn write_bytes(buf: &mut Vec<u8>, bytes: &[u8]) {
-    write_u32(buf, bytes.len() as u32);
-    buf.extend_from_slice(bytes);
-}
-
-fn read_bytes<'a>(buf: &'a [u8], pos: &mut usize) -> Result<&'a [u8]> {
-    let len = read_u32(buf, pos)? as usize;
-    let slice = buf
-        .get(*pos..*pos + len)
-        .ok_or_else(|| DataFusionError::Internal("IntervalJoinPhysicalCodec: buffer truncated".into()))?;
-    *pos += len;
-    Ok(slice)
-}
 
 fn encode_expr(codec: &dyn PhysicalExtensionCodec, expr: &Arc<dyn datafusion::physical_plan::PhysicalExpr>) -> Result<Vec<u8>> {
     let proto: PhysicalExprNode = serialize_physical_expr(expr, codec)?;
@@ -220,7 +196,7 @@ impl PhysicalExtensionCodec for IntervalJoinPhysicalCodec {
         inputs: &[Arc<dyn ExecutionPlan>],
         registry: &TaskContext,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        if buf.len() < 4 || u32::from_le_bytes(buf[0..4].try_into().unwrap()) != MAGIC {
+        if !has_magic(buf, MAGIC) {
             return self.inner.try_decode(buf, inputs, registry);
         }
 
