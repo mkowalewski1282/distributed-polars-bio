@@ -1,0 +1,50 @@
+# Lokalny klaster Ballista jako OSOBNE PROCESY/kontenery.
+#
+# Po co, skoro testy juz przechodza: dotychczasowe wyniki pochodza z trybu
+# `standalone` (scheduler + executor w JEDNYM procesie). Plan jest tam realnie
+# serializowany i przechodzi przez shuffle, ale nie przez prawdziwa siec.
+# Ten plik jest krokiem posrednim miedzy standalone a GCP: lapie bledy
+# pakowania i konfiguracji sieci lokalnie, czyli tanio.
+#
+# Uruchomienie:
+#   docker compose -f deploy/ballista/docker-compose.yml up --build
+#
+# UWAGA: zbudowanie obrazu wymaga kompilacji Rusta. Na maszynie 3.5 GB RAM
+# uzyj: docker compose build --build-arg CARGO_JOBS=1
+
+services:
+  scheduler:
+    build:
+      context: ../..
+      dockerfile: deploy/ballista/Dockerfile
+      args:
+        CARGO_JOBS: ${CARGO_JOBS:-0}
+    image: ballista-genomics:latest
+    command: ["--help"]
+    ports:
+      - "50050:50050"   # gRPC schedulera
+      - "50051:50051"   # UI schedulera
+    volumes:
+      - ../../ballista_genomics/output:/app/output
+
+  executor-1:
+    image: ballista-genomics:latest
+    depends_on: [scheduler]
+    command: ["--help"]
+    volumes:
+      - ../../ballista_genomics/output:/app/output
+
+  executor-2:
+    image: ballista-genomics:latest
+    depends_on: [scheduler]
+    command: ["--help"]
+    volumes:
+      - ../../ballista_genomics/output:/app/output
+
+# DO ZROBIENIA przed uruchomieniem (Faza D):
+# Obecny kod tworzy klaster przez `SessionContext::standalone_with_state()`,
+# czyli scheduler i executor w tym samym procesie. Zeby uzyc tego compose'a,
+# trzeba dodac tryb "polacz sie z istniejacym schedulerem" — w Ballistcie to
+# `SessionContext::remote_with_state("df://scheduler:50050", state)`.
+# Kodeki rejestruje sie identycznie (przez SessionConfig), wiec zmiana dotyczy
+# wylacznie sposobu tworzenia sesji w runner::run() — kilka linii.

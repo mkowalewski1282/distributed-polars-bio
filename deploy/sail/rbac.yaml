@@ -1,0 +1,27 @@
+# Sail w trybie KubernetesCluster sam TWORZY i USUWA pody workerow, wiec
+# sterownik potrzebuje uprawnien do zarzadzania podami w swoim namespace.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sail-driver
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sail-worker-manager
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/status", "pods/log"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sail-worker-manager
+subjects:
+  - kind: ServiceAccount
+    name: sail-driver
+roleRef:
+  kind: Role
+  name: sail-worker-manager
+  apiGroup: rbac.authorization.k8s.io

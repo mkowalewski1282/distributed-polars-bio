@@ -1,0 +1,17 @@
+# Minimalny zestaw manifestow dla Saila w trybie KubernetesCluster.
+#
+# Kontekst: lokalnie ten tryb okazal sie nieosiagalny — maszyna WSL ma 3.5 GB
+# RAM, a k3s (najlzejszy Kubernetes) potrzebuje 2 GB samego siebie i przy probie
+# uruchomienia zjadl caly dostepny zapas. GKE rozwiazuje ten problem wprost.
+#
+# Dlaczego to w ogole potrzebne: Sail ma tylko dwie implementacje WorkerManager
+# — LocalWorkerManager (workery jako aktorzy w JEDNYM procesie; uzywana ZAROWNO
+# przez tryb `local`, JAK I `local-cluster`) oraz KubernetesWorkerManager
+# (tworzy prawdziwe pody). Prawdziwa dystrybucja wieloprocesowa wymaga wiec
+# Kubernetesa — potwierdzone empirycznie zrzutem procesow: w trybie
+# local-cluster wszystkie cztery role (driver, worker 1, worker 2, serwer
+# Spark Connect) mialy ten sam PID.
+
+resources:
+  - driver.yaml
+  - rbac.yaml
