@@ -99,6 +99,23 @@ pub fn spec(op: DistOp) -> OpSpec {
             explain_txt: "output/dist_subtract_explain.txt",
             title: "dist_subtract w pełni rozproszony (dwustronny hash-shuffle)",
         },
+        DistOp::Nearest => OpSpec {
+            // Wzorzec BROADCAST, nie hash-shuffle: NearestExec nie nadpisuje
+            // required_input_distribution(), wiec nie zada repartycji. Lewa
+            // (indeksowana) tabela jedzie w CALOSCI w ladunku planu do kazdego
+            // executora, a rownoleglosc bierze sie z partycjonowania PRAWEJ
+            // strony. Argumenty (k=1, include_overlaps, compute_distance, brak
+            // 'strict') odwzorowuja nearest_local.rs 1:1.
+            sql: "SELECT * FROM dist_nearest('intervals_a', 'data/parts_a', \
+                                             'intervals_b', 'data/parts_b', \
+                                             1, true, true, \
+                                             'chrom', 'start', 'end') \
+                  ORDER BY left_chrom, left_start"
+                .to_string(),
+            output_csv: "output/dist_nearest_result.csv",
+            explain_txt: "output/dist_nearest_explain.txt",
+            title: "dist_nearest w pełni rozproszony (broadcast lewej tabeli)",
+        },
         other => panic!("runner::spec: brak specyfikacji dla operacji {other:?}"),
     }
 }

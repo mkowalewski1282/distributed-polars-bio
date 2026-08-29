@@ -136,3 +136,46 @@ pub fn read_schema(buf: &[u8], pos: &mut usize) -> Result<SchemaRef> {
         .map_err(|e| DataFusionError::Internal(format!("codec_io: proto -> schema: {e}")))?;
     Ok(Arc::new(schema))
 }
+
+// --- RecordBatch przez Arrow IPC -------------------------------------------
+//
+// Uzywane przez operacje o wzorcu BROADCAST (nearest, coverage): lewa,
+// indeksowana tabela jedzie w calosci w ladunku planu fizycznego do kazdego
+// executora, ktory odbudowuje z niej indeks lokalnie.
+//
+// GRANICA SKALOWALNOSCI: ladunek planu idzie przez gRPC, a Ballista ustawia
+// max_message_size = 16 MB (ballista-core/src/utils.rs). Przekroczenie tego
+// limitu wywali zapytanie na poziomie transportu. To jest wlasciwe ograniczenie
+// tego podejscia i nalezy je raportowac jako takie, a nie obchodzic.
+
+use datafusion::arrow::compute::concat_batches;
+use datafusion::arrow::error::ArrowError;
+use datafusion::arrow::ipc::reader::StreamReader;
+use datafusion::arrow::ipc::writer::StreamWriter;
+use datafusion::arrow::record_batch::RecordBatch;
+
+fn arrow_err(e: ArrowError) -> DataFusionError {
+    DataFusionError::ArrowError(Box::new(e), None)
+}
+
+/// `StreamWriter` zapisuje komunikat ze SCHEMATEM przy konstrukcji, wiec nawet
+/// pusty batch (0 wierszy) round-trip'uje z poprawnym schematem.
+pub fn write_batch_ipc(buf: &mut Vec<u8>, batch: &RecordBatch) -> Result<()> {
+    let mut w = StreamWriter::try_new(Vec::<u8>::new(), batch.schema_ref()).map_err(arrow_err)?;
+    w.write(batch).map_err(arrow_err)?;
+    w.finish().map_err(arrow_err)?;
+    let bytes = w.into_inner().map_err(arrow_err)?;
+    write_bytes(buf, &bytes);
+    Ok(())
+}
+
+pub fn read_batch_ipc(buf: &[u8], pos: &mut usize) -> Result<RecordBatch> {
+    let bytes = read_bytes(buf, pos)?;
+    let reader = StreamReader::try_new(std::io::Cursor::new(bytes.to_vec()), None)
+        .map_err(arrow_err)?;
+    let schema = reader.schema();
+    let batches = reader
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(arrow_err)?;
+    concat_batches(&schema, &batches).map_err(arrow_err)
+}

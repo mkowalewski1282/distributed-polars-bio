@@ -26,7 +26,9 @@ use datafusion::execution::TaskContext;
 use datafusion::physical_expr::{EquivalenceProperties, Partitioning};
 use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::{ExecutionPlan, PlanProperties};
-use datafusion_bio_function_ranges::{MergeExec, SubtractExec};
+use datafusion_bio_function_ranges::{
+    build_nearest_indexes, FilterOp, MergeExec, NearestExec, SubtractExec,
+};
 use datafusion_proto::physical_plan::PhysicalExtensionCodec;
 
 use crate::codec_io::*;
@@ -36,6 +38,7 @@ pub const BIO_PHYS_MAGIC: u32 = 0xD157_0003;
 
 const TAG_MERGE: u8 = 1;
 const TAG_SUBTRACT: u8 = 2;
+const TAG_NEAREST: u8 = 3;
 
 #[derive(Debug)]
 pub struct BioRangesPhysicalCodec {
@@ -158,6 +161,110 @@ fn decode_subtract(
     )
 }
 
+fn filter_op_to_byte(f: &FilterOp) -> u8 {
+    match f {
+        FilterOp::Weak => 0,
+        FilterOp::Strict => 1,
+    }
+}
+
+fn byte_to_filter_op(b: u8) -> Result<FilterOp> {
+    Ok(match b {
+        0 => FilterOp::Weak,
+        1 => FilterOp::Strict,
+        other => {
+            return Err(DataFusionError::Internal(format!(
+                "nieprawidlowy bajt FilterOp: {other}"
+            )));
+        }
+    })
+}
+
+/// Wzorzec BROADCAST: indeksu nie da sie zserializowac (COITree bez serde,
+/// prywatne pola), ale jest w 100% ODTWARZALNY z `left_batch`. Wysylamy wiec
+/// dane wejsciowe zamiast wyniku i przeliczamy indeks po stronie executora —
+/// dokladnie ta sama sztuczka co `parse_intervals()` przy IntervalJoinExec.
+///
+/// `build_nearest_indexes` to TA SAMA funkcja, ktorej uzyl NearestProvider::scan(),
+/// wiec `position` w IntervalRecord wskazuje ten sam wiersz tego samego batcha.
+/// Typu indeksu celowo nigdzie nie nazywamy — inferencja dopasowuje go
+/// nominalnie, dzieki czemu nasz Cargo.toml nie potrzebuje ahash ani coitrees.
+#[allow(clippy::too_many_arguments)]
+fn build_nearest_exec(
+    right: Arc<dyn ExecutionPlan>,
+    schema: datafusion::arrow::datatypes::SchemaRef,
+    left_batch: datafusion::arrow::record_batch::RecordBatch,
+    columns_1: (String, String, String),
+    columns_2: (String, String, String),
+    filter_op: FilterOp,
+    include_overlaps: bool,
+    k: usize,
+    compute_distance: bool,
+) -> Result<Arc<dyn ExecutionPlan>> {
+    let indexes = Arc::new(build_nearest_indexes(
+        &left_batch,
+        (&columns_1.0, &columns_1.1, &columns_1.2),
+    )?);
+    let exec = NearestExec {
+        schema: Arc::clone(&schema),
+        left_batch: Arc::new(left_batch),
+        indexes,
+        right: Arc::clone(&right),
+        columns_1: Arc::new(columns_1),
+        columns_2: Arc::new(columns_2),
+        filter_op,
+        include_overlaps,
+        k,
+        compute_distance,
+        cache: placeholder_props(schema),
+    };
+    Arc::new(exec).with_new_children(vec![right])
+}
+
+fn encode_nearest(n: &NearestExec, buf: &mut Vec<u8>) -> Result<()> {
+    write_magic(buf, BIO_PHYS_MAGIC);
+    write_u8(buf, TAG_NEAREST);
+    write_u8(buf, filter_op_to_byte(&n.filter_op));
+    write_schema(buf, n.schema.as_ref())?;
+    write_cols(buf, n.columns_1.as_ref());
+    write_cols(buf, n.columns_2.as_ref());
+    write_bool(buf, n.include_overlaps);
+    write_u32(buf, n.k as u32);
+    write_bool(buf, n.compute_distance);
+    write_batch_ipc(buf, n.left_batch.as_ref())?;
+    Ok(())
+}
+
+fn decode_nearest(
+    buf: &[u8],
+    pos: &mut usize,
+    inputs: &[Arc<dyn ExecutionPlan>],
+) -> Result<Arc<dyn ExecutionPlan>> {
+    let filter_op = byte_to_filter_op(read_u8(buf, pos)?)?;
+    let schema = read_schema(buf, pos)?;
+    let columns_1 = read_cols(buf, pos)?;
+    let columns_2 = read_cols(buf, pos)?;
+    let include_overlaps = read_bool(buf, pos)?;
+    let k = read_u32(buf, pos)? as usize;
+    let compute_distance = read_bool(buf, pos)?;
+    let left_batch = read_batch_ipc(buf, pos)?;
+    let right = inputs
+        .first()
+        .ok_or_else(|| DataFusionError::Internal("NearestExec: brak wejscia".into()))?
+        .clone();
+    build_nearest_exec(
+        right,
+        schema,
+        left_batch,
+        columns_1,
+        columns_2,
+        filter_op,
+        include_overlaps,
+        k,
+        compute_distance,
+    )
+}
+
 fn encode_merge(m: &MergeExec, buf: &mut Vec<u8>) -> Result<()> {
     write_magic(buf, BIO_PHYS_MAGIC);
     write_u8(buf, TAG_MERGE);
@@ -192,6 +299,9 @@ impl PhysicalExtensionCodec for BioRangesPhysicalCodec {
         if let Some(sx) = node.as_any().downcast_ref::<SubtractExec>() {
             return encode_subtract(sx, buf);
         }
+        if let Some(n) = node.as_any().downcast_ref::<NearestExec>() {
+            return encode_nearest(n, buf);
+        }
         self.inner.try_encode(node, buf)
     }
 
@@ -209,6 +319,7 @@ impl PhysicalExtensionCodec for BioRangesPhysicalCodec {
         match tag {
             TAG_MERGE => decode_merge(buf, &mut pos, inputs),
             TAG_SUBTRACT => decode_subtract(buf, &mut pos, inputs),
+            TAG_NEAREST => decode_nearest(buf, &mut pos, inputs),
             other => Err(DataFusionError::Internal(format!(
                 "BioRangesPhysicalCodec: nieznany tag operacji {other}"
             ))),

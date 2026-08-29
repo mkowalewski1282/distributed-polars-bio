@@ -24,7 +24,7 @@ use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::{CsvReadOptions, SessionContext as DFSessionContext};
 use datafusion_bio_function_ranges::{
-    BioSessionExt, FilterOp, MergeProvider, OverlapProvider, SubtractProvider,
+    BioSessionExt, FilterOp, MergeProvider, NearestProvider, OverlapProvider, SubtractProvider,
 };
 
 use crate::dist_payload::DistPayload;
@@ -124,6 +124,32 @@ impl DistBioProvider {
                     rcols.as_tuple(),
                     if *strict { FilterOp::Strict } else { FilterOp::Weak },
                     left_schema,
+                ))
+            }
+            DistPayload::Nearest {
+                left,
+                right,
+                lcols,
+                rcols,
+                strict,
+                k,
+                include_overlaps,
+                compute_distance,
+            } => {
+                let left_schema = session.table(&left.name).await?.schema().as_arrow().clone();
+                let right_schema = session.table(&right.name).await?.schema().as_arrow().clone();
+                Arc::new(NearestProvider::new(
+                    Arc::clone(&session),
+                    left.name.clone(),
+                    right.name.clone(),
+                    left_schema,
+                    right_schema,
+                    lcols.as_vec(),
+                    rcols.as_vec(),
+                    if *strict { FilterOp::Strict } else { FilterOp::Weak },
+                    *include_overlaps,
+                    *k as usize,
+                    *compute_distance,
                 ))
             }
         };

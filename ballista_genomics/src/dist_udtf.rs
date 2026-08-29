@@ -111,6 +111,53 @@ fn parse_subtract(args: &[Expr]) -> Result<DistPayload> {
     })
 }
 
+fn expect_bool_literal(args: &[Expr], idx: usize, fname: &str) -> Result<bool> {
+    match args.get(idx) {
+        Some(Expr::Literal(ScalarValue::Boolean(Some(v)), _)) => Ok(*v),
+        Some(other) => Err(DataFusionError::Plan(format!(
+            "{fname}(): argument {idx} musi być literałem logicznym, dostałem: {other}"
+        ))),
+        None => Err(DataFusionError::Plan(format!(
+            "{fname}(): brakuje argumentu {idx}"
+        ))),
+    }
+}
+
+fn parse_nearest(args: &[Expr]) -> Result<DistPayload> {
+    if args.len() < 10 {
+        return Err(DataFusionError::Plan(
+            "dist_nearest() oczekuje: left_table, left_path, right_table, right_path, \
+             k, include_overlaps, compute_distance, col_chrom, col_start, col_end \
+             [, 'strict'|'weak']"
+                .to_string(),
+        ));
+    }
+    let cols = Cols(
+        expect_string_literal(args, 7, "dist_nearest")?,
+        expect_string_literal(args, 8, "dist_nearest")?,
+        expect_string_literal(args, 9, "dist_nearest")?,
+    );
+    Ok(DistPayload::Nearest {
+        left: TableRef::new(
+            expect_string_literal(args, 0, "dist_nearest")?,
+            expect_string_literal(args, 1, "dist_nearest")?,
+        ),
+        right: TableRef::new(
+            expect_string_literal(args, 2, "dist_nearest")?,
+            expect_string_literal(args, 3, "dist_nearest")?,
+        ),
+        lcols: cols.clone(),
+        rcols: cols,
+        // Domyslnie WEAK - `nearest_local.rs` nie przekazuje 'strict', wiec
+        // odwzorowujemy to 1:1, inaczej wynik rozproszony rozjechalby sie
+        // z juz zweryfikowanym lokalnym.
+        strict: optional_strict(args, 10),
+        k: expect_i64_literal(args, 4, "dist_nearest")? as u32,
+        include_overlaps: expect_bool_literal(args, 5, "dist_nearest")?,
+        compute_distance: expect_bool_literal(args, 6, "dist_nearest")?,
+    })
+}
+
 fn parse_overlap(args: &[Expr]) -> Result<DistPayload> {
     if args.len() < 7 {
         return Err(DataFusionError::Plan(
@@ -143,6 +190,7 @@ impl TableFunctionImpl for DistTableFunction {
             DistOp::Overlap => parse_overlap(args)?,
             DistOp::Merge => parse_merge(args)?,
             DistOp::Subtract => parse_subtract(args)?,
+            DistOp::Nearest => parse_nearest(args)?,
             other => {
                 return Err(DataFusionError::Plan(format!(
                     "{}(): operacja jeszcze nie zaimplementowana w tej wersji",

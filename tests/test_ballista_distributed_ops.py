@@ -28,6 +28,7 @@ import pytest
 
 from tests.coverage_subtract_oracle import reference_subtract
 from tests.merge_oracle import reference_merge_intervals
+from tests.nearest_oracle import reference_nearest_min_distances
 
 BALLISTA_DIR = Path(__file__).resolve().parent.parent / "ballista_genomics"
 DIST_BINARY = BALLISTA_DIR / "target" / "debug" / "dist_ops"
@@ -155,4 +156,72 @@ def test_ballista_distributed_subtract_matches_oracle():
         f"Różnica względem wyroczni pb.subtract().\n"
         f"Tylko w pb.subtract():         {expected - actual}\n"
         f"Tylko w rozproszonym subtract: {actual - expected}"
+    )
+
+
+def test_ballista_distributed_nearest_matches_oracle_distances():
+    """
+    Nearest w pełni rozproszony, wzorzec BROADCAST: lewa (indeksowana) tabela
+    jedzie w całości w ładunku planu fizycznego (Arrow IPC), a równoległość
+    bierze się z partycjonowania prawej strony.
+
+    Porównujemy ODLEGŁOŚCI, nie konkretne pary — to znane, udokumentowane
+    znalezisko z Fazy C: natywny nearest() z bio-function-ranges i pb.nearest()
+    inaczej rozstrzygają remisy (gdy kilku kandydatów ma tę samą, zerową
+    odległość). Obie odpowiedzi są poprawne co do dystansu.
+    Patrz tests/test_nearest_correctness.py.
+    """
+    _run_dist("nearest")
+    out = OUTPUT_DIR / "dist_nearest_result.csv"
+    assert out.exists(), f"nie znaleziono {out}"
+
+    df = pd.read_csv(out)
+    actual = dict(zip(df["left_name"].tolist(), df["distance"].tolist()))
+    expected = reference_nearest_min_distances(INTERVALS_A, INTERVALS_B)
+
+    assert set(actual) == set(expected), (
+        f"Inny zbiór interwałów lewej tabeli.\n"
+        f"Tylko w pb.nearest(): {set(expected) - set(actual)}\n"
+        f"Tylko rozproszony:    {set(actual) - set(expected)}"
+    )
+    for name, dist in expected.items():
+        assert int(actual[name]) == int(dist), (
+            f"{name}: pb.nearest() dało odległość {dist}, "
+            f"rozproszony nearest {actual[name]}"
+        )
+
+
+def test_distributed_nearest_agrees_with_local_nearest():
+    """
+    Warunek OSTRZEJSZY niż zgodność odległości: rozproszony nearest musi wybrać
+    DOKŁADNIE tych samych partnerów co lokalny `nearest_local` — ten sam silnik,
+    ta sama funkcja build_nearest_indexes, ten sam left_batch (tyle że po
+    round-tripie przez Arrow IPC).
+
+    To jest właściwy test broadcastu: gdyby na executor trafiła tylko CZĘŚĆ
+    lewej tabeli, odległości mogłyby wyjść zawyżone, a wybór partnera inny —
+    a porównanie samych odległości z pb tego by nie wyłapało, bo pb liczy na
+    pełnych danych po swojej stronie.
+    """
+    local_csv = OUTPUT_DIR / "nearest_local_result.csv"
+    if not local_csv.exists():
+        pytest.skip(
+            "brak output/nearest_local_result.csv — uruchom najpierw "
+            "`cd ballista_genomics && ./target/debug/nearest_local`"
+        )
+    _run_dist("nearest")
+
+    def pairs(path: Path) -> set[tuple[str, str]]:
+        d = pd.read_csv(path)
+        return set(zip(d["left_name"].tolist(), d["right_name"].tolist()))
+
+    dist_pairs = pairs(OUTPUT_DIR / "dist_nearest_result.csv")
+    local_pairs = pairs(local_csv)
+
+    assert dist_pairs == local_pairs, (
+        f"Rozproszony i lokalny nearest wybrały RÓŻNYCH partnerów — to sygnał, "
+        f"że broadcast lewej tabeli był niekompletny albo kolejność wierszy w "
+        f"left_batch się rozjechała.\n"
+        f"Tylko lokalnie:    {local_pairs - dist_pairs}\n"
+        f"Tylko rozproszony: {dist_pairs - local_pairs}"
     )

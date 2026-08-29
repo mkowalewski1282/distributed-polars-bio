@@ -139,6 +139,16 @@ pub enum DistPayload {
         rcols: Cols,
         strict: bool,
     },
+    Nearest {
+        left: TableRef,
+        right: TableRef,
+        lcols: Cols,
+        rcols: Cols,
+        strict: bool,
+        k: u32,
+        include_overlaps: bool,
+        compute_distance: bool,
+    },
 }
 
 impl DistPayload {
@@ -147,6 +157,7 @@ impl DistPayload {
             DistPayload::Overlap { .. } => DistOp::Overlap,
             DistPayload::Merge { .. } => DistOp::Merge,
             DistPayload::Subtract { .. } => DistOp::Subtract,
+            DistPayload::Nearest { .. } => DistOp::Nearest,
         }
     }
 
@@ -156,6 +167,7 @@ impl DistPayload {
             DistPayload::Overlap { left, right, .. } => vec![left, right],
             DistPayload::Merge { table, .. } => vec![table],
             DistPayload::Subtract { left, right, .. } => vec![left, right],
+            DistPayload::Nearest { left, right, .. } => vec![left, right],
         }
     }
 
@@ -199,6 +211,25 @@ impl DistPayload {
                 write_cols(&mut buf, &rcols.as_tuple());
                 write_bool(&mut buf, *strict);
             }
+            DistPayload::Nearest {
+                left,
+                right,
+                lcols,
+                rcols,
+                strict,
+                k,
+                include_overlaps,
+                compute_distance,
+            } => {
+                write_table(&mut buf, left);
+                write_table(&mut buf, right);
+                write_cols(&mut buf, &lcols.as_tuple());
+                write_cols(&mut buf, &rcols.as_tuple());
+                write_bool(&mut buf, *strict);
+                write_u32(&mut buf, *k);
+                write_bool(&mut buf, *include_overlaps);
+                write_bool(&mut buf, *compute_distance);
+            }
         }
         buf
     }
@@ -229,6 +260,16 @@ impl DistPayload {
                 lcols: read_cols_struct(buf, &mut pos).ok()?,
                 rcols: read_cols_struct(buf, &mut pos).ok()?,
                 strict: read_bool(buf, &mut pos).ok()?,
+            }),
+            DistOp::Nearest => Some(DistPayload::Nearest {
+                left: read_table(buf, &mut pos).ok()?,
+                right: read_table(buf, &mut pos).ok()?,
+                lcols: read_cols_struct(buf, &mut pos).ok()?,
+                rcols: read_cols_struct(buf, &mut pos).ok()?,
+                strict: read_bool(buf, &mut pos).ok()?,
+                k: read_u32(buf, &mut pos).ok()?,
+                include_overlaps: read_bool(buf, &mut pos).ok()?,
+                compute_distance: read_bool(buf, &mut pos).ok()?,
             }),
             // Pozostałe operacje dochodzą w kolejnych krokach Fazy H.
             _ => None,

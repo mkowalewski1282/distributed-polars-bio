@@ -142,6 +142,51 @@ def test_subtract_both_source_stages_are_parallel():
 
 
 # --------------------------------------------------------------------------
+# nearest — wzorzec BROADCAST (równoległość po prawej stronie, bez shuffle)
+# --------------------------------------------------------------------------
+
+
+def test_nearest_is_broadcast_not_shuffle():
+    """
+    NearestExec nie nadpisuje `required_input_distribution()`, więc hash-shuffle
+    NIE wystąpi i nie powinien. Dowodem dystrybucji jest tu inny wzorzec:
+    równoległość po stronie prawej tabeli plus lewa tabela przeniesiona
+    w ładunku planu.
+    """
+    txt, stages = _explain("nearest")
+    assert "NearestExec" in txt, txt
+    assert not re.search(r"partitioning=Hash\(", txt), (
+        f"nearest nie powinien mieć hash-shuffle (wzorzec broadcast):\n{txt}"
+    )
+
+
+def test_nearest_compute_stage_is_parallel():
+    """NearestExec musi liczyć się na >1 partycji (równoległość z prawej strony)."""
+    txt, stages = _explain("nearest")
+    assert max(p for _, p in stages) >= 2, (
+        f"NearestExec nie liczy się równolegle:\n{txt}"
+    )
+    assert re.search(r"file_groups=\{2 groups:", txt), (
+        f"prawa tabela powinna być czytana jako 2 osobne grupy plików:\n{txt}"
+    )
+
+
+def test_nearest_left_table_travels_in_plan_not_as_scan():
+    """
+    Dowód BROADCASTU: lewa (indeksowana) tabela NIE pojawia się w planie jako
+    osobny DataSourceExec — jej dane pojechały wewnątrz ładunku planu
+    fizycznego (Arrow IPC), a executor odbudował z nich indeks lokalnie.
+    W planie widać wyłącznie skan prawej tabeli (parts_b).
+    """
+    txt, _ = _explain("nearest")
+    assert "parts_b" in txt, f"brak skanu prawej tabeli:\n{txt}"
+    assert "parts_a" not in txt, (
+        "Lewa tabela pojawiła się w planie jako skan — to znaczy, że NIE jest "
+        f"broadcastowana w ładunku planu:\n{txt}"
+    )
+
+
+# --------------------------------------------------------------------------
 # overlap — asercja DOKUMENTUJĄCA znalezisko (Faza H)
 # --------------------------------------------------------------------------
 

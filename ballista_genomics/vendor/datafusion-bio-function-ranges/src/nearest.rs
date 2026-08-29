@@ -166,19 +166,20 @@ impl TableProvider for NearestProvider {
     }
 }
 
+// PATCH (praca magisterska, patrz ../../PATCH.md, Latka 2) - czysta widocznosc.
 #[derive(Debug)]
-struct NearestExec {
-    schema: SchemaRef,
-    left_batch: Arc<RecordBatch>,
-    indexes: Arc<AHashMap<String, NearestIntervalIndex>>,
-    right: Arc<dyn ExecutionPlan>,
-    columns_1: Arc<(String, String, String)>,
-    columns_2: Arc<(String, String, String)>,
-    filter_op: FilterOp,
-    include_overlaps: bool,
-    k: usize,
-    compute_distance: bool,
-    cache: Arc<PlanProperties>,
+pub struct NearestExec {
+    pub schema: SchemaRef,
+    pub left_batch: Arc<RecordBatch>,
+    pub indexes: Arc<AHashMap<String, NearestIntervalIndex>>,
+    pub right: Arc<dyn ExecutionPlan>,
+    pub columns_1: Arc<(String, String, String)>,
+    pub columns_2: Arc<(String, String, String)>,
+    pub filter_op: FilterOp,
+    pub include_overlaps: bool,
+    pub k: usize,
+    pub compute_distance: bool,
+    pub cache: Arc<PlanProperties>,
 }
 
 impl DisplayAs for NearestExec {
@@ -495,7 +496,11 @@ fn get_nearest_stream(
     Ok(Box::pin(adapted_stream))
 }
 
-fn build_nearest_indexes(
+// PATCH (praca magisterska, patrz ../../PATCH.md, Latka 2): `fn` -> `pub fn`.
+// Kodek odbudowuje indeks po stronie executora z left_batch przeslanego przez
+// Arrow IPC - i musi uzyc DOKLADNIE tej samej funkcji co scan(), zeby `position`
+// w IntervalRecord wskazywalo ten sam wiersz tego samego batcha.
+pub fn build_nearest_indexes(
     batch: &RecordBatch,
     columns: (&str, &str, &str),
 ) -> Result<AHashMap<String, NearestIntervalIndex>> {

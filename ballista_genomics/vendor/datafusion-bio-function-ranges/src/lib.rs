@@ -20,7 +20,7 @@ pub use complement::ComplementProvider;
 pub use count_overlaps::CountOverlapsProvider;
 pub use filter_op::FilterOp;
 pub use merge::{MergeExec, MergeProvider}; // PATCH: MergeExec, patrz ../PATCH.md (Latka 2)
-pub use nearest::NearestProvider;
+pub use nearest::{NearestExec, NearestProvider, build_nearest_indexes}; // PATCH, patrz ../PATCH.md
 pub use overlap::{OverlapOutputMode, OverlapProvider};
 pub use physical_planner::BioQueryPlanner;
 pub use physical_planner::IntervalJoinPhysicalOptimizationRule;
