@@ -285,10 +285,14 @@ Jeden wiersz na przebieg: `timestamp`, `git_commit`, `engine_versions`, `series`
 
 ### 9.1 P0 — Ballista w osobnych procesach (zadanie wstępne)
 
-Własne binarki `ballista_genomics/src/bin/scheduler.rs` i `executor.rs` uruchamiające scheduler
-i executor Ballisty 53 z zarejestrowanymi koderami (`SchedulerConfig::override_logical_codec`
-/ `override_physical_codec`, analogicznie `ExecutorProcessConfig`); flaga `--no-codecs`
-w executorze (kontrola negatywna). W `runner.rs` tryb `remote_with_state(url, state)`, gdy
+Własna binarka `ballista_genomics/src/bin/ballista_node.rs` z dwiema rolami (`scheduler`,
+`executor`) — jedna zamiast dwóch, bo na tej maszynie dominującym kosztem iteracji jest
+linkowanie. Uruchamia scheduler i executor Ballisty 53 z zarejestrowanymi koderami
+(`SchedulerConfig::override_logical_codec` / `override_physical_codec`, analogicznie
+`ExecutorProcessConfig`) oraz z bio-owym stanem sesji po stronie schedulera (tryb standalone
+przekazywał go niejawnie ze stanu klienta); flaga `--no-codecs` w executorze (kontrola
+negatywna). Scheduler w trybie push z rozdziałem zadań round-robin (deterministyczne
+rozłożenie zadań na executory) i z wyłączonym sprzątaniem danych zakończonych zadań. W `runner.rs` tryb `remote_with_state(url, state)`, gdy
 podany jest adres schedulera; bez niego — dotychczasowy tryb standalone.
 
 Test `tests/test_ballista_multiprocess.py` stawia scheduler i 2 executory (natywnie, bez Dockera,
