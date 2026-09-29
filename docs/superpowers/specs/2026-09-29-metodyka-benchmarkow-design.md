@@ -301,7 +301,10 @@ po 2 sloty zadań) i dla 5 operacji sprawdza cztery dowody:
 1. cztery różne PID-y (scheduler, 2 executory, klient);
 2. wynik zgodny z polars-bio (znormalizowane zbiory krotek, jak w istniejących testach);
 3. zadania wykonane na **obu** executorach i dane shuffle przekazane między nimi (logi
-   i katalogi robocze executorów);
+   i katalogi robocze executorów) — dla operacji z co najmniej dwoma zadaniami na etap
+   (`merge`, `subtract`, `nearest`, `coverage`; przekazanie shuffle — `merge`, `subtract`).
+   `overlap` czyta pojedyncze pliki i ma jedno zadanie na etap (brak równoległości hash),
+   więc dla niego dowodem jest wykonanie etapu w procesie executora, a nie na obu;
 4. executor uruchomiony z `--no-codecs` odrzuca plan przy dekodowaniu („Could not deserialize ...”,
    komunikat zwrócony schedulerowi), więc zapytanie nie daje wyniku — plan jest dekodowany po
    stronie executora. Ballista 53 w trybie push nie zgłasza tego jako błędu zapytania: uznaje

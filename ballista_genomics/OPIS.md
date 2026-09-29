@@ -270,7 +270,9 @@ w trybie standalone (scheduler i executor w jednym procesie). Bez pomiarów czas
 ### Jak uruchomić ręcznie
 
 Wszystkie polecenia z katalogu `ballista_genomics/` (ładunki planu przenoszą
-ścieżki względne do danych):
+ścieżki względne do danych), każde w osobnym terminalu. Kolejność ma znaczenie:
+executor łączy się ze schedulerem tylko raz przy starcie, więc scheduler musi
+już nasłuchiwać — inaczej executor kończy pracę z kodem 1.
 
     ./target/debug/ballista_node scheduler --port 50050
     ./target/debug/ballista_node executor --scheduler-port 50050 --port 50051 \

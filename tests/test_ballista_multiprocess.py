@@ -29,6 +29,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -123,6 +124,26 @@ def _wait_for_executors(cluster: Cluster, expected: int, timeout: float = 60.0) 
     )
 
 
+def _wait_for_scheduler(cluster: Cluster, timeout: float = 30.0) -> None:
+    """Executor Ballisty 53 łączy się ze schedulerem tylko raz przy starcie
+    (scheduler_connect_timeout_seconds = 0 oznacza jedną próbę), więc executory
+    wolno uruchomić dopiero, gdy scheduler już nasłuchuje."""
+    deadline = time.monotonic() + timeout
+    scheduler = cluster.procs["scheduler"]
+    while time.monotonic() < deadline:
+        if scheduler.poll() is not None:
+            pytest.fail(
+                f"proces scheduler zakończył się przedwcześnie (kod {scheduler.returncode}); "
+                f"logi w {cluster.log_dir}"
+            )
+        try:
+            _registered_executors(cluster.scheduler_port)
+            return
+        except OSError:
+            time.sleep(0.2)
+    pytest.fail(f"scheduler nie zaczął nasłuchiwać w {timeout:.0f} s; logi w {cluster.log_dir}")
+
+
 def _start_cluster(log_dir: Path, executors: list[tuple[str, list[str]]]) -> Cluster:
     """Scheduler + executory jako osobne procesy; każdy executor ma własny
     katalog roboczy i 2 sloty zadań (specyfikacja, sekcja 9.1)."""
@@ -133,6 +154,7 @@ def _start_cluster(log_dir: Path, executors: list[tuple[str, list[str]]]) -> Clu
             ["scheduler", "--port", str(cluster.scheduler_port)],
             log_dir / "scheduler.log",
         )
+        _wait_for_scheduler(cluster)
         for name, extra_args in executors:
             work_dir = log_dir / f"work_{name}"
             work_dir.mkdir()
@@ -198,6 +220,28 @@ def test_cluster_stop_terminates_all_processes(tmp_path):
     c.stop()
     still_running = [name for name, p in c.procs.items() if p.poll() is None]
     assert not still_running, f"po stop() nadal działają: {still_running}"
+
+
+def test_start_cluster_waits_for_scheduler_before_executors(tmp_path, monkeypatch):
+    """Executor łączy się ze schedulerem tylko raz przy starcie — gdyby wystartował,
+    zanim scheduler nasłuchuje, zakończy się błędem. Pomocnik musi najpierw
+    poczekać na scheduler; tu scheduler celowo startuje z 2-sekundowym opóźnieniem."""
+    original_spawn = _spawn
+
+    def spawn_with_delayed_scheduler(args: list[str], log: Path) -> subprocess.Popen:
+        if args and args[0] == "scheduler":
+            with log.open("w") as f:
+                return subprocess.Popen(
+                    ["sh", "-c", 'sleep 2; exec "$0" "$@"', str(NODE_BINARY), *args],
+                    cwd=BALLISTA_DIR,
+                    stdout=f,
+                    stderr=subprocess.STDOUT,
+                )
+        return original_spawn(args, log)
+
+    monkeypatch.setattr(sys.modules[__name__], "_spawn", spawn_with_delayed_scheduler)
+    c = _start_cluster(tmp_path, [("executor_1", [])])
+    c.stop()
 
 
 def test_scheduler_sees_two_separate_executors(cluster):
