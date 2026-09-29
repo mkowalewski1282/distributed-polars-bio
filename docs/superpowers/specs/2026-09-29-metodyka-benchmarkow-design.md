@@ -302,8 +302,10 @@ po 2 sloty zadań) i dla 5 operacji sprawdza cztery dowody:
 2. wynik zgodny z polars-bio (znormalizowane zbiory krotek, jak w istniejących testach);
 3. zadania wykonane na **obu** executorach i dane shuffle przekazane między nimi (logi
    i katalogi robocze executorów);
-4. executor uruchomiony z `--no-codecs` powoduje błąd zapytania (plan jest dekodowany po stronie
-   executora).
+4. executor uruchomiony z `--no-codecs` odrzuca plan przy dekodowaniu („Could not deserialize ...”,
+   komunikat zwrócony schedulerowi), więc zapytanie nie daje wyniku — plan jest dekodowany po
+   stronie executora. Ballista 53 w trybie push nie zgłasza tego jako błędu zapytania: uznaje
+   executor za utraconego i ponawia po jego ponownej rejestracji (zapytanie wisi).
 
 Bez pomiarów czasu. Znane ryzyko poza zakresem P0: ładunek planu przekazuje **ścieżki** plików,
 więc procesy muszą współdzielić system plików (lokalnie spełnione; w kontenerach/chmurze —

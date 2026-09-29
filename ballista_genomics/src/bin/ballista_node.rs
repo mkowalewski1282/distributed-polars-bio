@@ -20,6 +20,7 @@ use ballista_executor::executor_process::{ExecutorProcessConfig, start_executor_
 use ballista_genomics::cluster::{
     bio_ballista_config, bio_logical_codec, bio_physical_codec, bio_session_state,
 };
+use ballista_genomics::runner::bio_session_config;
 use ballista_scheduler::cluster::BallistaCluster;
 use ballista_scheduler::config::{SchedulerConfig, TaskDistributionPolicy};
 use ballista_scheduler::scheduler_process::start_server;
@@ -27,7 +28,7 @@ use ballista_scheduler::scheduler_process::start_server;
 const USAGE: &str = "użycie:
   ballista_node scheduler --port <P>
   ballista_node executor --scheduler-port <P> --port <F> --grpc-port <G> \\
-                         --work-dir <DIR> --concurrent-tasks <N>";
+                         --work-dir <DIR> --concurrent-tasks <N> [--no-codecs]";
 
 type Flags = HashMap<String, Option<String>>;
 
@@ -64,13 +65,15 @@ struct ExecutorOpts {
     grpc_port: u16,
     work_dir: String,
     concurrent_tasks: usize,
+    /// `false` = kontrola negatywna: executor bez koderów operacji genomicznych.
+    codecs: bool,
 }
 
 fn parse_executor(args: &[String]) -> Result<ExecutorOpts, String> {
     let flags = parse_flags(
         args,
         &["--scheduler-port", "--port", "--grpc-port", "--work-dir", "--concurrent-tasks"],
-        &[],
+        &["--no-codecs"],
     )?;
     Ok(ExecutorOpts {
         scheduler_port: required(&flags, "--scheduler-port")?,
@@ -78,6 +81,7 @@ fn parse_executor(args: &[String]) -> Result<ExecutorOpts, String> {
         grpc_port: required(&flags, "--grpc-port")?,
         work_dir: required(&flags, "--work-dir")?,
         concurrent_tasks: required(&flags, "--concurrent-tasks")?,
+        codecs: !flags.contains_key("--no-codecs"),
     })
 }
 
@@ -109,7 +113,13 @@ async fn run_scheduler(port: u16) -> Result<(), Box<dyn Error>> {
 }
 
 async fn run_executor(o: ExecutorOpts) -> Result<(), Box<dyn Error>> {
-    let config_producer: ConfigProducer = Arc::new(|| bio_ballista_config().upgrade_for_ballista());
+    // Kontrola negatywna usuwa kodery z OBU miejsc — nadpisań i konfiguracji
+    // sesji — żeby executor nie miał skąd ich wziąć.
+    let config_producer: ConfigProducer = if o.codecs {
+        Arc::new(|| bio_ballista_config().upgrade_for_ballista())
+    } else {
+        Arc::new(|| bio_session_config().upgrade_for_ballista())
+    };
     let config = ExecutorProcessConfig {
         bind_host: "127.0.0.1".into(),
         external_host: Some("localhost".into()),
@@ -121,13 +131,17 @@ async fn run_executor(o: ExecutorOpts) -> Result<(), Box<dyn Error>> {
         task_scheduling_policy: TaskSchedulingPolicy::PushStaged,
         work_dir: Some(o.work_dir.clone()),
         override_config_producer: Some(config_producer),
-        override_logical_codec: Some(bio_logical_codec()),
-        override_physical_codec: Some(bio_physical_codec()),
+        override_logical_codec: o.codecs.then(bio_logical_codec),
+        override_physical_codec: o.codecs.then(bio_physical_codec),
         ..ExecutorProcessConfig::default()
     };
     println!(
-        "ballista_node: executor (flight {}, grpc {}, katalog {}, sloty {})",
-        o.port, o.grpc_port, o.work_dir, o.concurrent_tasks
+        "ballista_node: executor (flight {}, grpc {}, katalog {}, sloty {}, kodery: {})",
+        o.port,
+        o.grpc_port,
+        o.work_dir,
+        o.concurrent_tasks,
+        if o.codecs { "tak" } else { "NIE (kontrola negatywna)" }
     );
     start_executor_process(Arc::new(config)).await?;
     Ok(())

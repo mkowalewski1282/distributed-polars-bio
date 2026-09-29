@@ -391,3 +391,51 @@ def test_empty_scheduler_url_means_standalone():
     result, _ = _run_client("merge", "", timeout=180)
     assert result.returncode == 0, result.stderr
     assert "standalone" in result.stdout, result.stdout
+
+
+#: Okno obserwacji kontroli negatywnej. Odrzucenie planu przez executor następuje
+#: w pierwszych sekundach (zaraz po etapie 1), a z koderami całe zapytanie trwa
+#: ~2 s — 45 s z dużym zapasem rozdziela oba przypadki.
+NEGATIVE_WINDOW_S = 45
+
+
+def test_executor_without_codecs_cannot_run_bio_plan(tmp_path):
+    """Dowód 4 (kontrola negatywna): ta sama konfiguracja co w teście operacji,
+    ale executor bez koderów. Etap 1 (zwykłe węzły DataFusion) executor policzy,
+    ale etapu z węzłem MergeExec nie umie zdekodować — plan jest więc dekodowany
+    w executorze, a nie gdzie indziej.
+
+    Ballista 53 w trybie push nie zgłasza tego jako błędu zapytania: executor
+    odrzuca zadanie przy dekodowaniu („Could not deserialize ...”), a scheduler
+    uznaje go za utraconego, wyrejestrowuje i po ponownej rejestracji próbuje
+    od nowa — zapytanie wisi zamiast się wywrócić. Dowodem jest więc brak wyniku
+    w oknie obserwacji oraz komunikat dekodowania, który executor zwrócił
+    schedulerowi (log schedulera)."""
+    _require(DIST_BINARY)
+    c = _start_cluster(tmp_path, [("executor_bez_koderow", ["--no-codecs"])])
+    out_csv = OUTPUT_DIR / "dist_merge_result.csv"
+    out_csv.unlink(missing_ok=True)
+    client = subprocess.Popen(
+        [str(DIST_BINARY), "merge"],
+        cwd=BALLISTA_DIR,
+        env={**os.environ, "BALLISTA_SCHEDULER_URL": c.url},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        try:
+            client.communicate(timeout=NEGATIVE_WINDOW_S)
+            client_succeeded = client.returncode == 0
+        except subprocess.TimeoutExpired:
+            client.kill()
+            client.communicate()
+            client_succeeded = False
+        scheduler_log = (tmp_path / "scheduler.log").read_text()
+    finally:
+        c.stop()
+    assert not client_succeeded, "zapytanie przeszło mimo executora bez koderów"
+    assert not out_csv.exists(), "wynik zapisany mimo braku koderów"
+    assert "Could not deserialize" in scheduler_log, (
+        f"brak śladu odrzucenia planu przez executor; log: {tmp_path / 'scheduler.log'}"
+    )
