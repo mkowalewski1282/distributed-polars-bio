@@ -238,10 +238,16 @@ MULTI_TASK_OPS = {"merge", "subtract", "nearest", "coverage"}
 SHUFFLE_OPS = {"merge", "subtract"}
 
 
-def _run_client(op: str, scheduler_url: str | None, timeout: int = 180):
-    """Uruchamia dist_ops; zwraca (CompletedProcess, PID klienta)."""
+def _run_client(op: str, scheduler_url: str | None, output_dir: Path, timeout: int = 180):
+    """Uruchamia dist_ops z wynikami w `output_dir` (zmienna DIST_OUTPUT_DIR);
+    zwraca (CompletedProcess, PID klienta).
+
+    Własny katalog wyników jest konieczny: testy trybu standalone opierają się
+    na plikach w ballista_genomics/output/ (m.in. planach EXPLAIN ANALYZE),
+    więc uruchomienia z tego pliku nie mogą ich nadpisywać."""
     _require(DIST_BINARY)
     env = dict(os.environ)
+    env["DIST_OUTPUT_DIR"] = str(output_dir)
     if scheduler_url is None:
         env.pop("BALLISTA_SCHEDULER_URL", None)
     else:
@@ -280,13 +286,13 @@ def _stages_by_job(work_dir: Path) -> dict[str, set[str]]:
     return jobs
 
 
-def _check_against_oracle(op: str) -> None:
+def _check_against_oracle(op: str, output_dir: Path) -> None:
     """Dowód 2: wynik klienta == lokalny polars-bio (wyrocznie jak w
     tests/test_ballista_distributed_ops.py). Importy leniwe — polars-bio ładuje
     się kilka minut, a testy samego klastra go nie potrzebują."""
     import pandas as pd
 
-    df = pd.read_csv(OUTPUT_DIR / f"dist_{op}_result.csv")
+    df = pd.read_csv(output_dir / f"dist_{op}_result.csv")
     if op == "overlap":
         from tests.overlap_oracle import normalize_engine_pairs, reference_overlap_pairs
 
@@ -341,15 +347,29 @@ def _write_evidence(op: str, pids: dict[str, int], new_jobs: dict[str, dict[str,
 
 
 @pytest.mark.parametrize("op", ["overlap", "merge", "subtract", "nearest", "coverage"])
-def test_operation_runs_distributed_across_processes(cluster, op):
+def test_operation_runs_distributed_across_processes(cluster, op, tmp_path):
     """Dowody 1–3 dla jednej operacji uruchomionej przez klaster z procesów."""
+    standalone_plan = OUTPUT_DIR / f"dist_{op}_explain.txt"
+    standalone_plan_before = (
+        standalone_plan.stat().st_mtime_ns if standalone_plan.exists() else None
+    )
     before = {name: _stages_by_job(wd) for name, wd in cluster.work_dirs.items()}
-    result, client_pid = _run_client(op, cluster.url)
+    result, client_pid = _run_client(op, cluster.url, tmp_path)
     assert result.returncode == 0, (
         f"dist_ops {op}:\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
     assert "zewnętrznym schedulerem" in result.stdout, (
         f"klient nie użył trybu zdalnego:\n{result.stdout}"
+    )
+    assert (tmp_path / f"dist_{op}_result.csv").exists(), (
+        f"{op}: wynik nie trafił do katalogu testu {tmp_path}"
+    )
+    standalone_plan_after = (
+        standalone_plan.stat().st_mtime_ns if standalone_plan.exists() else None
+    )
+    assert standalone_plan_after == standalone_plan_before, (
+        f"{op}: uruchomienie zdalne nadpisało {standalone_plan}, na którym opierają "
+        f"się testy trybu standalone"
     )
     after = {name: _stages_by_job(wd) for name, wd in cluster.work_dirs.items()}
     new_jobs = {
@@ -362,7 +382,7 @@ def test_operation_runs_distributed_across_processes(cluster, op):
     assert len(set(pids.values())) == 4, f"PID-y nie są różne: {pids}"
 
     # Dowód 2: poprawność względem polars-bio.
-    _check_against_oracle(op)
+    _check_against_oracle(op, tmp_path)
 
     # Dowód 3: praca wykonana w executorach, a dla operacji wielozadaniowych — w OBU.
     participating = sorted(name for name, jobs in new_jobs.items() if jobs)
@@ -380,15 +400,15 @@ def test_operation_runs_distributed_across_processes(cluster, op):
     _write_evidence(op, pids, new_jobs)
 
 
-def test_client_fails_fast_when_scheduler_is_down():
+def test_client_fails_fast_when_scheduler_is_down(tmp_path):
     """Adres nieistniejącego schedulera ma dać błąd w rozsądnym czasie, nie zawieszenie."""
-    result, _ = _run_client("merge", f"df://localhost:{_free_port()}", timeout=120)
+    result, _ = _run_client("merge", f"df://localhost:{_free_port()}", tmp_path, timeout=120)
     assert result.returncode != 0, f"klient zakończył się sukcesem bez schedulera:\n{result.stdout}"
 
 
-def test_empty_scheduler_url_means_standalone():
+def test_empty_scheduler_url_means_standalone(tmp_path):
     """Pusta zmienna BALLISTA_SCHEDULER_URL = brak zmiennej (tryb standalone)."""
-    result, _ = _run_client("merge", "", timeout=180)
+    result, _ = _run_client("merge", "", tmp_path, timeout=180)
     assert result.returncode == 0, result.stderr
     assert "standalone" in result.stdout, result.stdout
 
@@ -413,12 +433,12 @@ def test_executor_without_codecs_cannot_run_bio_plan(tmp_path):
     schedulerowi (log schedulera)."""
     _require(DIST_BINARY)
     c = _start_cluster(tmp_path, [("executor_bez_koderow", ["--no-codecs"])])
-    out_csv = OUTPUT_DIR / "dist_merge_result.csv"
-    out_csv.unlink(missing_ok=True)
+    output_dir = tmp_path / "wyniki"
+    out_csv = output_dir / "dist_merge_result.csv"
     client = subprocess.Popen(
         [str(DIST_BINARY), "merge"],
         cwd=BALLISTA_DIR,
-        env={**os.environ, "BALLISTA_SCHEDULER_URL": c.url},
+        env={**os.environ, "BALLISTA_SCHEDULER_URL": c.url, "DIST_OUTPUT_DIR": str(output_dir)},
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

@@ -2,6 +2,7 @@
 //! jedna konfiguracja sesji, jedno miejsce z SQL-ami, jedno miejsce zapisujące
 //! wynik i dowód dystrybucji.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -21,6 +22,18 @@ use crate::dist_udtf::DistTableFunction;
 /// → klient łączy się z klastrem z osobnych procesów (`ballista_node`); pusta
 /// albo brak → dotychczasowy tryb standalone (scheduler + executor in-proc).
 pub const SCHEDULER_URL_ENV: &str = "BALLISTA_SCHEDULER_URL";
+
+/// Katalog na wynik i plan EXPLAIN ANALYZE; pusty albo brak → `output`.
+/// Testy klastra z osobnych procesów podają własny katalog, żeby nie nadpisywać
+/// plików, na których opierają się testy trybu standalone.
+pub const OUTPUT_DIR_ENV: &str = "DIST_OUTPUT_DIR";
+
+fn output_dir() -> PathBuf {
+    match std::env::var(OUTPUT_DIR_ENV) {
+        Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => PathBuf::from("output"),
+    }
+}
 
 /// Konfiguracja sesji używana ZARÓWNO przez sesję klienta/schedulera, JAK I
 /// przez wewnętrzne sesje budowane w `DistBioProvider::build()`.
@@ -67,8 +80,8 @@ pub fn spec(op: DistOp) -> OpSpec {
                                     'chrom', 'start', 'end', 'strict') \
                   ORDER BY chrom, start_a, start_b"
                 .to_string(),
-            output_csv: "output/dist_overlap_result.csv",
-            explain_txt: "output/dist_overlap_explain.txt",
+            output_csv: "dist_overlap_result.csv",
+            explain_txt: "dist_overlap_explain.txt",
             title: "dist_overlap + COITrees w pełni rozproszone",
         },
         DistOp::Merge => OpSpec {
@@ -82,8 +95,8 @@ pub fn spec(op: DistOp) -> OpSpec {
                                            'chrom', 'start', 'end', 0, 'strict') \
                   ORDER BY chrom, start"
                 .to_string(),
-            output_csv: "output/dist_merge_result.csv",
-            explain_txt: "output/dist_merge_explain.txt",
+            output_csv: "dist_merge_result.csv",
+            explain_txt: "dist_merge_explain.txt",
             title: "dist_merge w pełni rozproszony (hash-shuffle po chrom)",
         },
         DistOp::Subtract => OpSpec {
@@ -97,8 +110,8 @@ pub fn spec(op: DistOp) -> OpSpec {
                                               'chrom', 'start', 'end', 'strict') \
                   ORDER BY chrom, start"
                 .to_string(),
-            output_csv: "output/dist_subtract_result.csv",
-            explain_txt: "output/dist_subtract_explain.txt",
+            output_csv: "dist_subtract_result.csv",
+            explain_txt: "dist_subtract_explain.txt",
             title: "dist_subtract w pełni rozproszony (dwustronny hash-shuffle)",
         },
         DistOp::Nearest => OpSpec {
@@ -114,8 +127,8 @@ pub fn spec(op: DistOp) -> OpSpec {
                                              'chrom', 'start', 'end') \
                   ORDER BY left_chrom, left_start"
                 .to_string(),
-            output_csv: "output/dist_nearest_result.csv",
-            explain_txt: "output/dist_nearest_explain.txt",
+            output_csv: "dist_nearest_result.csv",
+            explain_txt: "dist_nearest_explain.txt",
             title: "dist_nearest w pełni rozproszony (broadcast lewej tabeli)",
         },
         DistOp::Coverage => OpSpec {
@@ -130,8 +143,8 @@ pub fn spec(op: DistOp) -> OpSpec {
                                               'chrom', 'start', 'end', 'strict') \
                   ORDER BY chrom, start"
                 .to_string(),
-            output_csv: "output/dist_coverage_result.csv",
-            explain_txt: "output/dist_coverage_explain.txt",
+            output_csv: "dist_coverage_result.csv",
+            explain_txt: "dist_coverage_explain.txt",
             title: "dist_coverage w pełni rozproszony (broadcast + węzeł-nośnik)",
         },
     }
@@ -179,9 +192,12 @@ pub async fn run(op: DistOp) -> Result<()> {
     }
     println!("============================================================");
 
-    std::fs::create_dir_all("output")?;
-    write_csv(&result, s.output_csv)?;
-    println!("Wynik zapisany do {}", s.output_csv);
+    let out_dir = output_dir();
+    std::fs::create_dir_all(&out_dir)?;
+    let output_csv = out_dir.join(s.output_csv);
+    let explain_txt = out_dir.join(s.explain_txt);
+    write_csv(&result, &output_csv)?;
+    println!("Wynik zapisany do {}", output_csv.display());
 
     // PUNKT KONTROLNY: zrzut planu ROZPROSZONEGO z podziałem na query stage'e.
     // Ballista implementuje EXPLAIN ANALYZE tak, że zwraca sekcje
@@ -192,8 +208,11 @@ pub async fn run(op: DistOp) -> Result<()> {
     match ctx.sql(&format!("EXPLAIN ANALYZE {}", s.sql)).await {
         Ok(df) => match df.collect().await {
             Ok(batches) => {
-                std::fs::write(s.explain_txt, extract_text(&batches))?;
-                println!("Plan rozproszony (EXPLAIN ANALYZE) zapisany do {}", s.explain_txt);
+                std::fs::write(&explain_txt, extract_text(&batches))?;
+                println!(
+                    "Plan rozproszony (EXPLAIN ANALYZE) zapisany do {}",
+                    explain_txt.display()
+                );
             }
             Err(e) => eprintln!("UWAGA: EXPLAIN ANALYZE nie wykonało się: {e}"),
         },
@@ -203,7 +222,7 @@ pub async fn run(op: DistOp) -> Result<()> {
     Ok(())
 }
 
-fn write_csv(batches: &[RecordBatch], path: &str) -> Result<()> {
+fn write_csv(batches: &[RecordBatch], path: &Path) -> Result<()> {
     let file = std::fs::File::create(path)?;
     let mut writer = datafusion::arrow::csv::WriterBuilder::new()
         .with_header(true)
