@@ -1,0 +1,147 @@
+{
+  "overlap": [
+    {
+      "chrom_1": "chr1",
+      "start_1": 5,
+      "end_1": 20,
+      "chrom_2": "chr1",
+      "start_2": 10,
+      "end_2": 25
+    },
+    {
+      "chrom_1": "chr1",
+      "start_1": 15,
+      "end_1": 30,
+      "chrom_2": "chr1",
+      "start_2": 10,
+      "end_2": 25
+    },
+    {
+      "chrom_1": "chr1",
+      "start_1": 40,
+      "end_1": 55,
+      "chrom_2": "chr1",
+      "start_2": 45,
+      "end_2": 50
+    },
+    {
+      "chrom_1": "chr1",
+      "start_1": 40,
+      "end_1": 55,
+      "chrom_2": "chr1",
+      "start_2": 52,
+      "end_2": 65
+    }
+  ],
+  "nearest": [
+    {
+      "chrom_1": "chr1",
+      "start_1": 5,
+      "end_1": 20,
+      "chrom_2": "chr1",
+      "start_2": 10,
+      "end_2": 25,
+      "distance": 0
+    },
+    {
+      "chrom_1": "chr1",
+      "start_1": 15,
+      "end_1": 30,
+      "chrom_2": "chr1",
+      "start_2": 10,
+      "end_2": 25,
+      "distance": 0
+    },
+    {
+      "chrom_1": "chr1",
+      "start_1": 40,
+      "end_1": 55,
+      "chrom_2": "chr1",
+      "start_2": 45,
+      "end_2": 50,
+      "distance": 0
+    },
+    {
+      "chrom_1": "chr1",
+      "start_1": 70,
+      "end_1": 80,
+      "chrom_2": "chr1",
+      "start_2": 52,
+      "end_2": 65,
+      "distance": 5
+    }
+  ],
+  "coverage": [
+    {
+      "chrom": "chr1",
+      "start": 5,
+      "end": 20,
+      "coverage": 10
+    },
+    {
+      "chrom": "chr1",
+      "start": 15,
+      "end": 30,
+      "coverage": 10
+    },
+    {
+      "chrom": "chr1",
+      "start": 40,
+      "end": 55,
+      "coverage": 8
+    },
+    {
+      "chrom": "chr1",
+      "start": 70,
+      "end": 80,
+      "coverage": 0
+    }
+  ],
+  "merge": [
+    {
+      "chrom": "chr1",
+      "start": 5,
+      "end": 30,
+      "n_intervals": 2
+    },
+    {
+      "chrom": "chr1",
+      "start": 40,
+      "end": 55,
+      "n_intervals": 1
+    },
+    {
+      "chrom": "chr1",
+      "start": 70,
+      "end": 80,
+      "n_intervals": 1
+    }
+  ],
+  "subtract": [
+    {
+      "chrom": "chr1",
+      "start": 5,
+      "end": 10
+    },
+    {
+      "chrom": "chr1",
+      "start": 25,
+      "end": 30
+    },
+    {
+      "chrom": "chr1",
+      "start": 40,
+      "end": 45
+    },
+    {
+      "chrom": "chr1",
+      "start": 50,
+      "end": 52
+    },
+    {
+      "chrom": "chr1",
+      "start": 70,
+      "end": 80
+    }
+  ]
+}

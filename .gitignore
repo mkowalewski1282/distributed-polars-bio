@@ -5,3 +5,6 @@ output.txt
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Podglady rysunkow (odtwarzane przez raporty/img/generuj_rysunki.py)
+raporty/img/*.png
