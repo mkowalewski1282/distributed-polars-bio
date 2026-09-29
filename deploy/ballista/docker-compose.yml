@@ -41,10 +41,11 @@ services:
     volumes:
       - ../../ballista_genomics/output:/app/output
 
-# DO ZROBIENIA przed uruchomieniem (Faza D):
-# Obecny kod tworzy klaster przez `SessionContext::standalone_with_state()`,
-# czyli scheduler i executor w tym samym procesie. Zeby uzyc tego compose'a,
-# trzeba dodac tryb "polacz sie z istniejacym schedulerem" — w Ballistcie to
-# `SessionContext::remote_with_state("df://scheduler:50050", state)`.
-# Kodeki rejestruje sie identycznie (przez SessionConfig), wiec zmiana dotyczy
-# wylacznie sposobu tworzenia sesji w runner::run() — kilka linii.
+# Stan (P0, wrzesień 2026): tryb klastra z osobnych procesów jest zaimplementowany
+# i przetestowany NATYWNIE (bez Dockera) — binarka `ballista_node` (role
+# `scheduler` i `executor`) oraz klient `dist_ops` ze zmienną
+# BALLISTA_SCHEDULER_URL; instrukcja: ballista_genomics/OPIS.md, sekcja P0.
+# Komendy `--help` powyżej trzeba zastąpić wywołaniami `ballista_node`
+# z tymi samymi flagami; ten plik NIE był jeszcze uruchamiany. Uwaga: ładunki
+# planu przenoszą ścieżki do danych, więc kontenery muszą widzieć dane pod tą
+# samą ścieżką (wspólny wolumen).

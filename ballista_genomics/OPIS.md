@@ -261,3 +261,82 @@ projektowej (patrz `architektura_draft.md`); dla Ballisty mechanizm (`PhysicalEx
 istnieje i DZIAŁA, ale dla operatorów z prywatnymi polami wymaga (małej) współpracy/łatki
 po stronie biblioteki rozszerzającej — w tej pracy pokonane bez forkowania Ballisty/Saila,
 tylko wendorowaniem jednoliniowej poprawki widoczności w pomocniczym crate'cie.
+
+## P0 — klaster z osobnych procesów (wrzesień 2026)
+
+Cel: dowód, że wykonanie jest rzeczywiście rozproszone, a nie tylko poprawne
+w trybie standalone (scheduler i executor w jednym procesie). Bez pomiarów czasu.
+
+### Jak uruchomić ręcznie
+
+Wszystkie polecenia z katalogu `ballista_genomics/` (ładunki planu przenoszą
+ścieżki względne do danych):
+
+    ./target/debug/ballista_node scheduler --port 50050
+    ./target/debug/ballista_node executor --scheduler-port 50050 --port 50051 \
+        --grpc-port 50052 --work-dir /tmp/ex1 --concurrent-tasks 2
+    ./target/debug/ballista_node executor --scheduler-port 50050 --port 50061 \
+        --grpc-port 50062 --work-dir /tmp/ex2 --concurrent-tasks 2
+    BALLISTA_SCHEDULER_URL=df://localhost:50050 ./target/debug/dist_ops merge
+
+Opcjonalnie `DIST_OUTPUT_DIR=<katalog>` kieruje wynik i plan EXPLAIN ANALYZE
+poza domyślny `output/`.
+
+### Co musiało się zmienić względem standalone
+
+- Scheduler buduje bio-owy stan sesji sam (`cluster::bio_session_state`) —
+  standalone dostawał go niejawnie od klienta.
+- Kodery rejestrowane są w każdym procesie osobno (klient, scheduler, executor).
+- Scheduler w trybie push z rozdziałem round-robin: przy pull i milisekundowych
+  zadaniach jeden executor potrafiłby zgarnąć całą pracę.
+- Sprzątanie danych zakończonych zadań wyłączone — pliki etapów są dowodem.
+
+### Dowody (`tests/test_ballista_multiprocess.py`)
+
+1. Cztery różne procesy; scheduler widzi dwa executory o różnych
+   identyfikatorach i portach.
+2. Wynik każdej z pięciu operacji zgodny z wyrocznią polars-bio.
+3. Pliki etapów w katalogach roboczych obu executorów. Każda operacja to dwa
+   zapytania do klastra (wynik i EXPLAIN ANALYZE); w komórkach — numery etapów,
+   dla których dany executor zapisał dane:
+
+| Operacja | executor_1: etapy | executor_2: etapy |
+|---|---|---|
+| overlap | zapytanie 1: 1; zapytanie 2: 1 | — |
+| merge | zapytanie 1: 1, 2, 3; zapytanie 2: 1, 2, 3 | zapytanie 1: 1, 2; zapytanie 2: 1, 2 |
+| subtract | zapytanie 1: 1, 2, 3, 4; zapytanie 2: 1, 2, 3, 4 | zapytanie 1: 1, 2, 3; zapytanie 2: 1, 2, 3 |
+| nearest | zapytanie 1: 1, 2; zapytanie 2: 1, 2 | zapytanie 1: 1; zapytanie 2: 1 |
+| coverage | zapytanie 1: 1, 2; zapytanie 2: 1, 2 | zapytanie 1: 1; zapytanie 2: 1 |
+
+   W `merge` i `subtract` oba executory liczyły etap 1 (zapis shuffle po
+   chromosomie) i kolejne etapy, więc dane musiały przejść między procesami.
+   `overlap` czyta pojedyncze pliki i nie ma równoległości hash (znane
+   ograniczenie) — cały etap trafia do jednego executora.
+4. Kontrola negatywna: executor uruchomiony z `--no-codecs` liczy etap 1
+   (zwykłe węzły DataFusion), ale etapu z `MergeExec` nie potrafi zdekodować
+   i zwraca schedulerowi:
+
+       Status { code: InvalidArgument, message: "DataFusion error: Internal error:
+       Could not deserialize BallistaPhysicalPlanNode: failed to decode Protobuf
+       message: invalid tag value: 0 ..." }
+
+   Plan jest więc dekodowany w executorze. Ballista 53 w trybie push nie
+   zgłasza tego jako błędu zapytania: uznaje executor za utraconego
+   („Removing executor …”), a po jego ponownej rejestracji ponawia — zapytanie
+   wisi. Test sprawdza brak wyniku w oknie 45 s i powyższy komunikat w logu
+   schedulera; z koderami to samo zapytanie kończy się w mniej niż sekundę (sprawdzone
+   mutacyjnie).
+
+### Znaleziska
+
+- Tryb zdalny planuje końcowe sortowanie `overlap` w jednym etapie, standalone
+  w dwóch (osobny etap `SortPreservingMergeExec`); złączenie `IntervalJoinExec`
+  w obu trybach wykonuje się w etapie na executorze. Pozostałe cztery operacje
+  mają w obu trybach tę samą liczbę etapów (merge 3, subtract 4, nearest 2,
+  coverage 2).
+- Odporność Ballisty: błąd dekodowania planu przy uruchamianiu zadania
+  traktowany jest jak utrata executora, a nie jak błąd zadania — zapytanie
+  nie kończy się błędem, tylko czeka.
+
+Znane ryzyko poza zakresem P0: procesy muszą współdzielić system plików (ładunek
+planu zawiera ścieżki) — w kontenerach i w chmurze potrzebny wspólny magazyn.
