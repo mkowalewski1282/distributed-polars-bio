@@ -1038,11 +1038,15 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "ballista",
+ "ballista-core",
+ "ballista-executor",
+ "ballista-scheduler",
  "datafusion",
  "datafusion-bio-function-ranges",
  "datafusion-proto",
  "prost",
  "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]

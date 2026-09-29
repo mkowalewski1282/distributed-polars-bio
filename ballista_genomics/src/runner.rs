@@ -5,20 +5,17 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use ballista::prelude::{SessionConfigExt, SessionContextExt};
+use ballista::prelude::SessionContextExt;
 use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::config::ConfigOptions;
 use datafusion::error::Result;
 use datafusion::prelude::{SessionConfig, SessionContext as DFSessionContext};
-use datafusion_bio_function_ranges::{BioConfig, BioSessionExt};
-use datafusion_proto::logical_plan::LogicalExtensionCodec;
-use datafusion_proto::physical_plan::PhysicalExtensionCodec;
+use datafusion_bio_function_ranges::BioConfig;
 
+use crate::cluster::{bio_ballista_config, bio_session_state};
 use crate::dist_payload::DistOp;
 use crate::dist_udtf::DistTableFunction;
-use crate::logical_codec::BioDistLogicalCodec;
-use crate::bio_phys_codec::BioRangesPhysicalCodec;
 
 /// Konfiguracja sesji używana ZARÓWNO przez sesję klienta/schedulera, JAK I
 /// przez wewnętrzne sesje budowane w `DistBioProvider::build()`.
@@ -142,21 +139,9 @@ pub async fn run(op: DistOp) -> Result<()> {
     println!("  {}", s.title);
     println!("============================================================\n");
 
-    // Sesja SCHEDULERA/klienta MUSI być bio-owa (new_with_bio), żeby
-    // IntervalJoinPhysicalOptimizationRule w ogóle zadziałała — reguły
-    // fizycznego optymalizatora działają na CAŁYM drzewie planu, więc nawet
-    // gdyby wewnętrzna sesja providera była "zwykła", to sesja schedulera
-    // decyduje, czy join zostanie przepisany na IntervalJoinExec.
-    let logical_codec: Arc<dyn LogicalExtensionCodec> = Arc::new(BioDistLogicalCodec::default());
-    // BioRangesPhysicalCodec deleguje do IntervalJoinPhysicalCodec (Faza A.5),
-    // a ten do domyślnego kodeka Ballisty — patrz bio_phys_codec.rs.
-    let physical_codec: Arc<dyn PhysicalExtensionCodec> =
-        Arc::new(BioRangesPhysicalCodec::default());
-    let config = bio_session_config()
-        .with_ballista_logical_extension_codec(logical_codec)
-        .with_ballista_physical_extension_codec(physical_codec);
-    let bio_ctx = DFSessionContext::new_with_bio(config);
-    let state = bio_ctx.state();
+    // Sesja klienta MUSI być bio-owa (new_with_bio), a konfiguracja mieć oba
+    // kodery — patrz cluster.rs. Ten sam stan dostaje scheduler standalone.
+    let state = bio_session_state(bio_ballista_config())?;
 
     println!("Łączenie z Ballista standalone (scheduler + executor in-proc)...");
     let ctx = DFSessionContext::standalone_with_state(state).await?;

@@ -5,6 +5,15 @@ edition = "2024"
 
 [dependencies]
 ballista = { version = "53.0.0", features = ["standalone"] }
+# Zadanie P0: własne procesy schedulera i executora (binarka ballista_node).
+# Te crate'y i tak są już kompilowane przez `ballista` (cecha standalone),
+# z domyślnymi cechami — bezpośrednia zależność z tymi samymi cechami nie
+# wymusza ponownej kompilacji ani pobierania.
+ballista-core = "53.0.0"
+ballista-scheduler = "53.0.0"
+ballista-executor = "53.0.0"
+# Logi węzłów na stderr; wersja i cecha env-filter jak u ballista-scheduler.
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 datafusion = "=53.0.0"
 datafusion-proto = "53"
 # Lokalna, załatana kopia (jedna linijka widoczności: mod -> pub mod) — patrz

@@ -7,6 +7,7 @@
 //! Mapa modułów:
 //! - `codec_io`        — prymitywy kodowania binarnego wspólne dla kodeków
 //! - `bio_phys_codec`  — `BioRangesPhysicalCodec`: serializacja węzłów operacji zakresowych (Faza H)
+//! - `cluster`         — kodery i stan sesji wspólne dla klienta i węzłów (P0)
 //! - `coverage_node`   — `DistCoverageExec`/`DistCoverageProvider` (Faza H, krok 4)
 //! - `dist_payload`    — `DistOp`, `DistPayload`: parametry konstrukcyjne operacji
 //! - `dist_provider`   — `DistBioProvider`: TableProvider owijający provider vendora
@@ -16,6 +17,7 @@
 //! - `runner`          — konfiguracja sesji, SQL-e, uruchomienie, dowód dystrybucji
 
 pub mod bio_phys_codec;
+pub mod cluster;
 pub mod codec_io;
 pub mod coverage_node;
 pub mod dist_payload;
