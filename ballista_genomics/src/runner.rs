@@ -17,6 +17,11 @@ use crate::cluster::{bio_ballista_config, bio_session_state};
 use crate::dist_payload::DistOp;
 use crate::dist_udtf::DistTableFunction;
 
+/// Adres zewnętrznego schedulera (np. `df://localhost:50050`). Niepusta wartość
+/// → klient łączy się z klastrem z osobnych procesów (`ballista_node`); pusta
+/// albo brak → dotychczasowy tryb standalone (scheduler + executor in-proc).
+pub const SCHEDULER_URL_ENV: &str = "BALLISTA_SCHEDULER_URL";
+
 /// Konfiguracja sesji używana ZARÓWNO przez sesję klienta/schedulera, JAK I
 /// przez wewnętrzne sesje budowane w `DistBioProvider::build()`.
 ///
@@ -143,9 +148,17 @@ pub async fn run(op: DistOp) -> Result<()> {
     // kodery — patrz cluster.rs. Ten sam stan dostaje scheduler standalone.
     let state = bio_session_state(bio_ballista_config())?;
 
-    println!("Łączenie z Ballista standalone (scheduler + executor in-proc)...");
-    let ctx = DFSessionContext::standalone_with_state(state).await?;
-    println!("Klaster Ballista wystartował.\n");
+    let ctx = match std::env::var(SCHEDULER_URL_ENV) {
+        Ok(url) if !url.is_empty() => {
+            println!("Łączenie z zewnętrznym schedulerem Ballisty: {url}");
+            DFSessionContext::remote_with_state(&url, state).await?
+        }
+        _ => {
+            println!("Łączenie z Ballista standalone (scheduler + executor in-proc)...");
+            DFSessionContext::standalone_with_state(state).await?
+        }
+    };
+    println!("Klaster Ballista gotowy.\n");
 
     // Rejestrujemy wszystkie UDTF-y niezależnie od wybranej operacji — koszt
     // zerowy, a upraszcza dyspozytor.

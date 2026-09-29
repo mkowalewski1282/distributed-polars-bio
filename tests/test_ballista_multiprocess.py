@@ -209,3 +209,185 @@ def test_scheduler_sees_two_separate_executors(cluster):
     executors = _registered_executors(cluster.scheduler_port)
     assert len({e["id"] for e in executors}) == 2, executors
     assert len({e["port"] for e in executors}) == 2, executors
+
+
+# Kanoniczny zestaw danych — identyczny jak w tests/test_ballista_distributed_ops.py
+# (tamten plik pilnuje zgodności z data/parts_a i data/parts_b).
+INTERVALS_A = [
+    ("chr1", 100, 200, "gene_A1"),
+    ("chr1", 150, 300, "gene_A2"),
+    ("chr1", 400, 500, "gene_A3"),
+    ("chr2", 50, 150, "gene_A4"),
+    ("chr2", 200, 350, "gene_A5"),
+]
+INTERVALS_B = [
+    ("chr1", 180, 250, "peak_B1"),
+    ("chr1", 290, 420, "peak_B2"),
+    ("chr1", 450, 600, "peak_B3"),
+    ("chr2", 100, 220, "peak_B4"),
+    ("chr2", 300, 400, "peak_B5"),
+]
+
+#: Operacje czytające KATALOGI dwóch plików (data/parts_*): etap źródłowy ma
+#: ≥ 2 zadania, więc przy rozdziale round-robin musi trafić na oba executory.
+#: `overlap` czyta pojedyncze pliki (data/intervals_*.csv) i nie ma równoległości
+#: hash (znane ograniczenie — sprawozdanie, sekcja 6); dla niego wymagamy ≥ 1
+#: executora, a faktyczny rozkład trafia do pliku dowodów.
+MULTI_TASK_OPS = {"merge", "subtract", "nearest", "coverage"}
+#: Operacje z hash-shuffle po chromosomie — plan musi mieć ≥ 2 etapy.
+SHUFFLE_OPS = {"merge", "subtract"}
+
+
+def _run_client(op: str, scheduler_url: str | None, timeout: int = 180):
+    """Uruchamia dist_ops; zwraca (CompletedProcess, PID klienta)."""
+    _require(DIST_BINARY)
+    env = dict(os.environ)
+    if scheduler_url is None:
+        env.pop("BALLISTA_SCHEDULER_URL", None)
+    else:
+        env["BALLISTA_SCHEDULER_URL"] = scheduler_url
+    p = subprocess.Popen(
+        [str(DIST_BINARY), op],
+        cwd=BALLISTA_DIR,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        out, err = p.communicate()
+        pytest.fail(f"dist_ops {op} przekroczyło {timeout} s\nstdout: {out}\nstderr: {err}")
+    return subprocess.CompletedProcess(p.args, p.returncode, out, err), p.pid
+
+
+def _stages_by_job(work_dir: Path) -> dict[str, set[str]]:
+    """{job_id: {stage_id, ...}} — etapy, dla których executor zapisał pliki
+    (układ Ballisty: work_dir/job_id/stage_id/...)."""
+    jobs: dict[str, set[str]] = {}
+    for job in work_dir.iterdir():
+        if not job.is_dir():
+            continue
+        stages = {
+            stage.name
+            for stage in job.iterdir()
+            if stage.is_dir() and any(f.is_file() for f in stage.rglob("*"))
+        }
+        if stages:
+            jobs[job.name] = stages
+    return jobs
+
+
+def _check_against_oracle(op: str) -> None:
+    """Dowód 2: wynik klienta == lokalny polars-bio (wyrocznie jak w
+    tests/test_ballista_distributed_ops.py). Importy leniwe — polars-bio ładuje
+    się kilka minut, a testy samego klastra go nie potrzebują."""
+    import pandas as pd
+
+    df = pd.read_csv(OUTPUT_DIR / f"dist_{op}_result.csv")
+    if op == "overlap":
+        from tests.overlap_oracle import normalize_engine_pairs, reference_overlap_pairs
+
+        actual = normalize_engine_pairs(df, "name_a", "name_b")
+        expected = reference_overlap_pairs(INTERVALS_A, INTERVALS_B)
+    elif op == "merge":
+        from tests.merge_oracle import reference_merge_intervals
+
+        actual = {(r.chrom, int(r.start), int(r.end)) for r in df.itertuples()}
+        expected = reference_merge_intervals(INTERVALS_A)
+    elif op == "subtract":
+        from tests.coverage_subtract_oracle import reference_subtract
+
+        actual = {(r.chrom, int(r.start), int(r.end)) for r in df.itertuples()}
+        expected = reference_subtract(INTERVALS_A, INTERVALS_B)
+    elif op == "coverage":
+        from tests.coverage_subtract_oracle import reference_coverage
+
+        actual = {
+            (r.chrom, int(r.start), int(r.end), int(r.coverage)) for r in df.itertuples()
+        }
+        expected = reference_coverage(INTERVALS_A, INTERVALS_B)
+    elif op == "nearest":
+        # Porównujemy ODLEGŁOŚCI, nie wybranych sąsiadów — remisy rozstrzygane
+        # są dowolnie (patrz tests/test_nearest_correctness.py).
+        from tests.nearest_oracle import reference_nearest_min_distances
+
+        actual = {name: int(d) for name, d in zip(df["left_name"], df["distance"])}
+        expected = {
+            name: int(d)
+            for name, d in reference_nearest_min_distances(INTERVALS_A, INTERVALS_B).items()
+        }
+    else:
+        raise ValueError(op)
+    assert actual == expected, f"{op}: wynik rozproszony {actual} != wyrocznia {expected}"
+
+
+def _write_evidence(op: str, pids: dict[str, int], new_jobs: dict[str, dict[str, set[str]]]) -> None:
+    """Zapisuje, który executor liczył które etapy — materiał do opisu P0."""
+    evidence = {
+        "operacja": op,
+        "pid": pids,
+        "etapy_na_executorach": {
+            name: {job: sorted(stages) for job, stages in jobs.items()}
+            for name, jobs in new_jobs.items()
+        },
+    }
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    (OUTPUT_DIR / f"p0_dowod_{op}.json").write_text(
+        json.dumps(evidence, indent=2, ensure_ascii=False)
+    )
+
+
+@pytest.mark.parametrize("op", ["overlap", "merge", "subtract", "nearest", "coverage"])
+def test_operation_runs_distributed_across_processes(cluster, op):
+    """Dowody 1–3 dla jednej operacji uruchomionej przez klaster z procesów."""
+    before = {name: _stages_by_job(wd) for name, wd in cluster.work_dirs.items()}
+    result, client_pid = _run_client(op, cluster.url)
+    assert result.returncode == 0, (
+        f"dist_ops {op}:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "zewnętrznym schedulerem" in result.stdout, (
+        f"klient nie użył trybu zdalnego:\n{result.stdout}"
+    )
+    after = {name: _stages_by_job(wd) for name, wd in cluster.work_dirs.items()}
+    new_jobs = {
+        name: {job: st for job, st in after[name].items() if job not in before[name]}
+        for name in after
+    }
+
+    # Dowód 1: cztery różne procesy.
+    pids = {**cluster.pids(), "klient": client_pid}
+    assert len(set(pids.values())) == 4, f"PID-y nie są różne: {pids}"
+
+    # Dowód 2: poprawność względem polars-bio.
+    _check_against_oracle(op)
+
+    # Dowód 3: praca wykonana w executorach, a dla operacji wielozadaniowych — w OBU.
+    participating = sorted(name for name, jobs in new_jobs.items() if jobs)
+    assert participating, (
+        f"{op}: żaden executor nie zapisał danych etapów — zapytanie nie przeszło przez klaster"
+    )
+    if op in MULTI_TASK_OPS:
+        assert participating == sorted(cluster.work_dirs), (
+            f"{op}: pracowały tylko {participating}; etapy: {new_jobs}"
+        )
+    if op in SHUFFLE_OPS:
+        stages = set().union(*(st for jobs in new_jobs.values() for st in jobs.values()))
+        assert len(stages) >= 2, f"{op}: oczekiwano ≥ 2 etapów (shuffle), są {stages}"
+
+    _write_evidence(op, pids, new_jobs)
+
+
+def test_client_fails_fast_when_scheduler_is_down():
+    """Adres nieistniejącego schedulera ma dać błąd w rozsądnym czasie, nie zawieszenie."""
+    result, _ = _run_client("merge", f"df://localhost:{_free_port()}", timeout=120)
+    assert result.returncode != 0, f"klient zakończył się sukcesem bez schedulera:\n{result.stdout}"
+
+
+def test_empty_scheduler_url_means_standalone():
+    """Pusta zmienna BALLISTA_SCHEDULER_URL = brak zmiennej (tryb standalone)."""
+    result, _ = _run_client("merge", "", timeout=180)
+    assert result.returncode == 0, result.stderr
+    assert "standalone" in result.stdout, result.stdout
