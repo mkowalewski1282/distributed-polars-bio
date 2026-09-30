@@ -51,3 +51,31 @@ def test_run_op_rejects_wrong_number_of_tables(op, with_right, spark, parquet_di
     a, b = parquet_dirs
     with pytest.raises(ValueError, match="wymaga"):
         sail_bio.run_op(spark, op, a, b if with_right else None)
+
+
+def _hwm_mb() -> int:
+    for line in open("/proc/self/status"):
+        if line.startswith("VmHWM"):
+            return int(line.split()[1]) // 1024
+    raise RuntimeError("brak VmHWM w /proc/self/status")
+
+
+def test_sail_memory_does_not_scale_with_output_times_group(spark, tmp_path):
+    """LATERAL w Sailu dokleja do KAŻDEGO wiersza wyniku UDTF-a cały wiersz zewnętrzny —
+    razem z listą wszystkich przedziałów chromosomu. Gdy UDTF zwracał wiersz na przedział,
+    pamięć rosła jak (wiersze wyniku) × (rozmiar grupy): na prawdziwych danych (para 1-2)
+    proces przekraczał 2,5 GB i był zabijany, a czysto pythonowy UDTF bez polars-bio
+    zachowywał się tak samo. 5000 rozłącznych przedziałów na jednym chromosomie: przy
+    powielaniu ~1 GB wzrostu szczytu pamięci, po poprawce kilkadziesiąt MB."""
+    import sail_bio
+    from tests.parquet_fixture import write_parts
+
+    n = 5000
+    d = write_parts([("chr1", i * 10, i * 10 + 5) for i in range(n)], tmp_path / "chr1", n_files=1)
+    with open("/proc/self/clear_refs", "w") as f:
+        f.write("5")  # zeruje licznik szczytu: VmHWM = bieżący RSS
+    start = _hwm_mb()
+    df = sail_bio.run_op(spark, "merge", d)
+    growth = _hwm_mb() - start
+    assert len(df) == n
+    assert growth < 300, f"szczyt pamięci wzrósł o {growth} MB przy {n} przedziałach w jednej grupie"

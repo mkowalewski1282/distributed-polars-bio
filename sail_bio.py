@@ -7,6 +7,12 @@ uogólniony na potrzeby pomiarów:
 - dane czytane przez spark.read.parquet, dowolne nazwy kolumn przedziału,
   bez kolumny z nazwą (zbiory databio-8p mają tylko contig, pos_start, pos_end);
 - wynik w schemacie znormalizowanym (bench/ops.py, specyfikacja 8.4);
+- UDTF zwraca JEDEN wiersz na chromosom z tablicą wyników, rozwijaną (`explode`) dopiero
+  poza złączeniem LATERAL. Sail dokleja do każdego wiersza wyniku UDTF-a cały wiersz
+  zewnętrzny — razem z listą wszystkich przedziałów chromosomu — więc przy wierszu na
+  wynik pamięć rosła jak (wiersze wyniku) × (rozmiar grupy): +3,8 GB przy 5000
+  przedziałach w jednej grupie, a na parze 1-2 z databio-8p proces był zabijany
+  (tests/test_sail_parquet.py::test_sail_memory_does_not_scale_with_output_times_group);
 - chromosom obecny tylko w lewej tabeli trafia do polars-bio z PUSTĄ prawą
   stroną, więc semantykę rozstrzyga polars-bio, nie ten moduł: nearest daje
   wiersz bez sąsiada, coverage — pokrycie 0, subtract — przedział bez zmian.
@@ -91,26 +97,31 @@ def evaluate(op: str, chrom: str, rows_a, rows_b=None):
 
 
 def make_udtf(op: str):
-    """Klasa UDTF dla operacji — wołać PO utworzeniu sesji Spark Connect."""
+    """Klasa UDTF dla operacji — wołać PO utworzeniu sesji Spark Connect.
+
+    Zwraca jeden wiersz na chromosom: `res` — tablica wierszy wyniku (patrz docstring
+    modułu, dlaczego nie wiersz na wynik)."""
     from pyspark.sql.functions import udtf
+
+    packed = f"res: array<struct<{RETURN_TYPES[op]}>>"
 
     if op in UNARY_OPS:
 
-        @udtf(returnType=RETURN_TYPES[op])
+        @udtf(returnType=packed)
         class UnaryUDTF:
             def eval(self, chrom, rows_a):
                 import sail_bio
 
-                yield from sail_bio.evaluate(op, chrom, rows_a)
+                yield (list(sail_bio.evaluate(op, chrom, rows_a)),)
 
         return UnaryUDTF
 
-    @udtf(returnType=RETURN_TYPES[op])
+    @udtf(returnType=packed)
     class BinaryUDTF:
         def eval(self, chrom, rows_a, rows_b):
             import sail_bio
 
-            yield from sail_bio.evaluate(op, chrom, rows_a, rows_b)
+            yield (list(sail_bio.evaluate(op, chrom, rows_a, rows_b)),)
 
     return BinaryUDTF
 
@@ -151,7 +162,10 @@ def run_op(spark, op: str, left, right=None, cols: tuple[str, str, str] = COLUMN
         call = f"{name}(g.chrom, g.rows_a, g.rows_b)"
     view = f"bio_grouped_{op}"
     grouped.createOrReplaceTempView(view)
-    return spark.sql(f"SELECT o.* FROM {view} g, LATERAL {call} o").toPandas()
+    # explode POZA złączeniem LATERAL: rozwijana tablica nie niesie już listy przedziałów grupy.
+    return spark.sql(
+        f"SELECT r.* FROM (SELECT explode(o.res) AS r FROM {view} g, LATERAL {call} o)"
+    ).toPandas()
 
 
 @contextmanager
