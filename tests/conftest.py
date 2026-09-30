@@ -36,3 +36,10 @@ def parquet_expected(parquet_dirs):
     return {
         op: row_multiset(op, reference(op, a, None if op in UNARY_OPS else b)) for op in OPS
     }
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "dane: wymaga pobranego zbioru databio-8p (python -m bench.data.download)",
+    )

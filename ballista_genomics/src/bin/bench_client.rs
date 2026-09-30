@@ -63,6 +63,18 @@ fn parse(args: &[String]) -> std::result::Result<Opts, String> {
     })
 }
 
+/// Logi Ballisty na stderr — tylko gdy ustawiono `RUST_LOG` (diagnostyka; stdout
+/// to protokół, a domyślnie stderr ma zawierać wyłącznie komunikat błędu).
+fn init_logging() {
+    if std::env::var_os("RUST_LOG").is_some() {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_writer(std::io::stderr)
+            .with_ansi(false)
+            .init();
+    }
+}
+
 async fn run(opts: &Opts) -> Result<u64> {
     let ctx = connect_from_env().await?;
     let mut stream = ctx.sql(&opts.scenario.sql()).await?.execute_stream().await?;
@@ -92,6 +104,7 @@ async fn main() {
         eprintln!("błąd: {msg}\n{USAGE}");
         std::process::exit(2);
     });
+    init_logging();
     match run(&opts).await {
         Ok(rows) => println!("{{\"rows\": {rows}}}"),
         Err(e) => {

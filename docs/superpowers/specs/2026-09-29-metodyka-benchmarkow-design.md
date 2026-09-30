@@ -91,6 +91,13 @@ przepustowość pamięci i dysk; brak fizycznej sieci (ruch przez interfejs pęt
 - **Identyfikatory zbiorów:** 0 chainRn4 (2 351 tys.), 1 fBrain (199 tys.), 2 exons (439 tys.),
   3 chainOrnAna1 (1 957 tys.), 4 chainVicPac2 (7 684 tys.), 5 chainXenTro3Link (50 981 tys.),
   6 chainMonDom5Link (128 187 tys.), 7 ex-anno (1 194 tys.), 8 ex-rna (9 945 tys.).
+- **Dokładne liczby wierszy** (po pobraniu, `python -m bench.data.download`): 0 — 2 350 965,
+  1 — 198 621, 2 — 438 694, 3 — 1 956 864, 4 — 7 684 066, 5 — 50 980 975, 6 — 128 186 542,
+  7 — 1 194 285, 8 — 9 944 559. Schemat każdego pliku: `contig` (string), `pos_start`,
+  `pos_end` (int32); wiersze nieposortowane, chromosomy rozrzucone po wszystkich plikach
+  (np. exons, chainRn4: 24 kontigi w każdym z 8 plików; ex-anno: 54 kontigi, 38–44 w pliku). Archiwum
+  zawiera też `__MACOSX/` (pliki `._*.parquet`, które nie są Parquetem), sumy `.crc`
+  i znaczniki `_SUCCESS` — pomijane przy rozpakowaniu.
 - **Pary:** identyfikatory jak w polars-bio-bench (`a-b` = df1 zbioru *a*, df2 zbioru *b*).
   Klasy rozmiaru według liczby wierszy wyniku `overlap`: S < 10⁶, M 10⁶–10⁸, L 10⁸–10⁹, XL > 10⁹.
 - **Układ współrzędnych:** 0-based, półotwarty (jak BED), we wszystkich wariantach.
@@ -220,7 +227,8 @@ tests/bench/       testy narzędzia
 
 Ballista nie wymaga wrappera pythonowego: runnerem jest binarka Rust `bench_client`,
 uruchamiana przez orkiestrator jako proces. Istniejąca binarka `dist_ops` (używana przez testy)
-pozostaje bez zmian.
+pozostaje bez zmian. `bench_client` powstał w planie 2 z częścią protokołu (liczba wierszy,
+zapis wyniku do Parquet, wynik w schemacie 8.4); czas, fazy i suma kontrolna — plan 3.
 
 ### 8.2 Konfiguracja (YAML)
 
@@ -324,10 +332,19 @@ potwierdza przebieg smoke na parze z tabelą broadcastowaną > 16 MB. Plan zapas
 broadcastu zawiera ścieżkę do pliku Parquet zamiast danych, a executor czyta tabelę sam.
 Koszt wzorca (ładunek × liczba zadań) jest raportowany jako `broadcast_bytes`.
 
+Ustalenia planu 2 (`ballista_genomics/OPIS.md`): stroną broadcastowaną w `nearest`
+i `coverage` jest df2 (tabela indeksowana), nie df1. Para 1-2 mieści się w domyślnym
+limicie 16 MiB klastra z osobnych procesów (broadcast exons, szacunkowo ok. 10 MiB na
+zadanie); 2-7 i 7-0 według szacunku go przekraczają. Tryb standalone (jeden proces, tryb
+pull) ma niekonfigurowalny limit 4 MiB klienta gRPC executora i przy broadcaście na
+prawdziwych danych zapytanie wisi — standalone nie jest wariantem pomiarowym.
+
 ### 9.3 Pozostałe
 
-- CSV → Parquet: rejestracja tabel w `ballista_genomics/src/dist_provider.rs`, wczytywanie
-  w UDTF-ach Saila (`spark.read.parquet`).
+- CSV → Parquet — **zrobione (plan 2)**: `dist_provider.rs` rozpoznaje Parquet po ścieżce
+  (plik `*.parquet` albo katalog z takimi plikami); Sail — `sail_bio.py`
+  (`spark.read.parquet`, UDTF-y dla danych bez kolumny z nazwą). Pobieranie danych:
+  `bench/data/download.py` (zamiast `gdown` — `requests`, bez nowej zależności).
 - Parametr `algorithm` dla `overlap`: przez koder Ballisty i UDTF Saila (P3).
 - Instrumentacja UDTF Saila: czas wywołania `pb.*()` i czas oczekiwania na blokadę w
   `sail_pb_guard`, zapisywane do pliku przebiegu.

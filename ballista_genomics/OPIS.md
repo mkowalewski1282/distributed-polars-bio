@@ -342,3 +342,80 @@ poza domyślny `output/`.
 
 Znane ryzyko poza zakresem P0: procesy muszą współdzielić system plików (ładunek
 planu zawiera ścieżki) — w kontenerach i w chmurze potrzebny wspólny magazyn.
+
+## Plan 2 — dane databio-8p i Parquet (wrzesień–październik 2026)
+
+**Dane.** `python -m bench.data.download` pobiera `databio-8p.zip` z polars-bio-bench
+(Google Drive, 1,2 GB) do `$BENCH_DATA_ROOT` (domyślnie `~/bench_data`), rozpakowuje wyłącznie
+pliki `databio-8p/<zbiór>/part-*.parquet` i weryfikuje: 8 plików na zbiór, schemat
+`contig: string, pos_start: int32, pos_end: int32`, liczby wierszy ze specyfikacji (sekcja 4).
+Identyfikatory zbiorów i par: `bench/data/datasets.py` (`resolve("1-2")`).
+
+**Ballista.** `DistBioProvider` rozpoznaje format po ścieżce: plik `*.parquet` albo katalog
+z plikami `*.parquet` → Parquet, inaczej CSV. Brak ścieżki to błąd z jej nazwą (wcześniej błąd
+rejestracji był połykany). Runner `bench_client` wykonuje jeden scenariusz:
+
+    ./target/debug/bench_client --op overlap \
+        --left ~/bench_data/databio-8p/fBrain-DS14718 --right ~/bench_data/databio-8p/exons
+    {"rows": <liczba>}
+
+Wynik w schemacie znormalizowanym (specyfikacja 8.4), konsumowany strumieniowo; `--output`
+zapisuje go do Parquet; `RUST_LOG=info` włącza logi Ballisty na stderr. Klaster z osobnych
+procesów — jak w P0, przez `BALLISTA_SCHEDULER_URL`.
+
+**Sail.** `sail_bio.py`: `spark.read.parquet`, UDTF-y dla danych bez kolumny z nazwą, wynik
+w schemacie 8.4.
+
+**Testy.** `tests/test_ballista_parquet.py` i `tests/test_sail_parquet.py` — zbiór testowy
+o typach prawdziwych danych, z przypadkami brzegowymi; `tests/test_real_data.py` (marker
+`dane`) — para 1-2 w Ballistcie standalone, na klastrze i w Sailu, zgodność z polars-bio.
+
+| Para 1-2 (fBrain × exons; merge: fBrain) | overlap | nearest | coverage | merge | subtract |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Ballista, klaster z osobnych procesów | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Ballista standalone (jeden proces) | ✓ | wisi (4 MiB) | wisi (4 MiB) | ✓ | ✓ |
+| Sail (`sail_bio.py`) | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+### Znaleziska
+
+- **Overlap gubił pary przy danych z kilku plików** (poprawione w `physical_codec.rs`).
+  Węzeł `IntervalJoinExec` ma w planie tryb `PartitionMode::Auto` — z nim wymagany rozkład
+  wejść jest „nieokreślony”, więc planista nie wstawia ani repartycji po chromosomie, ani
+  scalenia lewej strony. Koder (Faza A.5) zamieniał `Auto` na `Partitioned`, a wtedy
+  partycja *i* lewej tabeli łączyła się tylko z partycją *i* prawej (na zbiorze testowym
+  5 z 10 par). Teraz `CollectLeft`: każde zadanie buduje indeks z całej lewej strony, zadania
+  dzielą się prawą. Dotąd niewidoczne, bo overlap w `dist_ops` czyta pojedyncze pliki
+  (jedna partycja). Zgodne z hipotezą P3 (indeks budowany w każdym zadaniu).
+- **Konwencja stron w `nearest`** (jak w coverage): `dist_nearest(lewa, prawa)` zwraca
+  wiersz na każdy wiersz PRAWEJ tabeli z najbliższym sąsiadem z lewej (lewa jest
+  indeksowana i broadcastowana), a `pb.nearest(df1, df2)` — wiersz na każdy wiersz df1.
+  `bench_client` zamienia strony. **`dist_ops` (dane zabawkowe) ma orientację odwrotną do
+  polars-bio**; `test_ballista_distributed_nearest_matches_oracle_distances` przechodzi
+  przypadkiem (5 × 5 przedziałów, wszystkie odległości 0, remisy) — do decyzji, czy poprawić
+  ten test i SQL w `runner.rs`.
+- **Tryb standalone Ballisty nie udźwiga broadcastu na prawdziwych danych.** Executor
+  w standalone pobiera zadania (tryb pull) klientem gRPC z domyślnym limitem tonic 4 MiB,
+  którego w tym trybie nie da się ustawić; odpowiedź z kilkoma zadaniami — każde niesie całą
+  tabelę broadcastowaną — jest większa („decoded message length too large: found 9808588
+  bytes, the limit is: 4194304 bytes” już przy 100 tys. wierszy broadcastu). Executor ponawia
+  w nieskończoność, więc zapytanie wisi, zamiast zakończyć się błędem. Klaster z osobnych
+  procesów (tryb push, limit 16 MiB) liczy parę 1-2 poprawnie — broadcast exons (439 tys.
+  wierszy) to szacunkowo ok. 10 MiB na zadanie. Dla 2-7 (broadcast ex-anno, 1,19 mln)
+  i 7-0 (chainRn4, 2,35 mln) szacunek przekracza 16 MiB — podniesienie limitów w planie 3
+  (specyfikacja 9.2).
+- **LATERAL w Sailu powiela wiersz zewnętrzny dla każdego wiersza wyniku UDTF-a** — razem
+  z listą wszystkich przedziałów chromosomu przekazaną jako argument. Przy UDTF-ie zwracającym
+  wiersz na wynik pamięć rośnie jak (wiersze wyniku) × (rozmiar grupy): +3,8 GB przy 5000
+  przedziałach w jednej grupie; na parze 1-2 proces był zabijany przez OOM, a raz wywrócił
+  WSL. To własność Saila, nie polars-bio (czysto pythonowy UDTF zachowuje się tak samo).
+  `sail_bio.py` zwraca więc jeden wiersz na chromosom z tablicą wyników, rozwijaną
+  `explode` poza LATERAL (100 tys. wierszy wyniku przy szczycie 314 MB). Demonstracyjne
+  `sail_*_udtf.py` mają ten sam wzorzec kwadratowy — działają tylko na małych danych.
+- Archiwum zawiera `__MACOSX/` z plikami `._part-*.parquet` — rozszerzenie `.parquet`, ale
+  to nie Parquet; wczytanie ich wzorcem `**/*.parquet` wywróciłoby czytanie.
+- Chromosom obecny tylko w lewej tabeli (np. kontigi `SIRV*` w `ex-anno`): polars-bio daje
+  w `nearest` wiersz bez sąsiada, w `coverage` pokrycie 0, w `subtract` przedział bez zmian.
+  Demonstracyjny UDTF coverage w Sailu (`sail_coverage_subtract_udtf.py`) pomija taki
+  chromosom — w `sail_bio.py` polars-bio dostaje pustą prawą stronę.
+- DataFusion 53 czyta tekst z Parqueta jako `Utf8View`, a pozycje databio-8p mają typ `int32`
+  — obie ścieżki (dostawca i nasze węzły) to obsługują; zbiór testowy ma te same typy.
