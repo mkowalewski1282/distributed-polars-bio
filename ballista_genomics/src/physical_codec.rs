@@ -266,10 +266,19 @@ impl PhysicalExtensionCodec for IntervalJoinPhysicalCodec {
         // join_selection, która normalnie rozstrzyga Auto -> Partitioned/CollectLeft
         // przed wykonaniem). Lokalnie (jeden proces) to nie przeszkadza, ale prawdziwy,
         // rozproszony executor Ballisty odrzuca "Auto" w execute() błędem
-        // "unsupported PartitionMode Auto". Wymuszamy Partitioned — dane i tak są
-        // dzielone wg klucza joina między executory, to jedyny sensowny tryb tutaj.
+        // "unsupported PartitionMode Auto".
+        //
+        // Zamieniamy na CollectLeft, NIE na Partitioned (plan 2): przy Auto węzeł
+        // wymaga rozkładu „nieokreślonego”, więc planista nie wstawił ani
+        // repartycji po chromosomie, ani scalenia lewej strony. Partitioned
+        // połączyłby wtedy partycję i lewej tabeli tylko z partycją i prawej —
+        // przy danych z kilku plików ginęły pary (wykryte na zbiorze Parquet,
+        // tests/test_ballista_parquet.py). CollectLeft buduje indeks z CAŁEJ lewej
+        // strony (collect_left_input scala wszystkie jej partycje) w każdym
+        // zadaniu, a zadania dzielą się prawą stroną — wynik poprawny przy
+        // dowolnym partycjonowaniu wejścia.
         let partition_mode = if decoded_partition_mode == PartitionMode::Auto {
-            PartitionMode::Partitioned
+            PartitionMode::CollectLeft
         } else {
             decoded_partition_mode
         };

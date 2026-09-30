@@ -22,6 +22,8 @@ datafusion-bio-function-ranges = { path = "vendor/datafusion-bio-function-ranges
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 prost = "0.14"
+# bench_client: strumieniowa konsumpcja wyniku (StreamExt); wersja z Cargo.lock.
+futures = "0.3"
 
 # Środowisko ma tylko 3.5GB RAM — linkowanie tej binarki (Ballista scheduler+executor
 # + cały DataFusion + bio-function-ranges) z pełnym debug info (-C debuginfo=2)

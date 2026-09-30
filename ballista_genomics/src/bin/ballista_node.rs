@@ -7,16 +7,15 @@
 //! Wszystkie procesy klastra i klient muszą działać w katalogu
 //! `ballista_genomics/`, bo ładunki planu przenoszą ŚCIEŻKI WZGLĘDNE do danych.
 
-use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use ballista_core::config::TaskSchedulingPolicy;
 use ballista_core::extension::SessionConfigExt;
 use ballista_core::ConfigProducer;
 use ballista_executor::executor_process::{ExecutorProcessConfig, start_executor_process};
+use ballista_genomics::cli::{parse_flags, required};
 use ballista_genomics::cluster::{
     bio_ballista_config, bio_logical_codec, bio_physical_codec, bio_session_state,
 };
@@ -29,35 +28,6 @@ const USAGE: &str = "użycie:
   ballista_node scheduler --port <P>
   ballista_node executor --scheduler-port <P> --port <F> --grpc-port <G> \\
                          --work-dir <DIR> --concurrent-tasks <N> [--no-codecs]";
-
-type Flags = HashMap<String, Option<String>>;
-
-/// Parsuje `--klucz wartość` i flagi bez wartości. Nieznany argument to błąd:
-/// literówka w nazwie flagi nie może cicho uruchomić węzła z wartością domyślną.
-fn parse_flags(args: &[String], value_flags: &[&str], bool_flags: &[&str]) -> Result<Flags, String> {
-    let mut flags = Flags::new();
-    let mut it = args.iter();
-    while let Some(arg) = it.next() {
-        if value_flags.contains(&arg.as_str()) {
-            let value = it.next().ok_or_else(|| format!("brak wartości dla {arg}"))?;
-            flags.insert(arg.clone(), Some(value.clone()));
-        } else if bool_flags.contains(&arg.as_str()) {
-            flags.insert(arg.clone(), None);
-        } else {
-            return Err(format!("nieznany argument: {arg}"));
-        }
-    }
-    Ok(flags)
-}
-
-fn required<T: FromStr>(flags: &Flags, name: &str) -> Result<T, String> {
-    flags
-        .get(name)
-        .and_then(|v| v.as_deref())
-        .ok_or_else(|| format!("brak wymaganej flagi {name}"))?
-        .parse::<T>()
-        .map_err(|_| format!("niepoprawna wartość flagi {name}"))
-}
 
 struct ExecutorOpts {
     scheduler_port: u16,

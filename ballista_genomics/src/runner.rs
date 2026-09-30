@@ -35,6 +35,28 @@ fn output_dir() -> PathBuf {
     }
 }
 
+/// Adres zewnętrznego schedulera z `BALLISTA_SCHEDULER_URL`; pusta wartość = brak.
+pub fn scheduler_url() -> Option<String> {
+    std::env::var(SCHEDULER_URL_ENV).ok().filter(|url| !url.is_empty())
+}
+
+/// Bio-owa sesja klienta Ballisty z zarejestrowanymi funkcjami `dist_*`:
+/// zewnętrzny scheduler, gdy podano adres, inaczej standalone in-proc.
+/// Nic nie wypisuje na stdout — stdout `bench_client` to protokół.
+pub async fn connect_from_env() -> Result<DFSessionContext> {
+    // Sesja klienta MUSI być bio-owa (new_with_bio), a konfiguracja mieć oba
+    // kodery — patrz cluster.rs. Ten sam stan dostaje scheduler standalone.
+    let state = bio_session_state(bio_ballista_config())?;
+    let ctx = match scheduler_url() {
+        Some(url) => DFSessionContext::remote_with_state(&url, state).await?,
+        None => DFSessionContext::standalone_with_state(state).await?,
+    };
+    for o in DistOp::ALL {
+        ctx.register_udtf(o.udtf_name(), Arc::new(DistTableFunction::new(o)));
+    }
+    Ok(ctx)
+}
+
 /// Konfiguracja sesji używana ZARÓWNO przez sesję klienta/schedulera, JAK I
 /// przez wewnętrzne sesje budowane w `DistBioProvider::build()`.
 ///
@@ -157,27 +179,12 @@ pub async fn run(op: DistOp) -> Result<()> {
     println!("  {}", s.title);
     println!("============================================================\n");
 
-    // Sesja klienta MUSI być bio-owa (new_with_bio), a konfiguracja mieć oba
-    // kodery — patrz cluster.rs. Ten sam stan dostaje scheduler standalone.
-    let state = bio_session_state(bio_ballista_config())?;
-
-    let ctx = match std::env::var(SCHEDULER_URL_ENV) {
-        Ok(url) if !url.is_empty() => {
-            println!("Łączenie z zewnętrznym schedulerem Ballisty: {url}");
-            DFSessionContext::remote_with_state(&url, state).await?
-        }
-        _ => {
-            println!("Łączenie z Ballista standalone (scheduler + executor in-proc)...");
-            DFSessionContext::standalone_with_state(state).await?
-        }
-    };
-    println!("Klaster Ballista gotowy.\n");
-
-    // Rejestrujemy wszystkie UDTF-y niezależnie od wybranej operacji — koszt
-    // zerowy, a upraszcza dyspozytor.
-    for o in DistOp::ALL {
-        ctx.register_udtf(o.udtf_name(), Arc::new(DistTableFunction::new(o)));
+    match scheduler_url() {
+        Some(url) => println!("Łączenie z zewnętrznym schedulerem Ballisty: {url}"),
+        None => println!("Łączenie z Ballista standalone (scheduler + executor in-proc)..."),
     }
+    let ctx = connect_from_env().await?;
+    println!("Klaster Ballista gotowy.\n");
 
     let t0 = Instant::now();
     let result = ctx.sql(&s.sql).await?.collect().await?;

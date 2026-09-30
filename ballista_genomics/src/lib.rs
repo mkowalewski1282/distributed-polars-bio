@@ -7,6 +7,7 @@
 //! Mapa modułów:
 //! - `codec_io`        — prymitywy kodowania binarnego wspólne dla kodeków
 //! - `bio_phys_codec`  — `BioRangesPhysicalCodec`: serializacja węzłów operacji zakresowych (Faza H)
+//! - `cli`             — ścisłe parsowanie flag wspólne dla binarek (plan 2)
 //! - `cluster`         — kodery i stan sesji wspólne dla klienta i węzłów (P0)
 //! - `coverage_node`   — `DistCoverageExec`/`DistCoverageProvider` (Faza H, krok 4)
 //! - `dist_payload`    — `DistOp`, `DistPayload`: parametry konstrukcyjne operacji
@@ -15,8 +16,10 @@
 //! - `physical_codec`  — `IntervalJoinPhysicalCodec`: serializacja IntervalJoinExec (Faza A.5)
 //! - `dist_udtf`       — rejestracja operacji jako funkcji tabelowych SQL
 //! - `runner`          — konfiguracja sesji, SQL-e, uruchomienie, dowód dystrybucji
+//! - `scenario`        — scenariusz narzędzia pomiarowego → SQL w schemacie znormalizowanym (plan 2)
 
 pub mod bio_phys_codec;
+pub mod cli;
 pub mod cluster;
 pub mod codec_io;
 pub mod coverage_node;
@@ -26,5 +29,6 @@ pub mod dist_udtf;
 pub mod logical_codec;
 pub mod physical_codec;
 pub mod runner;
+pub mod scenario;
 
 pub use dist_payload::{Cols, DistOp, DistPayload, TableRef};

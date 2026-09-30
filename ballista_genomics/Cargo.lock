@@ -1044,6 +1044,7 @@ dependencies = [
  "datafusion",
  "datafusion-bio-function-ranges",
  "datafusion-proto",
+ "futures",
  "prost",
  "tokio",
  "tracing-subscriber",

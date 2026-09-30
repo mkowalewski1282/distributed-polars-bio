@@ -13,22 +13,23 @@
 
 use std::any::Any;
 use std::fmt;
+use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::catalog::Session;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::Result;
+use datafusion::error::{DataFusionError, Result};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
-use datafusion::prelude::{CsvReadOptions, SessionContext as DFSessionContext};
+use datafusion::prelude::{CsvReadOptions, ParquetReadOptions, SessionContext as DFSessionContext};
 use datafusion_bio_function_ranges::{
     BioSessionExt, FilterOp, MergeProvider, NearestProvider, OverlapProvider, SubtractProvider,
 };
 
 use crate::coverage_node::DistCoverageProvider;
-use crate::dist_payload::DistPayload;
+use crate::dist_payload::{DistPayload, TableRef};
 use crate::runner::bio_session_config;
 
 pub struct DistBioProvider {
@@ -48,7 +49,8 @@ impl DistBioProvider {
     }
 
     /// Buduje własną, jednorazową sesję bio (nie dzieli stanu z sesją
-    /// zapytania) — rejestruje pliki CSV i konstruuje właściwy provider vendora.
+    /// zapytania) — rejestruje źródła danych (Parquet albo CSV, patrz
+    /// `register_source`) i konstruuje właściwy provider vendora.
     ///
     /// Samodzielne budowanie sesji przy każdej rekonstrukcji jest CELOWE: to
     /// dokładnie to, co musiałby zrobić prawdziwy executor w osobnym procesie
@@ -63,13 +65,8 @@ impl DistBioProvider {
     pub async fn build(payload: DistPayload) -> Result<Self> {
         let session = Arc::new(DFSessionContext::new_with_bio(bio_session_config()));
 
-        // Rejestracja może się powtórzyć (ta sama sesja bywa budowana wielokrotnie
-        // w jednym procesie w trybie in-proc standalone) — błąd "already exists"
-        // jest tu nieszkodliwy i celowo ignorowany.
         for t in payload.tables() {
-            let _ = session
-                .register_csv(&t.name, &t.path, CsvReadOptions::new())
-                .await;
+            register_source(&session, t).await?;
         }
 
         let inner: Arc<dyn TableProvider> = match &payload {
@@ -176,6 +173,46 @@ impl DistBioProvider {
         };
 
         Ok(Self { inner, payload })
+    }
+}
+
+/// Rejestruje źródło danych tabeli w sesji odbiorcy. Format rozpoznawany po
+/// ścieżce: plik `*.parquet` albo katalog zawierający pliki `*.parquet` →
+/// Parquet (zbiory databio-8p), wszystko inne → CSV (dotychczasowe dane
+/// testowe). Ścieżka, której nie ma, to błąd z jej nazwą — wcześniej błąd
+/// rejestracji był połykany, a zapytanie padało później na mylącym „table not
+/// found”. Nazwa już zarejestrowana (ta sama tabela dwa razy w ładunku) jest
+/// pomijana.
+async fn register_source(session: &DFSessionContext, t: &TableRef) -> Result<()> {
+    if session.table_exist(t.name.as_str())? {
+        return Ok(());
+    }
+    let path = Path::new(&t.path);
+    if !path.exists() {
+        return Err(DataFusionError::Plan(format!(
+            "brak danych tabeli {}: {}",
+            t.name, t.path
+        )));
+    }
+    if is_parquet_source(path) {
+        session
+            .register_parquet(&t.name, &t.path, ParquetReadOptions::default())
+            .await
+    } else {
+        session
+            .register_csv(&t.name, &t.path, CsvReadOptions::new())
+            .await
+    }
+}
+
+fn is_parquet_source(path: &Path) -> bool {
+    let is_parquet = |p: &Path| p.extension().is_some_and(|ext| ext == "parquet");
+    if path.is_dir() {
+        std::fs::read_dir(path)
+            .map(|entries| entries.flatten().any(|entry| is_parquet(&entry.path())))
+            .unwrap_or(false)
+    } else {
+        is_parquet(path)
     }
 }
 
