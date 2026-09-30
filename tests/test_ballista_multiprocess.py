@@ -457,6 +457,29 @@ def test_empty_scheduler_url_means_standalone(tmp_path):
     assert "standalone" in result.stdout, result.stdout
 
 
+def test_scheduler_accepts_ballista_settings_from_client(tmp_path, monkeypatch):
+    """Klucze `ballista.*` wysłane przez klienta muszą trafić do konfiguracji
+    zadania na schedulerze. Bez rozszerzenia BallistaConfig w konfiguracji
+    schedulera (upgrade_for_ballista) Ballista odrzuca je po cichu — tylko z logiem
+    na poziomie debug — i strojenie opcji Ballisty w pomiarach nie miałoby skutku."""
+    monkeypatch.setenv("RUST_LOG", "info,ballista_core::extension=debug")
+    c = _start_cluster(tmp_path, [("executor_1", [])])
+    try:
+        result, _ = _run_client("merge", c.url, tmp_path / "wyniki")
+        scheduler_log = (tmp_path / "scheduler.log").read_text()
+    finally:
+        c.stop()
+    assert result.returncode == 0, result.stderr
+    rejected = [
+        line
+        for line in scheduler_log.splitlines()
+        if "could not set configuration key: `ballista." in line
+    ]
+    assert not rejected, (
+        "scheduler odrzucił ustawienia Ballisty od klienta:\n" + "\n".join(rejected[:5])
+    )
+
+
 #: Okno obserwacji kontroli negatywnej. Odrzucenie planu przez executor następuje
 #: w pierwszych sekundach (zaraz po etapie 1), a z koderami całe zapytanie trwa
 #: ~2 s — 45 s z dużym zapasem rozdziela oba przypadki.

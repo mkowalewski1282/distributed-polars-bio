@@ -99,7 +99,9 @@ async fn run_scheduler(port: u16) -> Result<(), Box<dyn Error>> {
         // w katalogach roboczych są dowodem, kto co liczył.
         .with_finished_job_data_clean_up_interval_seconds(0)
         // Odpowiednik stanu sesji, który standalone przekazuje od klienta.
-        .with_override_config_producer(Arc::new(bio_ballista_config))
+        // upgrade_for_ballista() dodaje przestrzeń nazw `ballista` — bez niej
+        // scheduler cicho odrzuca wszystkie klucze `ballista.*` od klienta.
+        .with_override_config_producer(Arc::new(|| bio_ballista_config().upgrade_for_ballista()))
         .with_override_session_builder(Arc::new(bio_session_state));
     config.bind_host = "127.0.0.1".into();
     config.override_logical_codec = Some(bio_logical_codec());
