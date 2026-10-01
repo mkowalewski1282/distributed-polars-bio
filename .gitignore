@@ -8,3 +8,7 @@ __pycache__/
 
 # Podglady rysunkow (odtwarzane przez raporty/img/generuj_rysunki.py)
 raporty/img/*.png
+# Serie pomiarowe: surowe JSON Lines, logi silników i pliki tymczasowe (wynik: runs.parquet)
+bench/results/**/runs.jsonl
+bench/results/**/logs/
+bench/results/**/tmp/
