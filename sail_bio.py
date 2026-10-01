@@ -126,8 +126,21 @@ def make_udtf(op: str):
     return BinaryUDTF
 
 
-def run_op(spark, op: str, left, right=None, cols: tuple[str, str, str] = COLUMNS) -> pd.DataFrame:
-    """Operacja na plikach Parquet (plik albo katalog) -> wynik w schemacie znormalizowanym."""
+def udtf_name(op: str) -> str:
+    return f"bio_{op}"
+
+
+def register(spark, op: str) -> None:
+    """Rejestruje UDTF operacji w sesji — przed `build_query`. Runner pomiarowy robi to przed
+    pomiarem czasu, tak jak bench_client rejestruje funkcje dist_* przy połączeniu."""
+    if op not in RETURN_TYPES:
+        raise ValueError(f"nieznana operacja {op!r}")
+    spark.udtf.register(udtf_name(op), make_udtf(op))
+
+
+def build_query(spark, op: str, left, right=None, cols: tuple[str, str, str] = COLUMNS):
+    """Zapytanie (leniwy DataFrame) na plikach Parquet (plik albo katalog) z wynikiem
+    w schemacie znormalizowanym; UDTF operacji musi być zarejestrowany (`register`)."""
     from pyspark.sql import functions as F
 
     if op not in RETURN_TYPES:
@@ -147,8 +160,7 @@ def run_op(spark, op: str, left, right=None, cols: tuple[str, str, str] = COLUMN
         )
 
     interval = F.struct("start", "end")
-    name = f"bio_{op}"
-    spark.udtf.register(name, make_udtf(op))
+    name = udtf_name(op)
     if op in UNARY_OPS:
         grouped = load(left, "a").groupBy("chrom").agg(
             F.collect_list(interval).alias("rows_a")
@@ -165,7 +177,13 @@ def run_op(spark, op: str, left, right=None, cols: tuple[str, str, str] = COLUMN
     # explode POZA złączeniem LATERAL: rozwijana tablica nie niesie już listy przedziałów grupy.
     return spark.sql(
         f"SELECT r.* FROM (SELECT explode(o.res) AS r FROM {view} g, LATERAL {call} o)"
-    ).toPandas()
+    )
+
+
+def run_op(spark, op: str, left, right=None, cols: tuple[str, str, str] = COLUMNS) -> pd.DataFrame:
+    """Operacja na plikach Parquet (plik albo katalog) -> wynik w schemacie znormalizowanym."""
+    register(spark, op)
+    return build_query(spark, op, left, right, cols).toPandas()
 
 
 @contextmanager
