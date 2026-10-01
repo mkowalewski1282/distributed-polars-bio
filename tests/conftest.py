@@ -1,5 +1,12 @@
 """Wspólna konfiguracja testów."""
 
+import os
+
+# Jak w bench/__init__.py: bez tego każdy import polars-bio w testach czeka ~270 s na serwer X
+# z DISPLAY. Ustawiane przed importem czegokolwiek, co ładuje polars-bio; procesy potomne
+# testów dziedziczą tę zmienną.
+os.environ.setdefault("MPLBACKEND", "Agg")
+
 import pytest
 
 #: Zmienne sterujące klientem dist_ops: tryb zdalny i katalog wyników. Testy
@@ -28,7 +35,7 @@ def parquet_dirs(tmp_path_factory):
 @pytest.fixture(scope="session")
 def parquet_expected(parquet_dirs):
     """Wynik polars-bio na zbiorze testowym: operacja -> multizbiór wierszy.
-    Raz na sesję, bo import polars-bio trwa kilka minut."""
+    Raz na sesję — wspólny dla testów wszystkich silników."""
     from bench.ops import OPS, UNARY_OPS, row_multiset
     from tests.generic_oracle import read_intervals, reference
 

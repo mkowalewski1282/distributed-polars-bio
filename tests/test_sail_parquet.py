@@ -5,7 +5,7 @@ zgodny z polars-bio na tych samych plikach (schemat znormalizowany, 8.4).
 Zbiór testowy zawiera chromosom tylko w A (chrA) — wcześniejsze UDTF-y
 (sail_coverage_subtract_udtf.py) pomijały taki chromosom w coverage.
 
-Uruchomienie: pytest tests/test_sail_parquet.py -v (import polars-bio trwa kilka minut)
+Uruchomienie: pytest tests/test_sail_parquet.py -v
 """
 
 from __future__ import annotations

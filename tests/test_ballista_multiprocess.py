@@ -20,7 +20,7 @@ z wyników. Budowanie: cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build
 --bin ballista_node --bin dist_ops
 
 Uruchomienie: pytest tests/test_ballista_multiprocess.py -v
-Testy operacji importują wyrocznie polars-bio — import trwa kilka minut.
+Testy operacji importują wyrocznie polars-bio.
 """
 
 from __future__ import annotations
@@ -332,8 +332,8 @@ def _stages_by_job(work_dir: Path) -> dict[str, set[str]]:
 
 def _check_against_oracle(op: str, output_dir: Path) -> None:
     """Dowód 2: wynik klienta == lokalny polars-bio (wyrocznie jak w
-    tests/test_ballista_distributed_ops.py). Importy leniwe — polars-bio ładuje
-    się kilka minut, a testy samego klastra go nie potrzebują."""
+    tests/test_ballista_distributed_ops.py). Importy leniwe — testy samego klastra
+    nie potrzebują polars-bio."""
     import pandas as pd
 
     df = pd.read_csv(output_dir / f"dist_{op}_result.csv")

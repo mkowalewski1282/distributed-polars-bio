@@ -10,7 +10,7 @@ się, chr10 obok chr2.
 
 Brak binarki to BŁĄD, nie pominięcie (jak w P0). Budowanie:
 cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bin bench_client --bin ballista_node
-Uruchomienie: pytest tests/test_ballista_parquet.py -v (import polars-bio trwa kilka minut)
+Uruchomienie: pytest tests/test_ballista_parquet.py -v
 """
 
 from __future__ import annotations

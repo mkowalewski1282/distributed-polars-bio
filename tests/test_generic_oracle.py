@@ -2,7 +2,7 @@
 znormalizowany i semantyka chromosomów obecnych tylko po jednej stronie —
 wzorzec, który muszą odtworzyć Ballista i Sail.
 
-Uruchomienie: pytest tests/test_generic_oracle.py -v (import polars-bio trwa kilka minut)
+Uruchomienie: pytest tests/test_generic_oracle.py -v
 """
 
 from __future__ import annotations
