@@ -31,7 +31,7 @@ PAIR = "1-2"
 
 #: Tryb standalone Ballisty 53 (scheduler i executor w jednym procesie, tryb pull) nie
 #: udźwiga operacji z broadcastem na prawdziwych danych: executor pobiera zadania klientem
-#: gRPC z domyślnym limitem tonic 4 MiB (w standalone niekonfigurowalnym), a odpowiedź
+#: gRPC z domyślnym limitem tonic 4 MiB (niezmienialnym przez standalone_with_state), a odpowiedź
 #: z kilkoma zadaniami — każde niesie całą tabelę broadcastowaną — jest większa (zmierzono
 #: 9 808 588 B już przy 100 tys. wierszy broadcastu). Executor ponawia pobranie w nieskończoność,
 #: więc zapytanie wisi, zamiast zakończyć się błędem. Pomiary używają klastra z osobnych

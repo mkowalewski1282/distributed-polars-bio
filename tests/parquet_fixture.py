@@ -6,6 +6,7 @@ Przypadki, na których silniki mogą się rozjechać:
 - chromosom tylko w A (chrA) i tylko w B (chrB);
 - duplikat przedziału w A;
 - przedziały stykające się (koniec jednego = początek drugiego), w A i między A a B;
+- niezerowe odległości do najbliższego sąsiada, z lewej i z prawej, oraz remis;
 - chr10 obok chr2 (porządek leksykograficzny różny od numerycznego);
 - nakładające się przedziały chr1 w RÓŻNYCH plikach (merge wymaga shuffle).
 """
@@ -28,6 +29,9 @@ FIXTURE_A = [
     ("chr2", 350, 400),    # plik 0 — styka się z poprzednim
     ("chr10", 1000, 1100), # plik 1
     ("chrA", 10, 20),      # plik 0 — chromosom tylko w A
+    ("chr1", 700, 800),    # plik 1 — odstęp 100 do najbliższego [450, 600) z B
+    ("chr2", 10, 40),      # plik 0 — odstęp 60 do najbliższego [100, 220) z B (po prawej)
+    ("chr1", 260, 280),    # plik 1 — remis: odstęp 10 do [180, 250) i do [290, 420)
 ]
 
 FIXTURE_B = [

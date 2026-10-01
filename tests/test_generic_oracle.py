@@ -38,3 +38,13 @@ def test_oracle_one_sided_chromosomes(oracle_frames):
     assert ("chrA", 10, 20) in rows["subtract"]
     assert not any("chrA" in r or "chrB" in r for r in rows["overlap"])
     assert not any(r[0] == "chrB" for op in OPS if op != "overlap" for r in rows[op])
+
+
+def test_oracle_nearest_has_nonzero_distances(oracle_frames):
+    """Zbiór testowy musi zawierać przedziały z odstępem do sąsiada — gdy wszystkie
+    odległości wynosiły 0, test nearest sprawdzał tylko orientację i liczbę wierszy
+    (tak przypadkiem przechodził test P0). 0-based, półotwarte: odległość = odstęp."""
+    rows = {(r[0], r[1], r[2], r[6]) for r in oracle_frames["nearest"].iter_rows()}
+    assert ("chr1", 700, 800, 100) in rows  # najbliższy po lewej: [450, 600)
+    assert ("chr2", 10, 40, 60) in rows  # najbliższy po prawej: [100, 220)
+    assert ("chr1", 260, 280, 10) in rows  # remis: [180, 250) i [290, 420)

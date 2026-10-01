@@ -65,12 +65,13 @@ def test_sail_memory_does_not_scale_with_output_times_group(spark, tmp_path):
     razem z listą wszystkich przedziałów chromosomu. Gdy UDTF zwracał wiersz na przedział,
     pamięć rosła jak (wiersze wyniku) × (rozmiar grupy): na prawdziwych danych (para 1-2)
     proces przekraczał 2,5 GB i był zabijany, a czysto pythonowy UDTF bez polars-bio
-    zachowywał się tak samo. 5000 rozłącznych przedziałów na jednym chromosomie: przy
-    powielaniu ~1 GB wzrostu szczytu pamięci, po poprawce kilkadziesiąt MB."""
+    zachowywał się tak samo (5000 przedziałów w grupie: +3,8 GB). 2000 rozłącznych
+    przedziałów na jednym chromosomie wystarczy, by wykryć powrót powielania (wzrost
+    kwadratowy), a przy regresji nie grozi wywróceniem WSL."""
     import sail_bio
     from tests.parquet_fixture import write_parts
 
-    n = 5000
+    n = 2000
     d = write_parts([("chr1", i * 10, i * 10 + 5) for i in range(n)], tmp_path / "chr1", n_files=1)
     with open("/proc/self/clear_refs", "w") as f:
         f.write("5")  # zeruje licznik szczytu: VmHWM = bieżący RSS

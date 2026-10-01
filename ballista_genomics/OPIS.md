@@ -179,7 +179,9 @@ rozstrzyga `Auto` → `Partitioned`/`CollectLeft` przed wykonaniem) i zastępuje
 `partition_mode=Auto`. Lokalnie (jeden proces) to nie przeszkadzało, ale rozproszony
 executor Ballisty odrzuca `Auto` w `execute()`. Poprawka: kodek wymusza `Partitioned` przy
 odtwarzaniu węzła (dane i tak są partycjonowane wg klucza joina między executory — to
-jedyny sensowny tryb w tym kontekście).
+jedyny sensowny tryb w tym kontekście). **Nieaktualne od planu 2:** założenie o partycjonowaniu
+okazało się błędne — przy danych z kilku plików `Partitioned` gubił pary; koder zamienia teraz
+`Auto` na `CollectLeft` (patrz „Plan 2 → Znaleziska”).
 
 ### Zmiana architektoniczna: powrót do sesji bio-owych
 
@@ -297,7 +299,10 @@ poza domyślny `output/`.
 
 1. Cztery różne procesy; scheduler widzi dwa executory o różnych
    identyfikatorach i portach.
-2. Wynik każdej z pięciu operacji zgodny z wyrocznią polars-bio.
+2. Wynik każdej z pięciu operacji zgodny z wyrocznią polars-bio. Zastrzeżenie (plan 2):
+   dla `nearest` zgodność na tym zbiorze była przypadkowa — `dist_ops` ma orientację odwrotną
+   do `pb.nearest` (patrz „Plan 2 → Znaleziska”); poprawną orientację sprawdza
+   `tests/test_ballista_parquet.py`.
 3. Pliki etapów w katalogach roboczych obu executorów. Każda operacja to dwa
    zapytania do klastra (wynik i EXPLAIN ANALYZE); w komórkach — numery etapów,
    dla których dany executor zapisał dane:
@@ -385,7 +390,10 @@ o typach prawdziwych danych, z przypadkami brzegowymi; `tests/test_real_data.py`
   partycja *i* lewej tabeli łączyła się tylko z partycją *i* prawej (na zbiorze testowym
   5 z 10 par). Teraz `CollectLeft`: każde zadanie buduje indeks z całej lewej strony, zadania
   dzielą się prawą. Dotąd niewidoczne, bo overlap w `dist_ops` czyta pojedyncze pliki
-  (jedna partycja). Zgodne z hipotezą P3 (indeks budowany w każdym zadaniu).
+  (jedna partycja). Zgodne z hipotezą P3 (indeks budowany w każdym zadaniu). Tryb jest
+  zmieniany dopiero przy dekodowaniu na executorze, więc plan schedulera i `EXPLAIN ANALYZE`
+  nadal pokazują `mode=Auto` bez scalenia lewej strony — a w rzeczywistości każde zadanie
+  czyta i indeksuje całą lewą tabelę (ważne przy analizie metryk w planie 3).
 - **Konwencja stron w `nearest`** (jak w coverage): `dist_nearest(lewa, prawa)` zwraca
   wiersz na każdy wiersz PRAWEJ tabeli z najbliższym sąsiadem z lewej (lewa jest
   indeksowana i broadcastowana), a `pb.nearest(df1, df2)` — wiersz na każdy wiersz df1.
@@ -395,7 +403,9 @@ o typach prawdziwych danych, z przypadkami brzegowymi; `tests/test_real_data.py`
   ten test i SQL w `runner.rs`.
 - **Tryb standalone Ballisty nie udźwiga broadcastu na prawdziwych danych.** Executor
   w standalone pobiera zadania (tryb pull) klientem gRPC z domyślnym limitem tonic 4 MiB,
-  którego w tym trybie nie da się ustawić; odpowiedź z kilkoma zadaniami — każde niesie całą
+  którego nie da się zmienić przez `SessionContext::standalone_with_state` (dałoby się
+  przez własne uruchomienie schedulera i executora in-proc publicznymi funkcjami
+  `new_standalone_*_from_state` z własnym klientem gRPC — bez zmian w Ballistcie); odpowiedź z kilkoma zadaniami — każde niesie całą
   tabelę broadcastowaną — jest większa („decoded message length too large: found 9808588
   bytes, the limit is: 4194304 bytes” już przy 100 tys. wierszy broadcastu). Executor ponawia
   w nieskończoność, więc zapytanie wisi, zamiast zakończyć się błędem. Klaster z osobnych

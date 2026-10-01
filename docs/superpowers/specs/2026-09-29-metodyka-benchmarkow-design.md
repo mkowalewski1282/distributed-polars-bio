@@ -336,8 +336,9 @@ Ustalenia planu 2 (`ballista_genomics/OPIS.md`): stroną broadcastowaną w `near
 i `coverage` jest df2 (tabela indeksowana), nie df1. Para 1-2 mieści się w domyślnym
 limicie 16 MiB klastra z osobnych procesów (broadcast exons, szacunkowo ok. 10 MiB na
 zadanie); 2-7 i 7-0 według szacunku go przekraczają. Tryb standalone (jeden proces, tryb
-pull) ma niekonfigurowalny limit 4 MiB klienta gRPC executora i przy broadcaście na
-prawdziwych danych zapytanie wisi — standalone nie jest wariantem pomiarowym.
+pull) ma limit 4 MiB klienta gRPC executora, niezmienialny przez `standalone_with_state`,
+i przy broadcaście na prawdziwych danych zapytanie wisi — standalone nie jest wariantem
+pomiarowym.
 
 ### 9.3 Pozostałe
 
