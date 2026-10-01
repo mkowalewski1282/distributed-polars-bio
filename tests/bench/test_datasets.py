@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from bench.data import datasets as ds
@@ -55,3 +57,8 @@ def test_resolve_single_dataset(tmp_path):
 def test_resolve_rejects_malformed_ids(bad, tmp_path):
     with pytest.raises(ValueError, match="niepoprawny identyfikator"):
         ds.resolve(bad, tmp_path)
+
+
+def test_data_dir_expands_home(monkeypatch):
+    monkeypatch.setenv("BENCH_DATA_ROOT", "~/dane_testowe")
+    assert ds.data_dir() == Path.home() / "dane_testowe" / "databio-8p"

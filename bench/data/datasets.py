@@ -49,11 +49,12 @@ _SCENARIO = re.compile(r"([0-8])(?:-([0-8]))?")
 
 
 def data_dir(root: Path | None = None) -> Path:
-    """Katalog zbioru: `root` albo `$BENCH_DATA_ROOT` (pusta = brak) albo domyślny."""
+    """Katalog zbioru: `root` albo `$BENCH_DATA_ROOT` (pusta = brak) albo domyślny.
+    `~` jest rozwijane — procesy silników działają w innych katalogach niż powłoka."""
     if root is None:
         env = os.environ.get(DATA_ROOT_ENV, "")
         root = Path(env) if env else DEFAULT_DATA_ROOT
-    return Path(root) / DATASET_NAME
+    return Path(root).expanduser() / DATASET_NAME
 
 
 def dataset_dir(idx: int, root: Path | None = None) -> Path:

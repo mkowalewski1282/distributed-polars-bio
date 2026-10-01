@@ -1,0 +1,15 @@
+# Smoke (specyfikacja 7.3, etap 0): pełna macierz na parze 1-2 (merge: zbiór 1),
+# 1 przebieg bez rozgrzewki — poprawność narzędzia; uruchamiany przed każdą dużą serią:
+#   python -m bench.orchestrator bench/conf/smoke.yaml
+series: smoke
+scenarios:
+  - {op: overlap, pair: "1-2"}
+  - {op: nearest, pair: "1-2"}
+  - {op: coverage, pair: "1-2"}
+  - {op: merge, dataset: 1}
+  - {op: subtract, pair: "1-2"}
+variants: [polars_bio_a, polars_bio_b, ballista, sail]
+nodes: [1, 2, 3]
+repeats: 1
+warmup: 0
+seed: 20261001
