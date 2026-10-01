@@ -7,6 +7,7 @@
 //! Mapa modułów:
 //! - `codec_io`        — prymitywy kodowania binarnego wspólne dla kodeków
 //! - `bio_phys_codec`  — `BioRangesPhysicalCodec`: serializacja węzłów operacji zakresowych (Faza H)
+//! - `checksum`        — suma kontrolna wyniku niezależna od kolejności wierszy (plan 3a)
 //! - `cli`             — ścisłe parsowanie flag wspólne dla binarek (plan 2)
 //! - `cluster`         — kodery i stan sesji wspólne dla klienta i węzłów (P0)
 //! - `coverage_node`   — `DistCoverageExec`/`DistCoverageProvider` (Faza H, krok 4)
@@ -19,6 +20,7 @@
 //! - `scenario`        — scenariusz narzędzia pomiarowego → SQL w schemacie znormalizowanym (plan 2)
 
 pub mod bio_phys_codec;
+pub mod checksum;
 pub mod cli;
 pub mod cluster;
 pub mod codec_io;

@@ -14,7 +14,8 @@ import pytest
 #: w powłoce — inaczej mogłyby cicho liczyć zdalnie albo sprawdzać stare wyniki
 #: z ballista_genomics/output/. Testy klastra z osobnych procesów ustawiają te
 #: zmienne jawnie przy każdym wywołaniu klienta.
-CLIENT_ENV_VARS = ("BALLISTA_SCHEDULER_URL", "DIST_OUTPUT_DIR")
+#: BIO_TARGET_PARTITIONS — liczba partycji sesji Ballisty; testy zakładają domyślne 4.
+CLIENT_ENV_VARS = ("BALLISTA_SCHEDULER_URL", "DIST_OUTPUT_DIR", "BIO_TARGET_PARTITIONS")
 
 
 @pytest.fixture(autouse=True)

@@ -24,6 +24,9 @@ async-trait = "0.1"
 prost = "0.14"
 # bench_client: strumieniowa konsumpcja wyniku (StreamExt); wersja z Cargo.lock.
 futures = "0.3"
+# bench_client: suma kontrolna (specyfikacja 8.4) — CRC-32 kontigu; wersja z Cargo.lock
+# (używana już przez flate2 z tymi samymi cechami, więc bez przebudowy zależności).
+crc32fast = "1.5"
 
 # Środowisko ma tylko 3.5GB RAM — linkowanie tej binarki (Ballista scheduler+executor
 # + cały DataFusion + bio-function-ranges) z pełnym debug info (-C debuginfo=2)

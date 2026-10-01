@@ -7,7 +7,7 @@ z osobnych procesów ustawiają te zmienne jawnie przy każdym wywołaniu.
 
 import os
 
-CLIENT_ENV_VARS = ("BALLISTA_SCHEDULER_URL", "DIST_OUTPUT_DIR")
+CLIENT_ENV_VARS = ("BALLISTA_SCHEDULER_URL", "DIST_OUTPUT_DIR", "BIO_TARGET_PARTITIONS")
 
 
 def test_client_env_vars_do_not_leak_into_tests():

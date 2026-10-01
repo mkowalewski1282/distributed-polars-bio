@@ -40,6 +40,27 @@ pub fn scheduler_url() -> Option<String> {
     std::env::var(SCHEDULER_URL_ENV).ok().filter(|url| !url.is_empty())
 }
 
+/// Liczba partycji docelowych (`target_partitions`) dla WSZYSTKICH sesji — klienta,
+/// schedulera, executorów i wewnętrznych sesji providera. Orkiestrator pomiarów ustawia
+/// ją na 2N (N węzłów po 2 sloty; specyfikacja, sekcja 3) w środowisku każdego procesu
+/// klastra i klienta — rozjazd między procesami cicho psułby dystrybucję (patrz
+/// `bio_session_config`). Brak albo pusta → 4 (wartość sprzed planu 3a).
+pub const TARGET_PARTITIONS_ENV: &str = "BIO_TARGET_PARTITIONS";
+pub const DEFAULT_TARGET_PARTITIONS: usize = 4;
+
+/// Wartość z `BIO_TARGET_PARTITIONS`: liczba całkowita ≥ 2 (przy 1 DataFusion nie wstawia
+/// hash-repartycji — patrz `bio_session_config`). Binarki sprawdzają ją przy starcie.
+pub fn target_partitions() -> std::result::Result<usize, String> {
+    match std::env::var(TARGET_PARTITIONS_ENV) {
+        Ok(v) if !v.is_empty() => v
+            .parse::<usize>()
+            .ok()
+            .filter(|n| *n >= 2)
+            .ok_or_else(|| format!("{TARGET_PARTITIONS_ENV}: liczba całkowita ≥ 2, jest {v:?}")),
+        _ => Ok(DEFAULT_TARGET_PARTITIONS),
+    }
+}
+
 /// Bio-owa sesja klienta Ballisty z zarejestrowanymi funkcjami `dist_*`:
 /// zewnętrzny scheduler, gdy podano adres, inaczej standalone in-proc.
 /// Nic nie wypisuje na stdout — stdout `bench_client` to protokół.
@@ -65,12 +86,12 @@ pub async fn connect_from_env() -> Result<DFSessionContext> {
 /// której `EnforceDistribution` schedulera decyduje potem, czy wstawić shuffle.
 /// Rozjazd między tymi konfiguracjami cicho psuł dystrybucję.
 ///
-/// `with_target_partitions(4)` jest OBOWIĄZKOWE, nie kosmetyczne: przy
+/// `target_partitions ≥ 2` jest OBOWIĄZKOWE, nie kosmetyczne: przy
 /// `target_partitions == 1` DataFusion w ogóle nie wstawia hash-repartycji
 /// (`enforce_distribution.rs`, `add_hash_on_top`: `if n_target == 1 && count == 1
 /// { return input }`), więc zapytanie policzyłoby się poprawnie, ale w JEDNYM
 /// stage'u — a teza o dystrybucji byłaby pusta. Objawu brak; wykrywalne tylko
-/// przez `EXPLAIN ANALYZE`.
+/// przez `EXPLAIN ANALYZE`. Wartość: `BIO_TARGET_PARTITIONS` (domyślnie 4).
 ///
 /// `BioConfig::default()` rejestrujemy jawnie, mimo że `new_with_bio()` tego nie
 /// wymaga — żeby `interval_join_algorithm = Coitrees` i
@@ -79,9 +100,12 @@ pub async fn connect_from_env() -> Result<DFSessionContext> {
 /// wartości (nie da się ich odczytać z instancji węzła), więc lepiej, żeby
 /// invariant był widoczny w kodzie.
 pub fn bio_session_config() -> SessionConfig {
+    // Binarki sprawdzają zmienną przy starcie (błąd użycia, kod 2), więc niepoprawna
+    // wartość w tym miejscu to błąd programisty.
+    let partitions = target_partitions().unwrap_or_else(|e| panic!("{e}"));
     SessionConfig::from(ConfigOptions::new())
         .with_option_extension(BioConfig::default())
-        .with_target_partitions(4)
+        .with_target_partitions(partitions)
 }
 
 pub struct OpSpec {

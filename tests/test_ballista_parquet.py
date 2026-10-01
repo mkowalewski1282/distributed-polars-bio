@@ -24,6 +24,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from bench.checksum import checksum_rows, format_checksum
 from bench.ops import OPS, OUTPUT_COLUMNS, UNARY_OPS, describe_diff, row_multiset
 from tests.test_ballista_multiprocess import _start_cluster
 
@@ -54,8 +55,11 @@ def check_result(op: str, r: subprocess.CompletedProcess, out: Path, expected) -
     assert r.returncode == 0, f"bench_client {op}: kod {r.returncode}\nstderr:\n{r.stderr[-3000:]}"
     lines = r.stdout.strip().splitlines()
     assert len(lines) == 1, f"stdout ma być jedną linią JSON, jest:\n{r.stdout}"
+    report = json.loads(lines[0])
     df = pl.read_parquet(out)
-    assert json.loads(lines[0]) == {"rows": df.height}
+    assert report["rows"] == df.height
+    # Suma kontrolna z runnera = suma kontrolna wyniku wyroczni (specyfikacja 8.4).
+    assert report["checksum"] == format_checksum(checksum_rows(op, expected.elements()))
     assert tuple(df.columns) == OUTPUT_COLUMNS[op]
     actual = row_multiset(op, df)
     assert actual == expected, f"{op}: rozjazd z polars-bio — {describe_diff(expected, actual)}"

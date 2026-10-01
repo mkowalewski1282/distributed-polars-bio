@@ -1041,6 +1041,7 @@ dependencies = [
  "ballista-core",
  "ballista-executor",
  "ballista-scheduler",
+ "crc32fast",
  "datafusion",
  "datafusion-bio-function-ranges",
  "datafusion-proto",

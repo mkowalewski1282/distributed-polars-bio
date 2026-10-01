@@ -19,7 +19,7 @@ use ballista_genomics::cli::{parse_flags, required};
 use ballista_genomics::cluster::{
     bio_ballista_config, bio_logical_codec, bio_physical_codec, bio_session_state,
 };
-use ballista_genomics::runner::bio_session_config;
+use ballista_genomics::runner::{bio_session_config, target_partitions};
 use ballista_scheduler::cluster::BallistaCluster;
 use ballista_scheduler::config::{SchedulerConfig, TaskDistributionPolicy};
 use ballista_scheduler::scheduler_process::start_server;
@@ -138,6 +138,11 @@ fn usage_error(msg: &str) -> ! {
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Zmienna środowiskowa to też wejście: niepoprawna = błąd użycia (kod 2), zanim
+    // węzeł cokolwiek uruchomi (inaczej panika w bio_session_config).
+    if let Err(e) = target_partitions() {
+        usage_error(&e);
+    }
     let rest = args.get(1..).unwrap_or(&[]);
     // Najpierw WYŁĄCZNIE parsowanie (kod 2), potem działanie (kod 1).
     let outcome = match args.first().map(String::as_str) {
