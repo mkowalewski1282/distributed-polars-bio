@@ -143,11 +143,18 @@ pub fn spec(op: DistOp) -> OpSpec {
             // executora, a rownoleglosc bierze sie z partycjonowania PRAWEJ
             // strony. Argumenty (k=1, include_overlaps, compute_distance, brak
             // 'strict') odwzorowuja nearest_local.rs 1:1.
-            sql: "SELECT * FROM dist_nearest('intervals_a', 'data/parts_a', \
-                                             'intervals_b', 'data/parts_b', \
+            //
+            // ORIENTACJA (poprawione w planie 2): wynik ma JEDEN wiersz na kazdy
+            // wiersz PRAWEJ tabeli, z najblizszym sasiadem z lewej — odwrotnie niz
+            // pb.nearest(A, B), ktore daje wiersz na kazdy przedzial A. Dlatego A
+            // jest prawa (odpytywana), a B lewa (indeksowana, broadcastowana).
+            // Wczesniej strony byly odwrotne, a test zgodnosci z pb przechodzil
+            // przypadkiem (5 x 5 przedzialow, wszystkie odleglosci 0).
+            sql: "SELECT * FROM dist_nearest('intervals_b', 'data/parts_b', \
+                                             'intervals_a', 'data/parts_a', \
                                              1, true, true, \
                                              'chrom', 'start', 'end') \
-                  ORDER BY left_chrom, left_start"
+                  ORDER BY right_chrom, right_start"
                 .to_string(),
             output_csv: "dist_nearest_result.csv",
             explain_txt: "dist_nearest_explain.txt",

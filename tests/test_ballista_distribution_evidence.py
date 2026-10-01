@@ -176,11 +176,13 @@ def test_nearest_left_table_travels_in_plan_not_as_scan():
     Dowód BROADCASTU: lewa (indeksowana) tabela NIE pojawia się w planie jako
     osobny DataSourceExec — jej dane pojechały wewnątrz ładunku planu
     fizycznego (Arrow IPC), a executor odbudował z nich indeks lokalnie.
-    W planie widać wyłącznie skan prawej tabeli (parts_b).
+    Lewą (broadcastowaną) jest B (parts_b), bo wynik ma wiersz na każdy wiersz
+    PRAWEJ tabeli, a pb.nearest(A, B) — na każdy przedział A; w planie widać
+    więc wyłącznie skan A (parts_a).
     """
     txt, _ = _explain("nearest")
-    assert "parts_b" in txt, f"brak skanu prawej tabeli:\n{txt}"
-    assert "parts_a" not in txt, (
+    assert "parts_a" in txt, f"brak skanu prawej tabeli (A):\n{txt}"
+    assert "parts_b" not in txt, (
         "Lewa tabela pojawiła się w planie jako skan — to znaczy, że NIE jest "
         f"broadcastowana w ładunku planu:\n{txt}"
     )

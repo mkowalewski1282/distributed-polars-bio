@@ -41,14 +41,11 @@ NEAREST_OUTPUT_CSV = BALLISTA_DIR / "output" / "nearest_local_result.csv"
 )
 def test_ballista_local_nearest_matches_oracle():
     """
-    Porównuje ODLEGŁOŚCI (name_a -> distance), nie dokładnych wybranych
-    partnerów. Znalezisko z tej sesji: gdy interwał A ma kilku kandydatów w
-    tej samej (zerowej) odległości, natywny nearest() z
-    datafusion-bio-function-ranges i pb.nearest() wybierają różnych
-    kandydatów (różne, nieudokumentowane reguły tie-breakingu) — np. dla
-    A2=[150,300) oba B1=[180,250) i B2=[290,420) overlapują (dystans 0),
-    pb.nearest() wybiera B1, Ballista wybiera B2. Obie odpowiedzi są
-    poprawne co do odległości — porównanie 1:1 par nie ma tu sensu.
+    Porównuje ODLEGŁOŚCI (name_a -> distance), nie wybranych partnerów:
+    reguły rozstrzygania remisów (kilku kandydatów w tej samej odległości)
+    nie są udokumentowane w żadnym z silników, więc porównanie odporne na
+    remisy jest bezpieczniejsze. Liczba wierszy = liczba przedziałów A
+    pilnuje orientacji (wiersz na każdy przedział A, jak pb.nearest).
     """
     result = subprocess.run(
         [str(NEAREST_BINARY)], cwd=BALLISTA_DIR, capture_output=True, text=True, timeout=30
@@ -56,8 +53,12 @@ def test_ballista_local_nearest_matches_oracle():
     assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
     assert NEAREST_OUTPUT_CSV.exists()
 
+    # Konwencja dostawcy: wynik ma wiersz na każdy wiersz PRAWEJ tabeli (odpytywanej), z
+    # najbliższym sąsiadem z lewej (indeksowanej). Żeby odpowiadało pb.nearest(A, B),
+    # A jest prawą tabelą — nazwy A są w `right_name`, wybrani sąsiedzi z B w `left_name`.
     df = pd.read_csv(NEAREST_OUTPUT_CSV)
-    actual_distances = dict(zip(df["left_name"].tolist(), df["distance"].tolist()))
+    assert len(df) == len(INTERVALS_A), "nearest ma dać jeden wiersz na każdy przedział A"
+    actual_distances = dict(zip(df["right_name"].tolist(), df["distance"].tolist()))
     expected_distances = reference_nearest_min_distances(INTERVALS_A, INTERVALS_B)
 
     assert actual_distances == expected_distances, (
@@ -67,16 +68,17 @@ def test_ballista_local_nearest_matches_oracle():
     )
 
 
-def test_ballista_and_pb_nearest_disagree_on_tie_break():
+def test_ballista_and_pb_nearest_pick_same_neighbours():
     """
-    Dokumentuje (nie tylko przez komentarz, ale przez asercję) znalezisko:
-    dla tego zestawu danych syntetycznych faktycznie istnieje remis, na
-    którym oba silniki różnią się wyborem konkretnego partnera — więc
-    poprzedni test (test_ballista_local_nearest_matches_oracle) faktycznie
-    testuje coś nietrywialnego, nie przechodzi "przez przypadek" bo remisów
-    nie ma. Jeśli kiedyś ten test zacznie failować, to znaczy że dane testowe
-    się zmieniły i ten fakt (istnienie remisu w danych) już nie zachodzi —
-    trzeba by go odtworzyć innymi danymi, żeby test powyżej miał sens.
+    KOREKTA (plan 2): w Fazie C zapisano znalezisko „przy remisie pb.nearest()
+    wybiera B1, Ballista B2” — i test wymagał tej różnicy. Okazało się, że było
+    to artefaktem odwróconej orientacji: nearest() z datafusion-bio-function-ranges
+    zwraca wiersz na każdy wiersz PRAWEJ tabeli, więc wołanie nearest(A, B)
+    liczyło „dla każdego B najbliższy A”, a nie to, co pb.nearest(A, B).
+    Przy poprawnej orientacji (A jako prawa) oba silniki wybierają na tych
+    danych DOKŁADNIE tych samych sąsiadów, także przy remisie A2 (B1 i B2 w
+    odległości 0). Jeśli ten test zacznie failować, reguły remisów silników
+    się rozeszły — wtedy porównania i tak pozostają poprawne (odległości).
     """
     result = subprocess.run(
         [str(NEAREST_BINARY)], cwd=BALLISTA_DIR, capture_output=True, text=True, timeout=30
@@ -85,15 +87,12 @@ def test_ballista_and_pb_nearest_disagree_on_tie_break():
         pytest.skip("nearest_local binary failed to run")
 
     df = pd.read_csv(NEAREST_OUTPUT_CSV)
-    ballista_pairs = set(zip(df["left_name"].tolist(), df["right_name"].tolist()))
+    ballista_pairs = set(zip(df["right_name"].tolist(), df["left_name"].tolist()))
     pb_pairs = reference_nearest_pairs(INTERVALS_A, INTERVALS_B)
 
-    assert ballista_pairs != pb_pairs, (
-        "Oczekiwano remisu (różnych wyborów partnera) między silnikami na tych "
-        "danych testowych — jeśli ten test failuje, dane się zmieniły i nie "
-        "demonstrują już tie-breakingu; test_ballista_local_nearest_matches_oracle "
-        "wciąż powinien przechodzić, ale bez tej asercji nie wiadomo czy testuje "
-        "coś nietrywialnego."
+    assert ballista_pairs == pb_pairs, (
+        "Ballista i pb.nearest() wybrały różnych sąsiadów (różne reguły remisów) — "
+        f"Ballista: {sorted(ballista_pairs)}, pb: {sorted(pb_pairs)}"
     )
 
 

@@ -176,7 +176,11 @@ def test_ballista_distributed_nearest_matches_oracle_distances():
     assert out.exists(), f"nie znaleziono {out}"
 
     df = pd.read_csv(out)
-    actual = dict(zip(df["left_name"].tolist(), df["distance"].tolist()))
+    # Konwencja dostawcy: wynik ma wiersz na każdy wiersz PRAWEJ tabeli (odpytywanej), z
+    # najbliższym sąsiadem z lewej (indeksowanej). Żeby odpowiadało pb.nearest(A, B),
+    # A jest prawą tabelą — nazwy A są w `right_name`, wybrani sąsiedzi z B w `left_name`.
+    assert len(df) == len(INTERVALS_A), "nearest ma dać jeden wiersz na każdy przedział A"
+    actual = dict(zip(df["right_name"].tolist(), df["distance"].tolist()))
     expected = reference_nearest_min_distances(INTERVALS_A, INTERVALS_B)
 
     assert set(actual) == set(expected), (
@@ -213,7 +217,7 @@ def test_distributed_nearest_agrees_with_local_nearest():
 
     def pairs(path: Path) -> set[tuple[str, str]]:
         d = pd.read_csv(path)
-        return set(zip(d["left_name"].tolist(), d["right_name"].tolist()))
+        return set(zip(d["right_name"].tolist(), d["left_name"].tolist()))
 
     dist_pairs = pairs(OUTPUT_DIR / "dist_nearest_result.csv")
     local_pairs = pairs(local_csv)

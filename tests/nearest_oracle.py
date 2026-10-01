@@ -25,8 +25,10 @@ def reference_nearest_pairs(
 
     UWAGA: gdy interwał A ma kilku kandydatów w tej samej (np. zerowej)
     odległości, pb.nearest() i natywny nearest() z datafusion-bio-function-ranges
-    mogą wybrać RÓŻNYCH kandydatów (różne, nieudokumentowane reguły
-    tie-breakingu) — obie odpowiedzi są wtedy poprawne co do odległości, ale
+    MOGĄ wybrać różnych kandydatów (reguły remisów nie są udokumentowane; na
+    danych testowych, przy poprawnej orientacji, wybierają tych samych — patrz
+    test_ballista_and_pb_nearest_pick_same_neighbours) — obie odpowiedzi byłyby
+    wtedy poprawne co do odległości, ale
     ten zbiór par NIE nadaje się do porównania 1:1 między silnikami przy
     remisach. Do tego służy reference_nearest_min_distances() niżej —
     porównuj DYSTANSE (name_a -> distance), nie konkretnych partnerów, gdy w

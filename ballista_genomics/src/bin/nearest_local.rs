@@ -25,9 +25,11 @@ async fn main() -> Result<()> {
     let t0 = Instant::now();
     let df = ctx
         .sql(
-            "SELECT * FROM nearest('intervals_a', 'intervals_b', 1, true, true, \
+            // Wiersz na kazdy wiersz PRAWEJ tabeli -> A jako prawa, zeby wynik
+            // odpowiadal pb.nearest(A, B) (patrz runner.rs, DistOp::Nearest).
+            "SELECT * FROM nearest('intervals_b', 'intervals_a', 1, true, true, \
                                     'chrom', 'start', 'end') \
-             ORDER BY left_chrom, left_start",
+             ORDER BY right_chrom, right_start",
         )
         .await?;
     let result = df.collect().await?;

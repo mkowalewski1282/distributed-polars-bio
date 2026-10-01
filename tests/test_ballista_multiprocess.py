@@ -364,7 +364,9 @@ def _check_against_oracle(op: str, output_dir: Path) -> None:
         # są dowolnie (patrz tests/test_nearest_correctness.py).
         from tests.nearest_oracle import reference_nearest_min_distances
 
-        actual = {name: int(d) for name, d in zip(df["left_name"], df["distance"])}
+        # Wiersz na każdy przedział A; A to prawa (odpytywana) tabela dist_nearest.
+        assert len(df) == len(INTERVALS_A)
+        actual = {name: int(d) for name, d in zip(df["right_name"], df["distance"])}
         expected = {
             name: int(d)
             for name, d in reference_nearest_min_distances(INTERVALS_A, INTERVALS_B).items()
