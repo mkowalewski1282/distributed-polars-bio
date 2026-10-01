@@ -6,6 +6,7 @@ from collections import Counter
 
 import pandas as pd
 import polars as pl
+import pyarrow as pa
 import pytest
 
 from bench import ops
@@ -102,3 +103,23 @@ def test_row_multiset_reports_missing_key_column():
 def test_describe_diff_shows_counts_and_examples():
     text = ops.describe_diff(Counter({("a",): 2, ("b",): 1}), Counter({("a",): 1, ("c",): 1}))
     assert "brakuje 2" in text and "nadmiarowych 1" in text and "('c',)" in text
+
+
+def test_normalize_arrow_renames_and_orders_batch():
+    batch = pa.record_batch({
+        "n_intervals": pa.array([2], pa.int64()),
+        "pos_end": pa.array([300], pa.int32()),
+        "contig": pa.array(["chr1"], pa.string_view()),
+        "pos_start": pa.array([100], pa.int32()),
+    })
+    out = ops.normalize_arrow("merge", batch, DATABIO)
+    assert isinstance(out, pa.RecordBatch)
+    assert out.schema.names == ["chrom", "start", "end", "n_intervals"]
+    assert out.to_pylist() == [{"chrom": "chr1", "start": 100, "end": 300, "n_intervals": 2}]
+
+
+def test_normalize_arrow_accepts_table_and_reports_missing_columns():
+    table = pa.table({"contig": ["chr1"], "pos_start": [1], "pos_end": [2]})
+    assert ops.normalize_arrow("subtract", table, DATABIO).column_names == ["chrom", "start", "end"]
+    with pytest.raises(KeyError, match="n_intervals"):
+        ops.normalize_arrow("merge", table, DATABIO)

@@ -58,6 +58,17 @@ def normalize_polars_bio(op: str, df: pl.DataFrame, cols: tuple[str, str, str]) 
     return df.select([pl.col(src).alias(dst) for src, dst in names.items()])
 
 
+def normalize_arrow(op: str, data, cols: tuple[str, str, str]):
+    """Partia Arrow (RecordBatch albo Table) z wynikiem polars-bio -> kolumny schematu
+    znormalizowanego, w tej kolejności — odpowiednik `normalize_polars_bio` dla
+    strumienia partii."""
+    names = polars_bio_names(op, cols)
+    missing = [src for src in names if src not in data.schema.names]
+    if missing:
+        raise KeyError(f"{op}: wynik polars-bio nie ma kolumn {missing}; ma {data.schema.names}")
+    return type(data).from_arrays([data.column(src) for src in names], names=list(names.values()))
+
+
 def row_multiset(op: str, df) -> Counter:
     """Multizbiór wierszy po kolumnach klucza (polars albo pandas; NaN = brak)."""
     if not isinstance(df, pl.DataFrame):
