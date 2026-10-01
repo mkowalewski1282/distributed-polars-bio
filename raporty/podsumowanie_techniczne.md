@@ -163,7 +163,7 @@ coverage, subtract) — każda zweryfikowana na obu silnikach względem wyroczni
 |-----------|:---:|:---:|:---:|---|
 | overlap   | TAK | TAK (COITrees, Faza A.5) | TAK | — |
 | merge     | TAK | początkowo lokalnie; **rozproszone od Fazy H** | TAK | — |
-| nearest   | TAK | początkowo lokalnie; **rozproszone od Fazy H** | TAK | inna reguła rozstrzygania remisów niż `pb.nearest()` |
+| nearest   | TAK | początkowo lokalnie; **rozproszone od Fazy H** | TAK | odwrócona orientacja względem `pb.nearest()` (korekta z 01.10.2026, punkt 6) |
 | coverage  | TAK | początkowo lokalnie; **rozproszone od Fazy H** | TAK | odwrócona konwencja argumentów względem `pb.coverage()` |
 | subtract  | TAK | początkowo lokalnie; **rozproszone od Fazy H** | TAK | — |
 
@@ -435,9 +435,13 @@ zidentyfikowane zostaje **realne i usuwalne ograniczenie polars-bio** — istotn
 
 # 6. Znaleziska i różnice semantyczne między silnikami/bibliotekami
 
-- **`nearest`**: natywna implementacja w `datafusion-bio-function-ranges` i `pb.nearest()`
-  różnie rozstrzygają remisy (gdy kilku kandydatów ma tę samą, zerową odległość) — obie
-  odpowiedzi poprawne co do dystansu, różny wybór konkretnego partnera.
+- **`nearest`** — **KOREKTA (1 października 2026, plan 2):** pierwotnie opisano tu różnicę
+  w rozstrzyganiu remisów między natywnym `nearest()` z `datafusion-bio-function-ranges`
+  a `pb.nearest()`. Była to pomyłka wynikająca z odwróconej orientacji: natywny `nearest()`
+  zwraca wiersz na każdy wiersz PRAWEJ tabeli, a `pb.nearest(a, b)` — na każdy wiersz `a`
+  (ta sama odwrócona konwencja co w `coverage`). Przy poprawnej orientacji oba silniki
+  wybierają na danych testowych tych samych sąsiadów, także przy remisie; szczegóły
+  w `ballista_genomics/OPIS.md` („Plan 2 → Znaleziska”).
 - **`coverage`**: `pb.coverage(a, b)` i natywne SQL-owe `coverage('reads', 'targets', ...)` mają
   odwróconą konwencję argumentów — to rzeczywista różnica API między bibliotekami, nie błąd.
 - **Sail/pysail 0.5.3**: brak wsparcia dla argumentów TABLE w UDTF; `SparkSession.

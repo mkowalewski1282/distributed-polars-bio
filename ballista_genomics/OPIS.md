@@ -300,9 +300,9 @@ poza domyślny `output/`.
 1. Cztery różne procesy; scheduler widzi dwa executory o różnych
    identyfikatorach i portach.
 2. Wynik każdej z pięciu operacji zgodny z wyrocznią polars-bio. Zastrzeżenie (plan 2):
-   dla `nearest` zgodność na tym zbiorze była przypadkowa — `dist_ops` ma orientację odwrotną
-   do `pb.nearest` (patrz „Plan 2 → Znaleziska”); poprawną orientację sprawdza
-   `tests/test_ballista_parquet.py`.
+   dla `nearest` zgodność była pierwotnie przypadkowa — `dist_ops` miał orientację odwrotną
+   do `pb.nearest`. Poprawione w planie 2 (`runner.rs`, `nearest_local.rs`); testy sprawdzają
+   teraz także liczbę wierszy wyniku równą liczbie przedziałów A (patrz „Plan 2 → Znaleziska”).
 3. Pliki etapów w katalogach roboczych obu executorów. Każda operacja to dwa
    zapytania do klastra (wynik i EXPLAIN ANALYZE); w komórkach — numery etapów,
    dla których dany executor zapisał dane:
@@ -397,10 +397,13 @@ o typach prawdziwych danych, z przypadkami brzegowymi; `tests/test_real_data.py`
 - **Konwencja stron w `nearest`** (jak w coverage): `dist_nearest(lewa, prawa)` zwraca
   wiersz na każdy wiersz PRAWEJ tabeli z najbliższym sąsiadem z lewej (lewa jest
   indeksowana i broadcastowana), a `pb.nearest(df1, df2)` — wiersz na każdy wiersz df1.
-  `bench_client` zamienia strony. **`dist_ops` (dane zabawkowe) ma orientację odwrotną do
-  polars-bio**; `test_ballista_distributed_nearest_matches_oracle_distances` przechodzi
-  przypadkiem (5 × 5 przedziałów, wszystkie odległości 0, remisy) — do decyzji, czy poprawić
-  ten test i SQL w `runner.rs`.
+  `bench_client` zamienia strony. `dist_ops` i `nearest_local` (dane zabawkowe) miały
+  orientację odwrotną do polars-bio, a ich testy przechodziły przypadkiem (5 × 5 przedziałów,
+  wszystkie odległości 0) — poprawione (A jako prawa tabela; testy kluczowane po `right_name`
+  i sprawdzające liczbę wierszy = |A|). **Korekta wcześniejszego znaleziska z Fazy C:**
+  opisywana „różnica w rozstrzyganiu remisów” między `pb.nearest()` a Ballistą była
+  artefaktem tej samej odwróconej orientacji — przy poprawnej oba silniki wybierają na danych
+  testowych tych samych sąsiadów, także przy remisie.
 - **Tryb standalone Ballisty nie udźwiga broadcastu na prawdziwych danych.** Executor
   w standalone pobiera zadania (tryb pull) klientem gRPC z domyślnym limitem tonic 4 MiB,
   którego nie da się zmienić przez `SessionContext::standalone_with_state` (dałoby się

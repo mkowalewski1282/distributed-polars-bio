@@ -41,10 +41,14 @@ albo reimplementację operatora od zera.
 
 ## Empirycznie znalezione różnice semantyczne między silnikami (nie błędy — realne cechy API)
 
-1. **`nearest`, remisy:** gdy interwał ma kilku kandydatów w tej samej (zerowej) odległości,
-   `pb.nearest()` i natywny `nearest()` z bio-function-ranges wybierają różnych kandydatów
-   (różne, nieudokumentowane reguły tie-breakingu). Test poprawności musi porównywać
-   dystanse, nie dokładnie wybranego partnera — patrz `tests/nearest_oracle.py`.
+1. **`nearest`, orientacja** (KOREKTA z 01.10.2026, plan 2): natywny `nearest()`
+   z bio-function-ranges zwraca wiersz na każdy wiersz PRAWEJ tabeli (z najbliższym
+   sąsiadem z lewej), a `pb.nearest(a, b)` — na każdy wiersz `a`; to ta sama odwrócona
+   konwencja co w `coverage` (punkt 2). Wcześniej opisywana tu „różnica w rozstrzyganiu
+   remisów” była artefaktem odwróconej orientacji: przy poprawnej oba silniki wybierają na
+   danych testowych tych samych sąsiadów, także przy remisie
+   (`test_ballista_and_pb_nearest_pick_same_neighbours`). Porównania nadal opierają się na
+   odległościach, bo reguły remisów nie są udokumentowane — patrz `tests/nearest_oracle.py`.
 2. **`coverage`, kolejność argumentów:** `pb.coverage(a, b)` i `coverage('reads','targets',...)`
    z bio-function-ranges mają odwróconą konwencję — `pb.coverage(a, b)` raportuje pokrycie
    interwałów `a` przez `b`, SQL-owa funkcja odwrotnie (pierwszy argument to "reads"
@@ -60,6 +64,8 @@ albo reimplementację operatora od zera.
   DataFrame API, czy bez opcji) — działają tylko argumenty skalarne.
 - `LATERAL` + skalarny UDTF nad tabelą rozłożoną na >1 partycję fizyczną gubi/dubluje wiersze
   — wymusza `.repartition(1)` przed `LATERAL` jako obejście (kosztem równoległości).
+  **KOREKTA (Faza H):** przyczyną był globalny, mutowalny kontekst polars-bio, nie Sail —
+  rozwiązanie bez utraty równoległości: blokada w `sail_pb_guard.py`.
 - `SparkSession.getOrCreate()` cache'uje sesję jako globalny singleton procesu — uruchomienie
   dwóch niezależnych `SparkConnectServer` w JEDNYM procesie Pythona (np. dwa testy pytest w
   jednym pliku) kończy się błędem połączenia na drugim. Trzeba obsłużyć wiele UDTF-ów w
@@ -67,6 +73,34 @@ albo reimplementację operatora od zera.
 - Dekorator `@udtf` sprawdza tryb "remote" (Connect vs klasyczny PySpark) w MOMENCIE
   DEFINICJI klasy, nie rejestracji — klasa musi być budowana (przez funkcję fabrykującą)
   DOPIERO po utworzeniu sesji Spark Connect.
+
+### Dojrzałość ścieżki UDTF w Sailu — obserwacja zbiorcza (plan 2, 01.10.2026)
+
+Na danych rzeczywistych (`databio-8p`, para 1-2) ujawniło się, że ścieżka rozszerzeń Saila
+(UDTF, PR #1519, pysail 0.5.3) wymaga omijania kolejnych raf, choć sam silnik liczy poprawnie:
+
+1. **Brak argumentów TABLE dla UDTF** → całą grupę (wszystkie przedziały chromosomu) trzeba
+   spakować `collect_list` do JEDNEGO wiersza i przekazać jako argument skalarny.
+2. **`LATERAL` powiela wiersz zewnętrzny dla każdego wiersza wyniku UDTF-a**, razem z listą
+   wszystkich przedziałów chromosomu (silnik nie odcina kolumn, których dalej nie używamy).
+   Gdy UDTF zwracał wiersz na wynik, pamięć rosła jak (wiersze wyniku) × (rozmiar grupy):
+   +3,8 GB przy 5000 przedziałach w jednej grupie; na parze 1-2 proces był zabijany przez
+   OOM, a raz wywrócił WSL. To własność Saila, nie polars-bio (czysto pythonowy UDTF
+   zachowuje się tak samo). Obejście w `sail_bio.py`: UDTF zwraca jeden wiersz z tablicą
+   wyników, rozwijaną `explode` poza `LATERAL` (100 tys. wierszy wyniku przy 314 MB).
+3. **Dane przechodzą przez Pythona** (Row → pandas → polars-bio → krotki) — narzut
+   konwersji, który pomiary planu 3 muszą zminimalizować albo jawnie opisać.
+4. **Równoległość ≈ liczba chromosomów** (jedno wywołanie UDTF na chromosom), a cały
+   chromosom jest naraz w pamięci jednego wywołania.
+5. **Wieloprocesowość tylko na Kubernetesie** (`local-cluster` to jeden proces) — stąd jawna
+   asymetria w macierzy pomiarów i osobna próba K8s.
+
+**Ocena:** to nie fundamentalna wada silnika (zapytania liczą się poprawnie), lecz
+niedojrzałość jego mechanizmu rozszerzeń. Ballista pozwala na głęboką integrację (własne
+kodery planu i operatory fizyczne — operacje polars-bio wykonują się natywnie, w Rust),
+Sail — tylko przez UDTF z danymi przechodzącymi przez Pythona. Materiał do rozdziału
+porównawczego pracy: kryteria jakościowe „nakład i ryzyko integracji” oraz „dojrzałość API
+rozszerzeń”; czy ograniczenia te przekładają się na wydajność — rozstrzygną pomiary.
 
 Pełne opisy każdego znaleziska, z dokładnymi komunikatami błędów i historią prób: komentarze
 w kodzie (`sail_overlap_udtf.py`, `sail_coverage_subtract_udtf.py`,
