@@ -148,7 +148,10 @@ muszą być jednoczesne) — oraz maksimum per węzeł.
    lub sumy kontrolnej; przekroczenie limitu 20 minut. Timeout zapisywany jako wynik („timeout”),
    bez ponawiania. Ponadto: zabicie przez strażnika pamięci (`MemAvailable` < 300 MiB) i śmierć
    procesu silnika w trakcie przebiegu. Po timeoucie, strażniku albo śmierci procesu silnik jest
-   restartowany, a scenariusz pomijany do końca bloku („pominięty: …”).
+   restartowany, a scenariusz pomijany do końca bloku („pominięty: …”). Przyrost `pswpin`
+   (wczytania ze swapu) jest zapisywany (`pswpin_delta`), ale nie unieważnia przebiegu: przy
+   niepustym swapie na starcie serii wczytują go także inne procesy. Reguła — plan 3b (np.
+   unieważnianie, gdy seria startuje od pustego swapu po `wsl --shutdown`).
 6. **Statystyki:** mediana (wartość główna), min i max (rozrzut), średnia (zgodność
    z polars-bio-bench). Przyspieszenia liczone z median.
 7. **Zapis:** jeden wiersz na przebieg (sekcja 8.5); surowe plany `EXPLAIN ANALYZE` do plików.
@@ -310,8 +313,8 @@ Jeden wiersz na przebieg: `timestamp`, `git_commit`, `engine_versions`, `series`
 (JSON: proces → bajty), `peak_rss_sum`, `shuffle_bytes`, `broadcast_bytes`, `pswpout_delta`.
 
 Plan 3a dodaje `is_reference` (przebieg wzorcowy), `attempt` (2 — powtórzenie bloku po
-dryfie), `wall_s` (czas procesu runnera ze startem, do szacowania długości serii) i `extra`
-(JSON z runnera, m.in. `target_partitions`). Zapis:
+dryfie), `wall_s` (czas procesu runnera ze startem, do szacowania długości serii), `extra`
+(JSON z runnera, m.in. `target_partitions`) i `pswpin_delta` (wczytania ze swapu, sekcja 6). Zapis:
 `bench/results/<seria>/<znacznik czasu>/runs.jsonl` na bieżąco i `runs.parquet` na końcu,
 także po przerwaniu serii.
 

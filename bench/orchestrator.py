@@ -49,7 +49,7 @@ MAX_BLOCK_ATTEMPTS = 2
 
 _METRIC_KEYS = (
     "valid", "invalid_reason", "rows", "checksum", "t_total_s", "wall_s", "phases", "extra",
-    "peak_rss", "peak_rss_sum", "shuffle_bytes", "broadcast_bytes", "pswpout_delta",
+    "peak_rss", "peak_rss_sum", "shuffle_bytes", "broadcast_bytes", "pswpout_delta", "pswpin_delta",
 )
 
 
@@ -59,6 +59,7 @@ class Probe:
 
     mem_available: Callable[[], int] = metrics.mem_available
     pswpout: Callable[[], int] = metrics.pswpout
+    pswpin: Callable[[], int] = metrics.pswpin
     peak_rss: Callable[[int], int] = metrics.peak_rss
     reset_peak_rss: Callable[[int], None] = metrics.reset_peak_rss
     dir_size: Callable[[Path], int] = metrics.dir_size
@@ -233,12 +234,15 @@ class _Series:
                 pass  # martwy proces wykryje odczyt szczytu po przebiegu
         dirs = engine.shuffle_dirs()
         shuffle_before = sum(self.probe.dir_size(d) for d in dirs)
-        swap_before = self.probe.pswpout()
+        swap_before, swap_in_before = self.probe.pswpout(), self.probe.pswpin()
         outcome = execute(
             engine.command(scenario), timeout_s=self.cfg.timeout_s, mem_floor=self.mem_floor,
             probe=self.probe, scratch=self.scratch,
         )
         swap_delta = self.probe.pswpout() - swap_before
+        # Wczytania ze swapu tylko zapisywane: przy niepustym swapie na starcie serii robią to
+        # także inne procesy, więc reguła nieważności (specyfikacja 6.5) dotyczy pswpout.
+        swap_in_delta = self.probe.pswpin() - swap_in_before
         report = report_error = None
         if outcome.killed is None and outcome.returncode == 0:
             try:
@@ -273,6 +277,7 @@ class _Series:
             "shuffle_bytes": sum(self.probe.dir_size(d) for d in dirs) - shuffle_before if dirs else None,
             "broadcast_bytes": None,
             "pswpout_delta": swap_delta,
+            "pswpin_delta": swap_in_delta,
         }
         return measured, bool(outcome.killed or dead)
 

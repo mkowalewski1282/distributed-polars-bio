@@ -65,6 +65,10 @@ def test_pswpout_not_pswpin(fake_proc):
     assert metrics.pswpout(fake_proc) == 206037
 
 
+def test_pswpin(fake_proc):
+    assert metrics.pswpin(fake_proc) == 92346
+
+
 def test_missing_field_is_reported(tmp_path):
     (tmp_path / "1").mkdir()
     (tmp_path / "1" / "status").write_text("Name:\tzombie\nState:\tZ (zombie)\n")

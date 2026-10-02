@@ -69,6 +69,7 @@ def probe(**overrides) -> orch.Probe:
     functions = dict(
         mem_available=lambda: 4 << 30,
         pswpout=lambda: 0,
+        pswpin=lambda: 0,
         peak_rss=lambda pid: 2048,
         reset_peak_rss=lambda pid: None,
         dir_size=lambda path: 0,
@@ -216,6 +217,25 @@ def test_swap_during_run_invalidates_it(tmp_path):
     bad = rows(summary).filter(~pl.col("valid"))
     assert bad.height == 1
     assert bad["invalid_reason"][0] == "swap: pswpout +10" and bad["pswpout_delta"][0] == 10
+
+
+def test_swap_in_is_recorded_without_invalidating(tmp_path):
+    """Wczytanie stron ze swapu (pswpin) zapisuje się w wynikach, ale — inaczej niż pswpout
+    (specyfikacja 6.5) — nie unieważnia przebiegu: przy niepustym swapie na starcie serii
+    wczytują go także inne procesy. Regułę ustala plan 3b."""
+    marker = tmp_path / "swapin"
+
+    def args_for(variant, n, scenario):
+        return ["--touch", str(marker)] if (variant, scenario.op) == ("ballista", "overlap") else []
+
+    summary = run(
+        tmp_path, factory=make_factory(args_for),
+        probe=probe(pswpin=lambda: 7 if marker.exists() else 0),
+    )
+    df = rows(summary)
+    hit = df.filter(pl.col("pswpin_delta") > 0)
+    assert hit["pswpin_delta"].to_list() == [7] and hit["valid"].all()
+    assert summary.ok
 
 
 def _control_times(tmp_path, times: list[float]):

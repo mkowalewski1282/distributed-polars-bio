@@ -1,6 +1,7 @@
 """Metryki systemowe z /proc (specyfikacja, sekcje 5 i 6): szczyt pamięci procesu (VmHWM)
 i jego zerowanie (clear_refs), przypięcie do rdzeni, dostępna pamięć (MemAvailable),
-wypchnięcia do swapu (pswpout) oraz rozmiar katalogu (wolumen shuffle Ballisty).
+wypchnięcia do swapu i wczytania z niego (pswpout, pswpin) oraz rozmiar katalogu (wolumen
+shuffle Ballisty).
 
 Każda funkcja przyjmuje katalog `proc` — testy podają pliki wzorcowe."""
 
@@ -48,13 +49,22 @@ def mem_available(proc: Path = PROC) -> int:
     return _kib_field(proc / "meminfo", "MemAvailable")
 
 
-def pswpout(proc: Path = PROC) -> int:
-    """Licznik stron wypchniętych do swapu od startu systemu."""
+def _vmstat(key: str, proc: Path) -> int:
     for line in (proc / "vmstat").read_text().splitlines():
         name, _, value = line.partition(" ")
-        if name == "pswpout":
+        if name == key:
             return int(value)
-    raise KeyError(f"brak pswpout w {proc / 'vmstat'}")
+    raise KeyError(f"brak {key} w {proc / 'vmstat'}")
+
+
+def pswpout(proc: Path = PROC) -> int:
+    """Licznik stron wypchniętych do swapu od startu systemu."""
+    return _vmstat("pswpout", proc)
+
+
+def pswpin(proc: Path = PROC) -> int:
+    """Licznik stron wczytanych ze swapu od startu systemu."""
+    return _vmstat("pswpin", proc)
 
 
 def dir_size(path: Path) -> int:

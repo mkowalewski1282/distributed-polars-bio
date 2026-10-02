@@ -8,7 +8,8 @@ from pathlib import Path
 
 import polars as pl
 
-#: Wiersz wyniku: pola specyfikacji 8.5 oraz is_reference, attempt, wall_s i extra (plan 3a).
+#: Wiersz wyniku: pola specyfikacji 8.5 oraz is_reference, attempt, wall_s, extra i pswpin_delta
+#: (plan 3a).
 SCHEMA = {
     "timestamp": pl.Utf8,
     "git_commit": pl.Utf8,
@@ -39,6 +40,7 @@ SCHEMA = {
     "shuffle_bytes": pl.Int64,
     "broadcast_bytes": pl.Int64,  # plan 3b
     "pswpout_delta": pl.Int64,
+    "pswpin_delta": pl.Int64,  # zapisywany; czy unieważnia przebieg — plan 3b
 }
 
 
