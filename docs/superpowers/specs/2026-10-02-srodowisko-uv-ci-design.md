@@ -1,7 +1,7 @@
 # Etap 3b-1: środowisko uv, aktualne wersje i CI — projekt
 
 - **Data:** 2 października 2026
-- **Status:** projekt uzgodniony w rozmowie (brainstorming 02.10.2026); do przeglądu użytkownika
+- **Status:** zatwierdzony przez użytkownika (02.10.2026); plan: `docs/superpowers/plans/2026-10-02-srodowisko-uv-ci-3b1.md`
 - **Zakres:** odtwarzalne środowisko Pythona (uv), aktualizacja bibliotek do najnowszych wersji
   etapami, wyrównanie wersji algorytmów przedziałowych między polars-bio i Ballistą, konwencja
   językowa kodu, CI na GitHub Actions
