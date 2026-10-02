@@ -458,3 +458,29 @@ o typach prawdziwych danych, z przypadkami brzegowymi; `tests/test_real_data.py`
   od razu łączy się z executorem, więc rejestracja bywa odrzucona („Connection refused”),
   a executor kończy się kodem 1 (smoke 02.10.2026: raz na 11 startów). `bench/engines.py`
   ponawia wtedy start klastra (do 3 razy, na nowych portach).
+
+## Plan 3b-1 — wersja algorytmów v0.22.2 (październik 2026)
+
+- Zwendorowany `datafusion-bio-function-ranges` podniesiony z 0.18.0 do **v0.22.2** — tej samej
+  wersji, z którą zbudowano polars-bio 0.36.0. Ballista, Sail (polars-bio w UDTF) i wzorzec liczą
+  więc tymi samymi algorytmami; pilnuje tego `tests/test_algorithm_versions.py`.
+- DataFusion bez zmian (`=53.0.0` w obu wersjach crate'a) — przebudowa objęła tylko crate
+  algorytmów i integrację.
+- Łatki widoczności bez zmian: te same pola struktur `MergeExec`, `SubtractExec`, `NearestExec`,
+  `CountOverlapsExec`. API używane przez kodeki też bez zmian: `IntervalJoinExec::try_new`,
+  `build_nearest_indexes`, `build_coitree_from_batches`, `build_count_index_from_batches`.
+- Zmiany upstreamu 0.18.0 → 0.22.2 dotyczą wykonania:
+  - przedziały jednozasadowe w `nearest` i `count_overlaps`/`coverage` przy współrzędnych
+    0-based — wcześniej zapytanie [s, s+1) zwężało się do pustego zakresu porównania;
+  - `subtract` i `complement` przy współrzędnych 1-based.
+
+  Zbiór testowy nie ma przedziałów jednozasadowych.
+- **Znalezisko: `nearest` liczył w Ballistcie w konwencji 1-based.** Wywołania `dist_nearest`
+  (`scenario.rs` — `bench_client`, `runner.rs` — `dist_ops`) i tabelowej funkcji `nearest`
+  (`nearest_local.rs`) nie przekazywały `'strict'`, więc `NearestExec` dostawał `FilterOp::Weak`
+  (współrzędne 1-based, włącznie z końcem), choć dane są 0-based, półotwarte — pozostałe operacje
+  od początku przekazują `'strict'`. W 0.18.0 odległość nie zależała od konwencji, więc rozjazd był
+  niewidoczny. Od v0.22.2 odległość w konwencji 1-based jest o 1 mniejsza: na zbiorze testowym
+  Ballista dała 9, 59 i 99 zamiast 10, 60 i 100 (cztery testy porównujące z polars-bio).
+  Poprawka: `'strict'` we wszystkich trzech wywołaniach.
+- Rust przypięty w `rust-toolchain.toml` (1.95.0) — ta sama wersja lokalnie i w CI.

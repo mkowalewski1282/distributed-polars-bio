@@ -165,8 +165,8 @@ pub fn spec(op: DistOp) -> OpSpec {
             // required_input_distribution(), wiec nie zada repartycji. Lewa
             // (indeksowana) tabela jedzie w CALOSCI w ladunku planu do kazdego
             // executora, a rownoleglosc bierze sie z partycjonowania PRAWEJ
-            // strony. Argumenty (k=1, include_overlaps, compute_distance, brak
-            // 'strict') odwzorowuja nearest_local.rs 1:1.
+            // strony. Argumenty (k=1, include_overlaps, compute_distance, 'strict')
+            // odwzorowuja nearest_local.rs 1:1; 'strict' = dane 0-based (plan 3b-1).
             //
             // ORIENTACJA (poprawione w planie 2): wynik ma JEDEN wiersz na kazdy
             // wiersz PRAWEJ tabeli, z najblizszym sasiadem z lewej — odwrotnie niz
@@ -177,7 +177,7 @@ pub fn spec(op: DistOp) -> OpSpec {
             sql: "SELECT * FROM dist_nearest('intervals_b', 'data/parts_b', \
                                              'intervals_a', 'data/parts_a', \
                                              1, true, true, \
-                                             'chrom', 'start', 'end') \
+                                             'chrom', 'start', 'end', 'strict') \
                   ORDER BY right_chrom, right_start"
                 .to_string(),
             output_csv: "dist_nearest_result.csv",

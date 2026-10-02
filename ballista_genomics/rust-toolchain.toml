@@ -1,0 +1,4 @@
+# Wersja Rusta integracji z Ballistą - ta sama lokalnie i w CI (specyfikacja 3b-1, sekcja 3).
+[toolchain]
+channel = "1.95.0"
+profile = "minimal"

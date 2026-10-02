@@ -68,9 +68,11 @@ impl Scenario {
             // z najbliższym sąsiadem z lewej. pb.nearest(lewa, prawa) daje wiersz na
             // każdy wiersz lewej — więc strony są zamienione: 'df1' (nasza lewa) idzie
             // jako prawa (odpytywana), a kolumny _1 pochodzą z right_*, _2 z left_*.
-            // Bez 'strict' — jak runner::spec() i nearest_local.rs.
+            // 'strict' jak w pozostałych operacjach: dane są 0-based, półotwarte. Bez niego
+            // NearestExec liczy w konwencji 1-based — od v0.22.2 odległość wychodzi o 1 mniejsza
+            // niż w polars-bio (plan 3b-1, Zadanie 3).
             DistOp::Nearest => format!(
-                "SELECT {}, {}, {} FROM dist_nearest('df2', {right}, 'df1', {left}, 1, true, true, {cols})",
+                "SELECT {}, {}, {} FROM dist_nearest('df2', {right}, 'df1', {left}, 1, true, true, {cols}, 'strict')",
                 side("right", 1),
                 side("left", 2),
                 col("distance", "distance")

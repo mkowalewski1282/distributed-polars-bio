@@ -336,13 +336,6 @@ fn get_nearest_stream(
                         ))
                     })?;
                     let contig = contig_arr.value(i);
-                    let mut query_start = starts[i];
-                    let mut query_end = ends[i];
-
-                    if strict_filter {
-                        query_start += 1;
-                        query_end -= 1;
-                    }
 
                     let index = if contig == cached_contig {
                         cached_index
@@ -352,9 +345,9 @@ fn get_nearest_stream(
                         cached_index
                     };
 
-                    if let Some(pos) = index
-                        .and_then(|idx| idx.nearest_one(query_start, query_end, include_overlaps))
-                    {
+                    if let Some(pos) = index.and_then(|idx| {
+                        idx.nearest_one(starts[i], ends[i], include_overlaps, strict_filter)
+                    }) {
                         let pos_u32 = u32::try_from(pos).map_err(|_| {
                             DataFusionError::Execution(format!(
                                 "left row index {pos} exceeds UInt32 index capacity"
@@ -365,13 +358,12 @@ fn get_nearest_stream(
                         right_indices.push(right_pos_u32);
                         if let Some(ref mut dists) = distances {
                             let (left_starts, left_ends) = &**left_positions.as_ref().unwrap();
-                            // Use raw coordinates for distance, not the
-                            // strict-adjusted query_start/query_end.
                             let d = candidate_distance(
                                 starts[i],
                                 ends[i],
                                 left_starts[pos],
                                 left_ends[pos],
+                                strict_filter,
                             );
                             dists.push(Some(d));
                         }
@@ -394,13 +386,6 @@ fn get_nearest_stream(
                         ))
                     })?;
                     let contig = contig_arr.value(i);
-                    let mut query_start = starts[i];
-                    let mut query_end = ends[i];
-
-                    if strict_filter {
-                        query_start += 1;
-                        query_end -= 1;
-                    }
 
                     let index = if contig == cached_contig {
                         cached_index
@@ -414,10 +399,11 @@ fn get_nearest_stream(
 
                     if let Some(idx) = index {
                         idx.nearest_k(
-                            query_start,
-                            query_end,
+                            starts[i],
+                            ends[i],
                             k,
                             include_overlaps,
+                            strict_filter,
                             &mut nearest_buf,
                         );
                     }
@@ -441,13 +427,12 @@ fn get_nearest_stream(
                             right_indices.push(right_pos_u32);
                             if let Some(ref mut dists) = distances {
                                 let (left_starts, left_ends) = &**left_positions.as_ref().unwrap();
-                                // Use raw coordinates for distance, not the
-                                // strict-adjusted query_start/query_end.
                                 let d = candidate_distance(
                                     starts[i],
                                     ends[i],
                                     left_starts[pos],
                                     left_ends[pos],
+                                    strict_filter,
                                 );
                                 dists.push(Some(d));
                             }

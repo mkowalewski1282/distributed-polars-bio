@@ -5,15 +5,28 @@ silników rozproszonych) — to poprawki **widoczności** w pomocniczej bibliote
 (`datafusion-bio-function-ranges`, biodatageeks, Apache-2.0), zwendorowanej lokalnie tylko
 dlatego, że upstream jeszcze ich nie ma.
 
+## Wersja kopii
+
+Kopia to `datafusion/bio-function-ranges` z tagu **v0.22.2** repozytorium
+biodatageeks/datafusion-bio-functions — ta sama wersja, z którą zbudowano polars-bio 0.36.0
+(pilnuje tego `tests/test_algorithm_versions.py`). `Cargo.toml` kopii ma rozwinięte dziedziczenie
+z workspace upstreamu (`version.workspace` itd.), poza tym jest bez zmian. Upstream v0.22.2 nadal
+nie udostępnia ani `physical_planner::intervals`, ani węzłów fizycznych operacji, więc obie łatki
+są nałożone ponownie bez zmian — struktury mają te same pola co w 0.18.0 (plan 3b-1, 02.10.2026).
+
 Obie łatki mają tę samą naturę: **zero linii logiki, wyłącznie słowa `pub` i re-eksporty**.
-Regułę utrzymaniową warto sprawdzać po każdej aktualizacji vendora:
+Regułę utrzymaniową sprawdza się względem czystego tagu upstreamu:
 
 ```bash
-git diff -- ballista_genomics/vendor/ | grep '^[+-]' | grep -v '^[+-][+-]'
+git clone -q --depth 1 --branch v0.22.2 https://github.com/biodatageeks/datafusion-bio-functions /tmp/dbf
+diff -ru /tmp/dbf/datafusion/bio-function-ranges/src ballista_genomics/vendor/datafusion-bio-function-ranges/src \
+  | grep '^[+-]' | grep -v '^[+-][+-]'
 ```
 
 Jeśli w wyniku pojawi się cokolwiek poza dodanym `pub`, re-eksportem lub komentarzem,
-łatka przestała być „czysta" i wymaga osobnej decyzji.
+łatka przestała być „czysta" i wymaga osobnej decyzji. Aktualizacja vendora: łatki to różnica
+kopii względem czystego tagu poprzedniej wersji, nakładana `patch -p1` na nową (plan 3b-1,
+Zadanie 3).
 
 ## Łatka 1: `pub mod intervals` — `ColIntervals` nienazywalny
 

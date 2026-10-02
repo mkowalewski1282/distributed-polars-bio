@@ -176,3 +176,17 @@ etapami, po jednej zmianie. Punkty dopisywane po każdym etapie.
    - Wariant „polars-bio na 1 partycji” w P1 jest zbędny; wzorzec nadal na 1 partycji.
    - API używane przez projekt bez zmian: sygnatury operacji, opcje `datafusion.bio.*`,
      `POLARS_BIO_MAX_THREADS`, `execute_stream`.
+2. **Ballista i polars-bio liczą tą samą wersją algorytmów (v0.22.2).**
+   - Vendor podniesiony z 0.18.0; łatki widoczności bez zmian.
+   - Między 0.18.0 a 0.22.2 upstream poprawił m.in. przedziały jednozasadowe przy współrzędnych
+     0-based (`nearest`, `count_overlaps`, `coverage`). Przy rozjechanych wersjach takie
+     przedziały dawałyby różne wyniki silników bez winy silnika.
+   - Wyrównanie wersji jest więc warunkiem porównania silników; pilnuje go
+     `tests/test_algorithm_versions.py`.
+   - Aktualizacja odsłoniła błąd integracji: `nearest` w Ballistcie był wywoływany bez `'strict'`,
+     czyli w konwencji 1-based, choć dane są 0-based. W 0.18.0 odległość nie zależała od
+     konwencji, więc błąd był niewidoczny. W 0.22.2 odległość wychodziła o 1 mniejsza niż
+     w polars-bio (9 zamiast 10 na zbiorze testowym). Poprawione; opis w `ballista_genomics/OPIS.md`.
+     Wniosek dla pracy: zgodność wyników „przypadkiem” przy jednej wersji biblioteki nie dowodzi
+     poprawnej konfiguracji — test porównawczy wykrył błąd dopiero, gdy biblioteka zaczęła
+     rozróżniać konwencje.

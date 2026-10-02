@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
             // Wiersz na kazdy wiersz PRAWEJ tabeli -> A jako prawa, zeby wynik
             // odpowiadal pb.nearest(A, B) (patrz runner.rs, DistOp::Nearest).
             "SELECT * FROM nearest('intervals_b', 'intervals_a', 1, true, true, \
-                                    'chrom', 'start', 'end') \
+                                    'chrom', 'start', 'end', 'strict') \
              ORDER BY right_chrom, right_start",
         )
         .await?;

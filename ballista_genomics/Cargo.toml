@@ -16,8 +16,9 @@ ballista-executor = "53.0.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 datafusion = "=53.0.0"
 datafusion-proto = "53"
-# Lokalna, załatana kopia (jedna linijka widoczności: mod -> pub mod) — patrz
-# vendor/PATCH.md. Potrzebna do PhysicalExtensionCodec dla IntervalJoinExec (Faza A.4b).
+# Lokalna kopia datafusion-bio-function-ranges v0.22.2 (ta sama wersja co w polars-bio 0.36)
+# z dwiema łatkami widoczności - patrz vendor/PATCH.md. Potrzebna do kodeków węzłów fizycznych
+# operacji zakresowych (Faza A.4b i dalej).
 datafusion-bio-function-ranges = { path = "vendor/datafusion-bio-function-ranges" }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
