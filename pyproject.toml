@@ -1,0 +1,32 @@
+[project]
+name = "distributed-polars-bio"
+version = "0.1.0"
+description = "Genomic interval operations from polars-bio on distributed engines (Apache Ballista, Sail) - master's thesis code"
+requires-python = ">=3.12,<3.13"
+# Etap 1 planu 3b-1: wersje zainstalowane dotąd w ~/.local (Python 3.10). Wyjątek: numpy 1.24.0
+# nie ma pakietu dla Pythona 3.12 - najstarsza linia 1.x, która go ma, to 1.26.
+dependencies = [
+    "polars-bio==0.28.0",
+    "pysail==0.5.3",
+    "pyspark[connect]==4.1.1",
+    "polars==1.39.3",
+    "pyarrow==22.0.0",
+    "pandas==2.3.3",
+    "numpy==1.26.*",
+    "pyyaml==6.0.2",
+    "requests==2.31.0",
+]
+
+[dependency-groups]
+dev = ["pytest==6.2.5"]
+
+[tool.uv]
+# Projekt "wirtualny": kod działa z katalogu repozytorium, uv niczego nie instaluje jako pakiet.
+package = false
+# Ta sama wersja uv lokalnie i w CI (astral-sh/setup-uv czyta ją stąd).
+required-version = "==0.12.22"
+# Narzędzie działa tylko na Linuksie (taskset, /proc).
+environments = ["sys_platform == 'linux'"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

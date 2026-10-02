@@ -12,3 +12,6 @@ raporty/img/*.png
 bench/results/**/runs.jsonl
 bench/results/**/logs/
 bench/results/**/tmp/
+
+# Środowisko Pythona projektu (uv sync; wersje w uv.lock)
+.venv/

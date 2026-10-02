@@ -12,6 +12,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+import bench
+
 REPO = Path(__file__).resolve().parents[2]
 
 
@@ -44,3 +48,14 @@ def test_polars_bio_import_does_not_wait_for_x_server():
     import czeka na timeout TCP i przekracza limit procesu."""
     r = _python("import bench, polars_bio", _env_without_backend(DISPLAY="192.0.2.1:0"))
     assert r.returncode == 0, r.stderr[-2000:]
+
+
+def test_bench_rejects_a_foreign_python():
+    """Systemowy python3 (3.10) widzi starsze biblioteki z ~/.local — polars-bio 0.28 z błędem
+    #372, Sail 0.5.3. Seria uruchomiona nim po cichu mieszałaby wersje silników w wynikach."""
+    with pytest.raises(ImportError, match=r"Python 3\.12.*found 3\.10\.12.*uv run"):
+        bench.require_project_python((3, 10, 12, "final", 0))
+
+
+def test_bench_accepts_the_project_python():
+    bench.require_project_python((3, 12, 7, "final", 0))
