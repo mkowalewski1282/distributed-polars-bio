@@ -67,13 +67,21 @@ wątków polars-bio), bez polegania na autodetekcji.
 
 | Wariant | Procesy i przypięcie |
 |---|---|
-| **polars-bio A** (węzeł tej samej wielkości) | jeden proces na wątkach węzła 1 (2 wątki); niezależny od N |
-| **polars-bio B** (maszyna = cały klaster) | jeden proces na wątkach węzłów 1..N (2N wątków); dla N = 1 tożsamy z A |
-| **Ballista** | scheduler (CPU 0–1) + N executorów, executor *i* na wątkach węzła *i*, 2 sloty zadań na executor |
-| **Sail** | jeden proces serwera (`local-cluster`) na wątkach węzłów 1..N — te same zasoby co klaster, ale bez rozproszenia i z blokadą `sail_pb_guard` (asymetria opisana jawnie) |
+| **polars-bio A** (węzeł tej samej wielkości) | jeden proces na wątkach węzła 1 (2 wątki: `target_partitions = 2`, `POLARS_MAX_THREADS = 2`); niezależny od N |
+| **polars-bio B** (maszyna = cały klaster) | jeden proces na wątkach węzłów 1..N (2N wątków, `target_partitions = 2N`); dla N = 1 tożsamy z A |
+| **Ballista** | scheduler (CPU 0–1) + N executorów, executor *i* na wątkach węzła *i*, 2 sloty zadań na executor; `BIO_TARGET_PARTITIONS = 2N` w każdym procesie klastra i w kliencie |
+| **Sail** | jeden proces serwera (`local-cluster`, N workerów, równoległość 2N) na wątkach węzłów 1..N — te same zasoby co klaster, ale bez rozproszenia i z blokadą `sail_pb_guard` (asymetria opisana jawnie); 8 slotów na workera, bo przy 2 Sail sam dokłada workery ponad N, a z limitem `worker_max_count` zapytanie wisi (sonda 01.10.2026); przy N = 1 Sail sporadycznie i tak dokłada drugiego workera (16 zadań skanowania > 8 slotów; smoke 02.10.2026); driver i workery Sail tworzy osobno dla każdej sesji Spark Connect, czyli dla każdego przebiegu, przy pierwszym RPC sesji — przed pomiarem czasu (sonda 02.10.2026) |
 
 Który z wariantów A/B jest punktem odniesienia głównym — do ustalenia na dalszym etapie; mierzone
 są oba.
+
+**Wynik wzorcowy (plan 3a).** Każdy pomiar jest sprawdzany względem polars-bio na **1 partycji**
+(wariant `polars_bio_ref`, przebieg na początku serii). Przy `target_partitions > 1` polars-bio
+0.28 liczy `merge` i `subtract` osobno w każdej partycji — wynik jest błędny, gdy przedziały
+chromosomu leżą w różnych plikach. To znany błąd polars-bio #372, naprawiony w 0.29.0, która
+wymaga Pythona ≥ 3.11 (system: 3.10); opis: `raporty/polars_bio_blad_partycji.md`. Punkt
+odniesienia dla tych operacji w P1 (decyzja z 01.10.2026): polars-bio na 1 partycji, mierzony
+dodatkowo; przebiegi A/B z 2 i 2N partycjami zostają w wynikach jako nieważne.
 
 **Pamięć:** bez limitów per węzeł; szczyt pamięci jest **mierzony** (sekcja 5). Limity przez
 cgroup v2 (dostępny, wymaga `sudo`, brak systemd) dodawane tylko w razie potrzeby.
@@ -130,14 +138,17 @@ muszą być jednoczesne) — oraz maksimum per węzeł.
 2. **Bloki:** dla każdej pary (N, silnik): start klastra → przebieg kontrolny → 1 przebieg
    rozgrzewkowy na scenariusz (odrzucany) → **5 rund mierzonych**; w każdej rundzie scenariusze
    w losowej kolejności (ziarno zapisywane) → przebieg kontrolny → zatrzymanie klastra.
-3. **Przebieg kontrolny:** `overlap` na parze 1-2, polars-bio A. Rozjazd > 10% między
-   początkiem a końcem bloku ⇒ blok do powtórzenia.
+3. **Przebieg kontrolny:** `overlap` na parze 1-2, polars-bio A. Rozjazd > 10% (`control_tolerance`)
+   między początkiem a końcem bloku ⇒ blok powtarzany raz; po drugim dryfie przebiegi bloku
+   zostają nieważne.
 4. **Konsumpcja wyniku:** strumieniowo po stronie klienta, bez zapisu na dysk; liczba wierszy
    i suma kontrolna niezależna od kolejności wierszy (sekcja 8.4). Każdy pomiar jest zarazem
-   testem poprawności względem polars-bio A.
+   testem poprawności względem wyniku wzorcowego (polars-bio na 1 partycji, sekcja 3).
 5. **Nieważność przebiegu:** przyrost `pswpout` w `/proc/vmstat` > 0; niezgodność liczby wierszy
    lub sumy kontrolnej; przekroczenie limitu 20 minut. Timeout zapisywany jako wynik („timeout”),
-   bez ponawiania.
+   bez ponawiania. Ponadto: zabicie przez strażnika pamięci (`MemAvailable` < 300 MiB) i śmierć
+   procesu silnika w trakcie przebiegu. Po timeoucie, strażniku albo śmierci procesu silnik jest
+   restartowany, a scenariusz pomijany do końca bloku („pominięty: …”).
 6. **Statystyki:** mediana (wartość główna), min i max (rozrzut), średnia (zgodność
    z polars-bio-bench). Przyspieszenia liczone z median.
 7. **Zapis:** jeden wiersz na przebieg (sekcja 8.5); surowe plany `EXPLAIN ANALYZE` do plików.
@@ -211,15 +222,21 @@ na P1.
 
 ```
 bench/
-  conf/            smoke.yaml, kalibracja.yaml, p1.yaml, p2.yaml, p3.yaml
-  orchestrator.py  sterowanie blokami, walidacja, zapis wyników
-  metrics.py       /proc: VmHWM, clear_refs, pswpout; rozmiar katalogów shuffle
+  conf/            smoke.yaml (plan 3a); kalibracja.yaml, p1.yaml, p2.yaml, p3.yaml (plan 3b)
+  config.py        konfiguracja serii: walidacja, bloki, kolejność z ziarna
+  orchestrator.py  sterowanie blokami, pomiary, walidacja, zapis wyników
+  engines.py       silniki bloku: przypięcie do rdzeni, klaster Ballisty, serwer Saila
+  validity.py      reguły ważności przebiegu i dryfu
+  results.py       zapis wyników (JSON Lines → Parquet)
+  metrics.py       /proc: VmHWM, clear_refs, pswpout, MemAvailable; rozmiar katalogów shuffle
   checksum.py      suma kontrolna (implementacja referencyjna)
+  procutil.py      porty i gotowość procesów silników
   runners/
     polars_bio_runner.py
     sail_runner.py
+    sail_server.py serwer Saila na czas bloku
   data/download.py pobranie databio-8p (poza gitem)
-  analyze.py       wyniki -> tabele i wykresy
+  analyze.py       wyniki -> tabele i wykresy (po pomiarach)
   results/         surowe wyniki (Parquet) + plany EXPLAIN ANALYZE (w repozytorium)
 ballista_genomics/src/bin/bench_client.rs   runner Ballisty (Rust)
 tests/bench/       testy narzędzia
@@ -228,7 +245,8 @@ tests/bench/       testy narzędzia
 Ballista nie wymaga wrappera pythonowego: runnerem jest binarka Rust `bench_client`,
 uruchamiana przez orkiestrator jako proces. Istniejąca binarka `dist_ops` (używana przez testy)
 pozostaje bez zmian. `bench_client` powstał w planie 2 z częścią protokołu (liczba wierszy,
-zapis wyniku do Parquet, wynik w schemacie 8.4); czas, fazy i suma kontrolna — plan 3.
+zapis wyniku do Parquet, wynik w schemacie 8.4); w planie 3a doszły czas, suma kontrolna
+(`checksum.rs`), szczyt pamięci i `BIO_TARGET_PARTITIONS`; fazy — plan 3b.
 
 ### 8.2 Konfiguracja (YAML)
 
@@ -246,8 +264,12 @@ Runner to osobny proces wywoływany z argumentami scenariusza. Na standardowe wy
 
 ```json
 {"rows": 54246, "checksum": "0x…", "t_total_s": 1.234,
- "phases": {"...": 0.0}, "extra": {"broadcast_bytes": 0}}
+ "phases": {"...": 0.0}, "extra": {"target_partitions": 4}, "peak_rss_bytes": 104857600}
 ```
+
+`peak_rss_bytes` — VmHWM procesu runnera (licznik zerowany tuż przed zapytaniem); szczyty
+procesów długożyjących (scheduler, executory, serwer Saila) mierzy orkiestrator.
+`extra.broadcast_bytes` — plan 3b.
 
 Błąd silnika ⇒ niezerowy kod wyjścia i komunikat na stderr; orkiestrator zapisuje przebieg jako
 nieważny z przyczyną.
@@ -260,7 +282,7 @@ operacja:
 
 | Operacja | Kolumny w skrócie wiersza |
 |---|---|
-| overlap | chrom, start₁, end₁, start₂, end₂ |
+| overlap | chrom₁, start₁, end₁, chrom₂, start₂, end₂ (jak KEY_COLUMNS; chrom₂ = chrom₁) |
 | nearest | chrom, start₁, end₁, distance (bez identyfikacji sąsiada — remisy) |
 | coverage | chrom, start, end, coverage |
 | merge | chrom, start, end, n_intervals |
@@ -270,6 +292,12 @@ Nazwy kolumn wyjściowych polars-bio 0.28 (zweryfikowane): `overlap` — `chrom_
 chrom_2, start_2, end_2`; `nearest` — jak `overlap` + `distance`; `coverage` — `chrom, start, end,
 coverage` (wiersze df1); `merge` — `chrom, start, end, n_intervals`; `subtract` — `chrom, start,
 end`. Runnery Ballisty i Saila normalizują nazwy do tego schematu przed liczeniem sumy.
+
+Definicja (plan 3a, `bench/checksum.py` i `checksum.rs`): kod chromosomu — CRC-32 (IEEE)
+z UTF-8; kod liczby — wartość modulo 2⁶⁴; brak wartości — 2⁶⁴ − 1; skrót wiersza —
+`mix64(Σ M_j · kod_j)` (stałe nieparzyste M_j, finalizator splitmix64); suma — Σ skrótów
+modulo 2⁶⁴, zapisana jako `0x` + 16 cyfr szesnastkowych. Skrót wiersza musi być nieliniowy:
+sama suma liniowa zależałaby tylko od sum kolumn.
 
 Implementacja referencyjna w Pythonie (`bench/checksum.py`) i równoważna w Rust (`bench_client`);
 zgodność sprawdzana testem na wspólnych wartościach wzorcowych.
@@ -281,12 +309,21 @@ Jeden wiersz na przebieg: `timestamp`, `git_commit`, `engine_versions`, `series`
 `valid`, `invalid_reason`, `rows`, `checksum`, `t_total_s`, `phases` (JSON), `peak_rss`
 (JSON: proces → bajty), `peak_rss_sum`, `shuffle_bytes`, `broadcast_bytes`, `pswpout_delta`.
 
+Plan 3a dodaje `is_reference` (przebieg wzorcowy), `attempt` (2 — powtórzenie bloku po
+dryfie), `wall_s` (czas procesu runnera ze startem, do szacowania długości serii) i `extra`
+(JSON z runnera, m.in. `target_partitions`). Zapis:
+`bench/results/<seria>/<znacznik czasu>/runs.jsonl` na bieżąco i `runs.parquet` na końcu,
+także po przerwaniu serii.
+
 ### 8.6 Testy narzędzia (TDD)
 
 - jednostkowe: parsowanie `/proc` (na plikach wzorcowych), walidacja YAML, suma kontrolna
   (Python i Rust na wspólnych wartościach wzorcowych), generowanie kolejności z ziarna,
   reguły nieważności przebiegu;
-- integracyjny: konfiguracja `smoke` (kilka minut, oznaczony markerem pytest);
+- integracyjny: orkiestrator na zbiorze testowym w układzie databio-8p, wszystkie warianty,
+  N = 1 i 2 (`tests/test_orchestrator_integration.py`, kilka minut); smoke na danych 1-2 —
+  `python -m bench.orchestrator bench/conf/smoke.yaml` (plan 3a: nieważne wyłącznie przebiegi
+  polars-bio A/B `merge` i `subtract`);
 - istniejące 42 testy bez zmian.
 
 ## 9. Zmiany w istniejącym kodzie (warunki wstępne)
@@ -382,4 +419,7 @@ pomiarowym.
 - główny wariant punktu odniesienia (A czy B);
 - dostęp do chmury i jej finansowanie;
 - konkretna architektura lakehouse i sposób podłączenia źródła danych;
-- zakres operacji `complement` i `cluster` (poza obecnym etapem).
+- zakres operacji `complement` i `cluster` (poza obecnym etapem);
+- nowe środowisko z Pythonem ≥ 3.11 i aktualnym polars-bio (0.36.0: poprawka #372, DataFusion 53
+  jak w Ballistcie) — przed planem 3b; wariant: uv (projektowe `.venv`, `uv.lock`) albo globalny
+  drugi Python — do wyboru.

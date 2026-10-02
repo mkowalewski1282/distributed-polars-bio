@@ -432,3 +432,28 @@ o typach prawdziwych danych, z przypadkami brzegowymi; `tests/test_real_data.py`
   chromosom — w `sail_bio.py` polars-bio dostaje pustą prawą stronę.
 - DataFusion 53 czyta tekst z Parqueta jako `Utf8View`, a pozycje databio-8p mają typ `int32`
   — obie ścieżki (dostawca i nasze węzły) to obsługują; zbiór testowy ma te same typy.
+
+## Plan 3a — runner pomiarowy (01.10.2026)
+
+- `bench_client` wypisuje pełny protokół runnera (specyfikacja 8.3):
+  - `rows`, `checksum`;
+  - `t_total_s` (od `ctx.sql` do ostatniej partii, bez połączenia z klastrem);
+  - `phases` (puste; fazy w planie 3b);
+  - `extra.target_partitions`;
+  - `peak_rss_bytes` (VmHWM klienta, licznik zerowany przed zapytaniem).
+- Suma kontrolna (`src/checksum.rs`) ma definicję wspólną z `bench/checksum.py`. Zgodność
+  sprawdza tryb `bench_client --op OP --checksum PLIK` na wartościach wzorcowych
+  (`tests/test_bench_client_protocol.py`).
+- `BIO_TARGET_PARTITIONS` (liczba ≥ 2, domyślnie 4) ustala `target_partitions` wszystkich
+  sesji: klienta, schedulera, executorów i sesji wewnętrznych providera. Orkiestrator
+  pomiarów ustawia 2N w każdym procesie klastra i w kliencie. Niepoprawna wartość daje
+  kod 2 w `bench_client` i `ballista_node`.
+- W pomiarach klaster uruchamia orkiestrator (`bench/engines.py`):
+  - scheduler na CPU 0–1;
+  - executor k na CPU {2k, 2k+1}, 2 sloty;
+  - katalogi robocze w katalogu tymczasowym; ich przyrost w przebiegu to `shuffle_bytes`.
+- Start klastra: Ballista 53 rejestruje executor, zanim jego serwer gRPC przyjmuje
+  połączenia (`ballista_executor::executor_server`, TODO w kodzie). W trybie push scheduler
+  od razu łączy się z executorem, więc rejestracja bywa odrzucona („Connection refused”),
+  a executor kończy się kodem 1 (smoke 02.10.2026: raz na 11 startów). `bench/engines.py`
+  ponawia wtedy start klastra (do 3 razy, na nowych portach).

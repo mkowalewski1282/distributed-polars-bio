@@ -110,3 +110,57 @@ w kodzie (`sail_overlap_udtf.py`, `sail_coverage_subtract_udtf.py`,
 
 Testy na rzeczywistych plikach BED w celu oceny wydajności na większych danych (Faza D planu
 pracy) — dotąd wszystkie testy używały syntetycznych danych (5 interwałów × 2 zbiory).
+
+## Plan 3a — obserwacje z budowy narzędzia pomiarowego (01–02.10.2026)
+
+1. **polars-bio 0.28 zwraca błędne `merge` i `subtract` przy `target_partitions > 1`.**
+   - Operatory liczą każdą partycję osobno i nie deklarują wymaganego rozkładu wejścia (np.
+     haszowania po chromosomie). Przedziały chromosomu leżące w różnych plikach nie są więc
+     scalane ani odejmowane.
+   - Domyślnie polars-bio liczy na 1 partycji i wtedy wynik jest poprawny. Udokumentowany
+     przełącznik równoległości (`pb.POLARS_BIO_MAX_THREADS`, czyli `target_partitions`)
+     zmienia jednak wynik tych dwóch operacji.
+   - `overlap`, `nearest` i `coverage` są poprawne przy każdej liczbie partycji.
+   - Ballista liczy te operacje poprawnie dzięki repartycji po chromosomie w `DistBioProvider`.
+   - To znany błąd upstream (polars-bio #372), naprawiony w 0.29.0. Ta wersja wymaga
+     Pythona ≥ 3.11, a system ma 3.10 — stąd w projekcie 0.28.0. Opis i minimalny przykład:
+     `raporty/polars_bio_blad_partycji.md`.
+   - Na danych 1-2 (smoke) błąd widać tylko w `subtract`: przy 2, 4 i 6 partycjach 205 673,
+     202 854 i 201 506 wierszy zamiast 209 940. `merge` zbioru 1 jest poprawny, bo fBrain nie
+     ma nakładających się przedziałów — nie ma czego scalać. To, czy błąd się ujawni, zależy
+     więc od danych; wykrywa go dopiero suma kontrolna.
+   - Skutki dla pomiarów: wzorcem jest polars-bio na 1 partycji, a przebiegi A/B
+     `merge`/`subtract` z błędnym wynikiem wychodzą nieważne. Punkt odniesienia w P1 (decyzja
+     z 01.10.2026): polars-bio na 1 partycji, mierzony dodatkowo.
+   - Dowód: `tests/test_polars_bio_runner.py` (xfail strict).
+2. **Sail w trybie `local-cluster` tworzy driver i workery dla każdej sesji i sam skaluje ich
+   liczbę.**
+   - Driver i pula workerów powstają przy pierwszym RPC sesji Spark Connect i znikają razem
+     z sesją. Każdy przebieg (osobny proces runnera = osobna sesja) ma więc świeże workery;
+     ich start wypada przed pomiarem czasu, przy rejestracji UDTF.
+   - Gdy etap ma więcej zadań niż wolnych slotów, Sail uruchamia workery ponad
+     `worker_initial_count`. Z limitem `worker_max_count` zapytanie wisi, zamiast czekać na
+     wolne sloty.
+   - Narzędzie używa 8 slotów na workera. Przy N = 2 i 3 workerów było w smoke zawsze N. Przy
+     N = 1 w pierwszym smoke 2 z 5 sesji dostały drugiego workera (16 zadań skanowania dwóch
+     zbiorów po 8 plików > 8 slotów), w drugim żadna z 10. O zasobach i tak decyduje
+     przypięcie procesu do 2N rdzeni. Do planu 3b: zapisywać liczbę workerów na przebieg.
+   - Kilka sesji otwieranych po kolei w jednym procesie klienta: zapytanie czwartej sesji
+     wisi (2 z 2 prób, zbiór testowy). Osobne procesy, jak w narzędziu, działają bez problemu.
+   - To uzupełnia obserwację o dojrzałości ścieżki UDTF w Sailu.
+3. **Ballista 53 ma wyścig przy starcie executora.** Executor rejestruje się w schedulerze,
+   zanim jego serwer gRPC przyjmuje połączenia (komentarz w kodzie Ballisty: „TODO the
+   executor registration should happen only after the executor grpc server started”).
+   Scheduler w trybie push od razu łączy się zwrotnie z executorem, więc rejestracja bywa
+   odrzucona („Connection refused”), a executor kończy się kodem 1. W smoke zdarzyło się to
+   raz na 11 startów executorów i przerwało blok N = 3. Narzędzie ponawia teraz start klastra
+   (do 3 razy, na nowych portach).
+4. **Przebieg kontrolny `overlap` 1-2 jest za krótki na regułę 10%.** polars-bio A liczy go
+   w ~0,12–0,19 s, więc rozjazd między początkiem a końcem bloku wynosił w smoke 12–54%
+   i większość bloków była powtarzana. Długość przebiegu kontrolnego (np. większa para albo
+   mediana kilku powtórzeń) — do ustalenia w planie 3b.
+5. **Import polars-bio trwał ~270 s przez serwer X, nie przez polars-bio.** Matplotlib
+   (importowany przez polars-bio) sprawdzał ekran z `DISPLAY`. Zmienną ustawia
+   `/etc/bash.bashrc` na host Windows, na którym nie działa serwer X, więc import czekał na
+   timeout TCP. Z `MPLBACKEND=Agg` import trwa ~1 s. Wcześniejsze uwagi o „kilku minutach”
+   importu dotyczą tego zjawiska.
