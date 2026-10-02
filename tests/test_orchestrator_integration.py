@@ -1,9 +1,9 @@
 """Plan 3a, Zadanie 9: orkiestrator na prawdziwych silnikach i zbiorze testowym w układzie
 databio-8p (para 1-2, zbiór 1) — wszystkie warianty, N = 1 i 2, po jednym przebiegu.
 
-Wynik wzorcowy: polars-bio na 1 partycji. polars-bio A i B (2 i 4 partycje) liczą merge
-i subtract osobno w każdej partycji (błąd polars-bio 0.28) — te przebiegi MUSZĄ wyjść
-nieważne przez sumę kontrolną; wszystkie pozostałe — ważne.
+Wynik wzorcowy: polars-bio na 1 partycji. Od planu 3b-1 (polars-bio 0.36) wszystkie przebiegi
+mają być ważne — także polars-bio A i B, które w 0.28 liczyły merge i subtract osobno w każdej
+partycji (błąd #372, naprawiony w 0.29.0).
 
 Wymaga binarek ballista_node i bench_client (debug). Swap jest wyłączony z kryteriów
 (pswpout zastąpiony stałą): jego wykrywanie sprawdzają testy jednostkowe, a tu przypadkowy
@@ -26,10 +26,6 @@ from bench.ops import OPS, UNARY_OPS
 from tests.parquet_fixture import FIXTURE_A, FIXTURE_B, write_parts
 
 SCENARIOS = [{"op": op, "dataset": 1} if op in UNARY_OPS else {"op": op, "pair": "1-2"} for op in OPS]
-KNOWN_POLARS_BIO_BUG = {
-    ("polars_bio_a", 1, "merge"), ("polars_bio_a", 1, "subtract"),
-    ("polars_bio_b", 2, "merge"), ("polars_bio_b", 2, "subtract"),
-}
 
 
 @pytest.fixture(scope="module")
@@ -61,11 +57,10 @@ def test_every_planned_run_is_recorded(series):
     assert summary.rows == df.height and not summary.failures
 
 
-def test_only_known_polars_bio_bug_is_invalid(series):
+def test_every_run_is_valid(series):
     _, df = series
-    bad = df.filter(~pl.col("valid"))
-    assert set(zip(bad["variant"], bad["n_nodes"], bad["op"])) == KNOWN_POLARS_BIO_BUG
-    assert all("suma kontrolna" in r for r in bad["invalid_reason"]), bad["invalid_reason"].to_list()
+    bad = df.filter(~pl.col("valid")).select("variant", "n_nodes", "op", "invalid_reason")
+    assert bad.is_empty(), bad.to_dicts()
 
 
 def test_threads_follow_variant_and_n(series):

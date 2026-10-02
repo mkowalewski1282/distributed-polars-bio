@@ -70,3 +70,16 @@ Wynik na polars-bio 0.28.0:
 - W Ballistcie te operacje liczą się poprawnie, bo `DistBioProvider` wymusza repartycję po
   chromosomie. Poprawne rozproszenie `merge` i `subtract` wymaga więc jawnego rozkładu danych
   po chromosomie — to argument do rozdziału o integracji.
+
+## Stan w polars-bio 0.36.0 (plan 3b-1, 02.10.2026)
+
+Po migracji na Pythona 3.12 i polars-bio 0.36.0 (`uv.lock`) błąd nie występuje:
+
+- testy `test_two_partitions[merge]` i `[subtract]` w `tests/test_polars_bio_runner.py`, oznaczone
+  wcześniej `xfail(strict=True)`, przeszły (XPASS) — oznaczenia usunięte;
+- w teście integracyjnym orkiestratora (`tests/test_orchestrator_integration.py`) wszystkie
+  przebiegi są ważne, także polars-bio A i B (2 i 4 partycje).
+
+Wynik wzorcowy nadal liczy polars-bio na 1 partycji (wariant `polars_bio_ref`), ale osobny wariant
+„polars-bio na 1 partycji” jako punkt odniesienia w P1 (decyzja z 01.10.2026) przestaje być
+potrzebny.

@@ -75,13 +75,13 @@ wątków polars-bio), bez polegania na autodetekcji.
 Który z wariantów A/B jest punktem odniesienia głównym — do ustalenia na dalszym etapie; mierzone
 są oba.
 
-**Wynik wzorcowy (plan 3a).** Każdy pomiar jest sprawdzany względem polars-bio na **1 partycji**
-(wariant `polars_bio_ref`, przebieg na początku serii). Przy `target_partitions > 1` polars-bio
-0.28 liczy `merge` i `subtract` osobno w każdej partycji — wynik jest błędny, gdy przedziały
-chromosomu leżą w różnych plikach. To znany błąd polars-bio #372, naprawiony w 0.29.0, która
-wymaga Pythona ≥ 3.11 (system: 3.10); opis: `raporty/polars_bio_blad_partycji.md`. Punkt
-odniesienia dla tych operacji w P1 (decyzja z 01.10.2026): polars-bio na 1 partycji, mierzony
-dodatkowo; przebiegi A/B z 2 i 2N partycjami zostają w wynikach jako nieważne.
+**Wynik wzorcowy.** Każdy pomiar jest sprawdzany względem polars-bio na **1 partycji**
+(wariant `polars_bio_ref`, przebieg na początku serii). polars-bio 0.28 liczył przy
+`target_partitions > 1` operacje `merge` i `subtract` osobno w każdej partycji (błąd #372,
+naprawiony w 0.29.0; opis: `raporty/polars_bio_blad_partycji.md`). Od planu 3b-1 projekt używa
+polars-bio 0.36, w którym obie operacje są poprawne przy każdej liczbie partycji: osobny wariant
+„polars-bio na 1 partycji” jako punkt odniesienia w P1 (decyzja z 01.10.2026) nie jest potrzebny,
+a przebiegi A/B są pełnoprawne.
 
 **Pamięć:** bez limitów per węzeł; szczyt pamięci jest **mierzony** (sekcja 5). Limity przez
 cgroup v2 (dostępny, wymaga `sudo`, brak systemd) dodawane tylko w razie potrzeby.

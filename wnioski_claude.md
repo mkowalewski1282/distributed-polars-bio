@@ -164,3 +164,15 @@ pracy) — dotąd wszystkie testy używały syntetycznych danych (5 interwałów
    `/etc/bash.bashrc` na host Windows, na którym nie działa serwer X, więc import czekał na
    timeout TCP. Z `MPLBACKEND=Agg` import trwa ~1 s. Wcześniejsze uwagi o „kilku minutach”
    importu dotyczą tego zjawiska.
+
+## Plan 3b-1 — aktualizacja środowiska i wersji (od 02.10.2026)
+
+Środowisko odtwarzane przez uv (`pyproject.toml`, `uv.lock`, Python 3.12); wersje podnoszone
+etapami, po jednej zmianie. Punkty dopisywane po każdym etapie.
+
+1. **polars-bio 0.36.0: błąd #372 zniknął.**
+   - `merge` i `subtract` przy `target_partitions > 1` dają ten sam wynik co na 1 partycji: testy
+     xfail strict z planu 3a przeszły, a w teście integracyjnym wszystkie przebiegi są ważne.
+   - Wariant „polars-bio na 1 partycji” w P1 jest zbędny; wzorzec nadal na 1 partycji.
+   - API używane przez projekt bez zmian: sygnatury operacji, opcje `datafusion.bio.*`,
+     `POLARS_BIO_MAX_THREADS`, `execute_stream`.

@@ -3,14 +3,14 @@ name = "distributed-polars-bio"
 version = "0.1.0"
 description = "Genomic interval operations from polars-bio on distributed engines (Apache Ballista, Sail) - master's thesis code"
 requires-python = ">=3.12,<3.13"
-# Etap 1 planu 3b-1: wersje zainstalowane dotąd w ~/.local (Python 3.10). Wyjątek: numpy 1.24.0
-# nie ma pakietu dla Pythona 3.12 - najstarsza linia 1.x, która go ma, to 1.26.
+# Etapy 1-2 planu 3b-1: polars-bio 0.36 z wymaganym przez niego pyarrow (23-24); reszta - wersje
+# zainstalowane dotąd w ~/.local (wyjątek: numpy 1.24.0 nie ma pakietu dla Pythona 3.12).
 dependencies = [
-    "polars-bio==0.28.0",
+    "polars-bio==0.36.*",
     "pysail==0.5.3",
     "pyspark[connect]==4.1.1",
     "polars==1.39.3",
-    "pyarrow==22.0.0",
+    "pyarrow==24.*",
     "pandas==2.3.3",
     "numpy==1.26.*",
     "pyyaml==6.0.2",

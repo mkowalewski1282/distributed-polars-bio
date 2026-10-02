@@ -1,9 +1,9 @@
 """Plan 3a, Zadanie 4: runner polars-bio (specyfikacja 8.3) — świeży proces, polars-bio czyta
 Parquet sam, wynik konsumowany strumieniowo, protokół jak w bench_client.
 
-Przy target_partitions > 1 polars-bio 0.28 liczy merge i subtract osobno w każdej partycji
-(znany błąd polars-bio #372, naprawiony w 0.29+, która wymaga Pythona ≥ 3.11) — te przypadki
-z 2 partycjami są oznaczone xfail(strict=True): po migracji do nowszego polars-bio test to zgłosi."""
+Przy target_partitions > 1 polars-bio 0.28 liczył merge i subtract osobno w każdej partycji
+(błąd #372, naprawiony w 0.29.0). Od planu 3b-1 (polars-bio 0.36) test dwóch partycji obejmuje
+wszystkie operacje bez oznaczeń xfail."""
 
 from __future__ import annotations
 
@@ -19,11 +19,6 @@ from bench.ops import OPS, UNARY_OPS
 
 REPO = Path(__file__).resolve().parent.parent
 PROTOCOL_KEYS = {"rows", "checksum", "t_total_s", "phases", "extra", "peak_rss_bytes"}
-_PARTITION_BUG = pytest.mark.xfail(
-    raises=AssertionError,
-    strict=True,
-    reason="polars-bio 0.28 (#372): przy target_partitions > 1 merge i subtract liczone osobno w każdej partycji",
-)
 
 
 def run_runner(args: list[str], timeout: int = 180) -> subprocess.CompletedProcess:
@@ -62,9 +57,7 @@ def test_single_partition_matches_polars_bio_oracle(op, parquet_dirs, parquet_ex
     assert 0 < got["extra"]["checksum_s"] <= got["t_total_s"]
 
 
-@pytest.mark.parametrize(
-    "op", [pytest.param(op, marks=_PARTITION_BUG) if op in ("merge", "subtract") else op for op in OPS]
-)
+@pytest.mark.parametrize("op", OPS)
 def test_two_partitions(op, parquet_dirs, parquet_expected):
     got = report(run_runner([*scenario_args(op, *parquet_dirs), "--threads", "2"]))
     assert got["extra"]["target_partitions"] == 2
