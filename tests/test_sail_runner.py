@@ -75,7 +75,9 @@ def test_runner_matches_polars_bio(op, server, parquet_dirs, parquet_expected):
     expected = parquet_expected[op]
     assert got["rows"] == sum(expected.values())
     assert got["checksum"] == cs.format_checksum(cs.checksum_rows(op, expected.elements()))
-    assert got["t_total_s"] > 0 and got["phases"] == {} and got["extra"] == {}
+    assert got["t_total_s"] > 0 and got["phases"] == {} and set(got["extra"]) == {"checksum_s"}
+    # Czas liczenia sumy kontrolnej — część t_total_s (przegląd końcowy planu 3a).
+    assert 0 < got["extra"]["checksum_s"] <= got["t_total_s"]
     assert got["peak_rss_bytes"] > 10 * 2**20
 
 

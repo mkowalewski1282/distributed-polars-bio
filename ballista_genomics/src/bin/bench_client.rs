@@ -3,11 +3,12 @@
 //! Wykonuje JEDEN scenariusz na wskazanych danych — plik albo katalog plików
 //! Parquet (zbiory databio-8p) lub CSV — i wypisuje na stdout JEDNĄ linię JSON:
 //! `{"rows": N, "checksum": "0x…", "t_total_s": T, "phases": {}, "extra":
-//! {"target_partitions": P}, "peak_rss_bytes": M}`.
+//! {"target_partitions": P, "checksum_s": C}, "peak_rss_bytes": M}`.
 //!
 //! - czas: od wysłania zapytania (`ctx.sql`) do skonsumowania ostatniej partii — bez
 //!   startu procesu i połączenia z klastrem;
-//! - suma kontrolna: `checksum.rs` (specyfikacja 8.4), liczona na bieżąco ze strumienia;
+//! - suma kontrolna: `checksum.rs` (specyfikacja 8.4), liczona na bieżąco ze strumienia; jej
+//!   czas jest częścią `t_total_s` i trafia osobno do `extra.checksum_s`;
 //! - szczyt pamięci: VmHWM tego procesu, licznik zerowany tuż przed zapytaniem;
 //! - `extra.target_partitions`: liczba partycji sesji (`BIO_TARGET_PARTITIONS`).
 //!
@@ -22,7 +23,7 @@
 //! Kody wyjścia: 0 — sukces, 1 — błąd wykonania, 2 — błędne argumenty lub środowisko.
 
 use std::fs::File;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use ballista_genomics::checksum::Checksum;
 use ballista_genomics::cli::{optional, parse_flags, required};
@@ -128,6 +129,7 @@ struct Report {
     rows: u64,
     checksum: String,
     t_total_s: f64,
+    checksum_s: f64,
     target_partitions: usize,
     peak_rss_bytes: u64,
 }
@@ -143,9 +145,12 @@ async fn run(scenario: &Scenario, output: Option<&str>) -> Result<Report> {
         Some(path) => Some(ArrowWriter::try_new(File::create(path)?, stream.schema(), None)?),
         None => None,
     };
+    let mut checksum_time = Duration::ZERO;
     while let Some(batch) = stream.next().await {
         let batch = batch?;
+        let t = Instant::now();
         checksum.update(&batch)?;
+        checksum_time += t.elapsed();
         if let Some(w) = writer.as_mut() {
             w.write(&batch)?;
         }
@@ -158,6 +163,7 @@ async fn run(scenario: &Scenario, output: Option<&str>) -> Result<Report> {
         rows: checksum.rows(),
         checksum: checksum.hex(),
         t_total_s,
+        checksum_s: checksum_time.as_secs_f64(),
         target_partitions,
         peak_rss_bytes: peak_rss_bytes()?,
     })
@@ -193,8 +199,9 @@ async fn main() {
         Mode::Run { scenario, output } => run(&scenario, output.as_deref()).await.map(|r| {
             format!(
                 "{{\"rows\": {}, \"checksum\": \"{}\", \"t_total_s\": {:.6}, \"phases\": {{}}, \
-                 \"extra\": {{\"target_partitions\": {}}}, \"peak_rss_bytes\": {}}}",
-                r.rows, r.checksum, r.t_total_s, r.target_partitions, r.peak_rss_bytes
+                 \"extra\": {{\"target_partitions\": {}, \"checksum_s\": {:.9}}}, \
+                 \"peak_rss_bytes\": {}}}",
+                r.rows, r.checksum, r.t_total_s, r.target_partitions, r.checksum_s, r.peak_rss_bytes
             )
         }),
     };

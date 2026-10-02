@@ -5,6 +5,8 @@ katalogu nie przyjmuje) — a wynik dostaje jako `datafusion.DataFrame` i konsum
 strumieniowo (`execute_stream`), licząc sumę kontrolną partia po partii.
 
 Czas: od wywołania operacji do ostatniej partii; bez startu procesu, importów i ustawień.
+Liczenie sumy kontrolnej jest jego częścią (specyfikacja 6.4); jego koszt podaje
+`extra.checksum_s`.
 Wątki: `--threads T` → `target_partitions = T` (pb.POLARS_BIO_MAX_THREADS; domyślnie
 polars-bio liczy na 1 partycji). Orkiestrator ustawia też POLARS_MAX_THREADS = T
 i przypina proces do rdzeni węzłów (taskset).
@@ -54,15 +56,22 @@ def run(op: str, left: Path, right: Path | None, cols: tuple[str, str, str], thr
             source(left), source(right), cols1=list(cols), cols2=list(cols),
             output_type="datafusion.DataFrame",
         )
+    checksum_s = 0.0
     for batch in df.execute_stream():
-        checksum.update(normalize_arrow(op, batch.to_pyarrow(), cols))
+        data = normalize_arrow(op, batch.to_pyarrow(), cols)
+        t = time.perf_counter()
+        checksum.update(data)
+        checksum_s += time.perf_counter() - t
     t_total_s = time.perf_counter() - t0
     return report_line(
         rows=checksum.rows,
         checksum=checksum.hex(),
         t_total_s=t_total_s,
         peak_rss_bytes=peak_rss(),
-        extra={"target_partitions": int(pb.get_option(pb.POLARS_BIO_MAX_THREADS))},
+        extra={
+            "target_partitions": int(pb.get_option(pb.POLARS_BIO_MAX_THREADS)),
+            "checksum_s": checksum_s,
+        },
     )
 
 

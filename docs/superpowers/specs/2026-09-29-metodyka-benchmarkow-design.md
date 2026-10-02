@@ -267,12 +267,15 @@ Runner to osobny proces wywoływany z argumentami scenariusza. Na standardowe wy
 
 ```json
 {"rows": 54246, "checksum": "0x…", "t_total_s": 1.234,
- "phases": {"...": 0.0}, "extra": {"target_partitions": 4}, "peak_rss_bytes": 104857600}
+ "phases": {"...": 0.0}, "extra": {"target_partitions": 4, "checksum_s": 0.012},
+ "peak_rss_bytes": 104857600}
 ```
 
 `peak_rss_bytes` — VmHWM procesu runnera (licznik zerowany tuż przed zapytaniem); szczyty
 procesów długożyjących (scheduler, executory, serwer Saila) mierzy orkiestrator.
-`extra.broadcast_bytes` — plan 3b.
+`extra.checksum_s` — czas liczenia sumy kontrolnej, wliczony w `t_total_s` (sekcja 6.4); jego
+koszt zależy od silnika (Python albo Rust, rdzenie węzła albo systemowe), więc jest zapisywany
+osobno — czy odejmować go od czasu, ustala plan 3b. `extra.broadcast_bytes` — plan 3b.
 
 Błąd silnika ⇒ niezerowy kod wyjścia i komunikat na stderr; orkiestrator zapisuje przebieg jako
 nieważny z przyczyną.

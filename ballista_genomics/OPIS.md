@@ -440,6 +440,7 @@ o typach prawdziwych danych, z przypadkami brzegowymi; `tests/test_real_data.py`
   - `t_total_s` (od `ctx.sql` do ostatniej partii, bez połączenia z klastrem);
   - `phases` (puste; fazy w planie 3b);
   - `extra.target_partitions`;
+  - `extra.checksum_s` (czas liczenia sumy kontrolnej, wliczony w `t_total_s`);
   - `peak_rss_bytes` (VmHWM klienta, licznik zerowany przed zapytaniem).
 - Suma kontrolna (`src/checksum.rs`) ma definicję wspólną z `bench/checksum.py`. Zgodność
   sprawdza tryb `bench_client --op OP --checksum PLIK` na wartościach wzorcowych

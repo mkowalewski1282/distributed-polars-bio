@@ -69,14 +69,17 @@ def test_report_follows_protocol_and_matches_oracle(op, parquet_dirs, parquet_ex
     assert got["rows"] == sum(parquet_expected[op].values())
     assert got["checksum"] == expected_checksum(op, parquet_expected)
     assert got["t_total_s"] > 0 and got["phases"] == {}
-    assert got["extra"] == {"target_partitions": 4}
+    assert set(got["extra"]) == {"target_partitions", "checksum_s"}
+    assert got["extra"]["target_partitions"] == 4
+    # Czas liczenia sumy kontrolnej — część t_total_s (przegląd końcowy planu 3a).
+    assert 0 < got["extra"]["checksum_s"] <= got["t_total_s"]
     assert got["peak_rss_bytes"] > 10 * 2**20
 
 
 def test_target_partitions_come_from_environment(parquet_dirs, parquet_expected):
     env = {**os.environ, "BIO_TARGET_PARTITIONS": "3"}
     got = report(run_client(scenario_args("subtract", *parquet_dirs), env=env))
-    assert got["extra"] == {"target_partitions": 3}
+    assert got["extra"]["target_partitions"] == 3
     assert got["checksum"] == expected_checksum("subtract", parquet_expected)
 
 

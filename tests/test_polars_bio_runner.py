@@ -55,8 +55,11 @@ def test_single_partition_matches_polars_bio_oracle(op, parquet_dirs, parquet_ex
     assert set(got) == PROTOCOL_KEYS
     assert got["rows"] == sum(parquet_expected[op].values())
     assert got["checksum"] == expected_checksum(op, parquet_expected)
-    assert got["extra"] == {"target_partitions": 1} and got["phases"] == {}
+    assert set(got["extra"]) == {"target_partitions", "checksum_s"} and got["phases"] == {}
+    assert got["extra"]["target_partitions"] == 1
     assert got["t_total_s"] > 0 and got["peak_rss_bytes"] > 10 * 2**20
+    # Czas liczenia sumy kontrolnej — część t_total_s (przegląd końcowy planu 3a).
+    assert 0 < got["extra"]["checksum_s"] <= got["t_total_s"]
 
 
 @pytest.mark.parametrize(
@@ -64,7 +67,7 @@ def test_single_partition_matches_polars_bio_oracle(op, parquet_dirs, parquet_ex
 )
 def test_two_partitions(op, parquet_dirs, parquet_expected):
     got = report(run_runner([*scenario_args(op, *parquet_dirs), "--threads", "2"]))
-    assert got["extra"] == {"target_partitions": 2}
+    assert got["extra"]["target_partitions"] == 2
     assert got["checksum"] == expected_checksum(op, parquet_expected)
 
 

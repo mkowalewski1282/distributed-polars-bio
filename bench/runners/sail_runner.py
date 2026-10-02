@@ -8,8 +8,8 @@ sesji, więc start „klastra” sesji też jest przed pomiarem.
 
 Wynik jest konsumowany strumieniowo jako tabele Arrow przez `client.to_table_as_iterator`
 — to samo, czego używa publiczne toLocalIterator, ale bez zamiany na obiekty Row — a suma
-kontrolna liczona na bieżąco. Szczyt pamięci: proces klienta; szczyt serwera mierzy
-orkiestrator."""
+kontrolna liczona na bieżąco (jej koszt, wliczony w czas: `extra.checksum_s`). Szczyt pamięci:
+proces klienta; szczyt serwera mierzy orkiestrator."""
 
 from __future__ import annotations
 
@@ -47,13 +47,17 @@ def run(op: str, left: Path, right: Path | None, cols: tuple[str, str, str], rem
         reset_peak_rss()
         t0 = time.perf_counter()
         df = sail_bio.build_query(spark, op, left, right, cols)
+        checksum_s = 0.0
         for table in iter_arrow(spark, df):
+            t = time.perf_counter()
             checksum.update(table)
+            checksum_s += time.perf_counter() - t
         t_total_s = time.perf_counter() - t0
     finally:
         spark.stop()
     return report_line(
-        rows=checksum.rows, checksum=checksum.hex(), t_total_s=t_total_s, peak_rss_bytes=peak_rss()
+        rows=checksum.rows, checksum=checksum.hex(), t_total_s=t_total_s, peak_rss_bytes=peak_rss(),
+        extra={"checksum_s": checksum_s},
     )
 
 
