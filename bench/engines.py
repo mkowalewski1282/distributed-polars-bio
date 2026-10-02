@@ -35,6 +35,12 @@ SLOTS_PER_NODE = 2
 REFERENCE_VARIANT = "polars_bio_ref"
 #: Przebieg kontrolny (specyfikacja 6.3): polars-bio A.
 CONTROL_VARIANT = "polars_bio_a"
+#: Próby startu klastra Ballisty. Ballista 53 rejestruje executor w schedulerze, zanim jego
+#: serwer gRPC przyjmuje połączenia (ballista_executor::executor_server: „TODO the executor
+#: registration should happen only after the executor grpc server started”), a scheduler
+#: w trybie push od razu łączy się z executorem. Przy obciążonym CPU rejestracja bywa
+#: odrzucona („Connection refused”) i executor kończy się kodem 1 (smoke 02.10.2026).
+BALLISTA_START_ATTEMPTS = 3
 
 
 def node_cpus(k: int) -> tuple[int, int]:
@@ -139,7 +145,18 @@ class BallistaEngine:
         self._tmp: Path | None = None
 
     def start(self) -> None:
+        """Start klastra; po porażce (np. executor odrzucony przy rejestracji) — od nowa, na
+        nowych portach, do BALLISTA_START_ATTEMPTS razy. Logi kolejnych prób są dopisywane."""
         require_ballista_binaries(self.profile)
+        for attempt in range(1, BALLISTA_START_ATTEMPTS + 1):
+            try:
+                self._start_once()
+                return
+            except EngineError:
+                if attempt == BALLISTA_START_ATTEMPTS:
+                    raise
+
+    def _start_once(self) -> None:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._tmp = Path(tempfile.mkdtemp(prefix="bench_ballista_"))
         self.port = free_port()

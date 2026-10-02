@@ -6,6 +6,8 @@ cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bins"""
 
 from __future__ import annotations
 
+import itertools
+import socket
 import sys
 from pathlib import Path
 
@@ -88,6 +90,29 @@ def test_ballista_cluster_is_pinned_and_configured(tmp_path):
         engine.stop()
     assert not any(Path(f"/proc/{pid}").exists() for pid in pids.values())
     assert not any(d.exists() for d in dirs)
+
+
+def test_ballista_start_retries_when_executor_registration_fails(tmp_path, monkeypatch):
+    """Ballista 53 rejestruje executor, zanim jego serwer gRPC przyjmuje połączenia (TODO
+    w ballista_executor::executor_server), a scheduler w trybie push od razu łączy się
+    z executorem: rejestracja bywa odrzucona („Connection refused”) i executor kończy się
+    kodem 1 (smoke 02.10.2026, blok N = 3). Ten sam objaw daje zajęty port gRPC executora —
+    start klastra ma się wtedy powtórzyć na nowych portach."""
+    blocker = socket.socket()
+    blocker.bind(("127.0.0.1", 0))  # zajęty, ale bez listen(): połączenie → Connection refused
+    taken = blocker.getsockname()[1]
+    real_free_port = engines.free_port
+    calls = itertools.count(1)
+    # Pierwsza próba losuje porty: schedulera, flight executora 1 i gRPC executora 1 (zajęty).
+    monkeypatch.setattr(engines, "free_port", lambda: taken if next(calls) == 3 else real_free_port())
+    engine = engines.make_engine("ballista", 1, data_root=tmp_path, log_dir=tmp_path / "logi", profile="debug")
+    try:
+        engine.start()
+        assert set(engine.server_pids()) == {"scheduler", "executor_1"}
+        assert "Connection refused" in (tmp_path / "logi" / "executor_1.log").read_text()
+    finally:
+        engine.stop()
+        blocker.close()
 
 
 def test_ballista_restart_replaces_processes(tmp_path):
