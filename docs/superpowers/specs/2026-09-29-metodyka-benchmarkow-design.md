@@ -314,9 +314,11 @@ Jeden wiersz na przebieg: `timestamp`, `git_commit`, `engine_versions`, `series`
 
 Plan 3a dodaje `is_reference` (przebieg wzorcowy), `attempt` (2 — powtórzenie bloku po
 dryfie), `wall_s` (czas procesu runnera ze startem, do szacowania długości serii), `extra`
-(JSON z runnera, m.in. `target_partitions`) i `pswpin_delta` (wczytania ze swapu, sekcja 6). Zapis:
-`bench/results/<seria>/<znacznik czasu>/runs.jsonl` na bieżąco i `runs.parquet` na końcu,
-także po przerwaniu serii.
+(JSON z runnera, m.in. `target_partitions`) i `pswpin_delta` (wczytania ze swapu, sekcja 6).
+Zapis: `bench/results/<seria>/<znacznik czasu>/runs.jsonl` po każdym bloku i `runs.parquet` na
+końcu. Przerwanie serii (Ctrl-C, SIGTERM, SIGHUP — np. zamknięcie terminala) zapisuje też
+przebiegi przerwanego bloku (przyczyna „seria przerwana”) i zatrzymuje runner oraz silnik;
+twarda awaria (np. wywrócenie WSL) traci co najwyżej bieżący blok.
 
 ### 8.6 Testy narzędzia (TDD)
 
@@ -325,8 +327,9 @@ także po przerwaniu serii.
   reguły nieważności przebiegu;
 - integracyjny: orkiestrator na zbiorze testowym w układzie databio-8p, wszystkie warianty,
   N = 1 i 2 (`tests/test_orchestrator_integration.py`, kilka minut); smoke na danych 1-2 —
-  `python -m bench.orchestrator bench/conf/smoke.yaml` (plan 3a: nieważne wyłącznie przebiegi
-  polars-bio A/B `merge` i `subtract`);
+  `python -m bench.orchestrator bench/conf/smoke.yaml` (smoke 02.10.2026: poza dryfem przebiegu
+  kontrolnego nieważne wyłącznie przebiegi polars-bio A/B `subtract` — błąd #372; `merge`
+  zbioru 1 nie ma czego scalać);
 - istniejące 42 testy bez zmian.
 
 ## 9. Zmiany w istniejącym kodzie (warunki wstępne)

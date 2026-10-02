@@ -416,6 +416,18 @@ def run_series(
     return summary
 
 
+def _interrupt(signum, frame) -> None:
+    raise KeyboardInterrupt(f"sygnał {signal.Signals(signum).name}")
+
+
+def handle_termination_signals() -> dict:
+    """SIGTERM (`kill`) i SIGHUP (zamknięcie terminala) działają jak Ctrl-C: przerywają serię tą
+    samą ścieżką — zabicie grupy runnera, zatrzymanie silnika, zapis wierszy przerwanego bloku
+    i runs.parquet. Domyślnie oba sygnały kończą proces natychmiast, bez sprzątania, a runner
+    (osobna sesja) i procesy silnika zostają na rdzeniach węzłów. Zwraca poprzednie obsługi."""
+    return {sig: signal.signal(sig, _interrupt) for sig in (signal.SIGTERM, signal.SIGHUP)}
+
+
 def preflight(cfg: SeriesConfig, profile: str) -> None:
     """Sprawdzenia przed pierwszym pomiarem: rdzenie emulowanych węzłów i binarki Ballisty."""
     needed = max(cluster_cpus(max(cfg.nodes))) + 1
@@ -450,6 +462,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"błąd: {e}", file=sys.stderr)
         return 2
     os.sched_setaffinity(0, SYSTEM_CPUS)
+    previous = handle_termination_signals()
     try:
         summary = run_series(
             cfg, data_root=root, results_dir=args.results_dir.expanduser().resolve(),
@@ -458,6 +471,9 @@ def main(argv: list[str] | None = None) -> int:
     except SeriesError as e:
         print(f"seria przerwana: {e}", file=sys.stderr)
         return 1
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
     print(
         f"przebiegi: {summary.rows}, nieważne: {summary.invalid}, "
         f"przerwane bloki: {len(summary.failures)}; wyniki: {summary.parquet}"

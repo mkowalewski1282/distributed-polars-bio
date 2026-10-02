@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import polars as pl
@@ -304,6 +306,59 @@ def test_interrupt_keeps_finished_rows_and_stops_engine(tmp_path):
     assert block(df, "polars_bio_a")["valid"].all()
     assert df["invalid_reason"][-1] == "seria przerwana"  # kontrola przerwanego bloku Ballisty
     assert factory.log[-1] == ("stop", "ballista", 1)
+
+
+#: Seria w osobnym procesie (jak `python -m bench.orchestrator`), której runner Ballisty „wisi”:
+#: test wysyła sygnał w trakcie przebiegu.
+SIGNAL_SERIES = """
+import sys
+from pathlib import Path
+from bench import orchestrator as orch
+from tests.bench.test_orchestrator import config, make_factory, probe
+
+tmp = Path(sys.argv[1])
+
+def args_for(variant, n, scenario):
+    return ["--touch", str(tmp / "runner_started"), "--sleep", "60"] if variant == "ballista" else []
+
+factory = make_factory(args_for)
+orch.handle_termination_signals()
+try:
+    orch.run_series(config(), data_root=tmp, results_dir=tmp / "wyniki", factory=factory,
+                    probe=probe(), out=lambda line: None)
+finally:
+    (tmp / "dziennik.txt").write_text(repr(factory.log))
+"""
+
+
+def _cmdline_contains(proc_dir: Path, text: str) -> bool:
+    try:
+        return text in (proc_dir / "cmdline").read_bytes().decode(errors="replace")
+    except OSError:
+        return False
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGHUP])
+def test_termination_signal_keeps_rows_and_stops_runner_and_engine(tmp_path, sig):
+    """Zamknięcie terminala (SIGHUP) albo `kill` (SIGTERM) w trakcie przebiegu działa jak Ctrl-C:
+    wiersze przerwanego bloku i runs.parquet zostają, runner (osobna sesja, więc sam sygnału
+    nie dostaje) i silnik są zatrzymane. Domyślnie oba sygnały kończą proces bez sprzątania."""
+    proc = subprocess.Popen(
+        [sys.executable, "-c", SIGNAL_SERIES, str(tmp_path)], cwd=REPO,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    started = tmp_path / "runner_started"
+    deadline = time.monotonic() + 60
+    while not started.exists():
+        assert proc.poll() is None, proc.communicate()[1][-2000:]
+        assert time.monotonic() < deadline, "runner Ballisty nie wystartował"
+        time.sleep(0.1)
+    proc.send_signal(sig)
+    proc.communicate(timeout=30)
+    df = pl.read_parquet(next((tmp_path / "wyniki").rglob("runs.parquet")))
+    assert df["invalid_reason"][-1] == "seria przerwana"  # kontrola przerwanego bloku Ballisty
+    assert "('stop', 'ballista', 1)" in (tmp_path / "dziennik.txt").read_text()
+    assert not [p for p in Path("/proc").glob("[0-9]*") if _cmdline_contains(p, str(started))]
 
 
 def test_runner_flooding_stderr_does_not_block(tmp_path):
