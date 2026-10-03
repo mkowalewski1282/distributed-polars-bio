@@ -236,21 +236,21 @@ def run_sail_overlap():
 
 def main():
     print("=" * 60)
-    print("  Genomic Overlap: polars-bio vs Sail+polars-bio (natywny UDTF)")
+    print("  Genomic Overlap: polars-bio vs Sail+polars-bio (native UDTF)")
     print("=" * 60)
 
-    print("\n[1/2] polars-bio (lokalnie)...")
+    print("\n[1/2] polars-bio (local)...")
     pb_result, pb_time = run_polars_bio()
-    print(f"  Czas: {pb_time:.4f}s  |  Wiersze: {len(pb_result)}")
+    print(f"  Time: {pb_time:.4f}s  |  Rows: {len(pb_result)}")
     print(pb_result)
 
-    print("\n[2/2] Sail + polars-bio (UDTF skalarny + groupBy/collect_list)...")
+    print("\n[2/2] Sail + polars-bio (scalar UDTF + groupBy/collect_list)...")
     sail_result, sail_time = run_sail_overlap()
-    print(f"  Czas: {sail_time:.4f}s  |  Wiersze: {len(sail_result)}")
+    print(f"  Time: {sail_time:.4f}s  |  Rows: {len(sail_result)}")
     print(sail_result.sort_values(["chrom", "start_a", "start_b"]).to_string(index=False))
 
     print("\n" + "=" * 60)
-    print(f"  polars-bio lokalnie : {pb_time:.4f}s")
+    print(f"  polars-bio local   : {pb_time:.4f}s")
     print(f"  Sail + polars-bio   : {sail_time:.4f}s")
 
     # Weryfikacja poprawności
@@ -262,11 +262,11 @@ def main():
     )
 
     if pb_pairs == sail_pairs:
-        print("\n  WYNIK: identyczne pary ✓")
+        print("\n  RESULT: identical pairs ✓")
     else:
-        print(f"\n  WYNIK: RÓŻNICA!")
-        print(f"  Tylko w polars-bio: {pb_pairs - sail_pairs}")
-        print(f"  Tylko w Sail:       {sail_pairs - pb_pairs}")
+        print(f"\n  RESULT: DIFFERENCE!")
+        print(f"  Only in polars-bio: {pb_pairs - sail_pairs}")
+        print(f"  Only in Sail:       {sail_pairs - pb_pairs}")
     print("=" * 60)
 
 if __name__ == "__main__":

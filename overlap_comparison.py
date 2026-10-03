@@ -122,19 +122,19 @@ def main():
 
     print("\n[1/2] polars-bio...")
     pb_result, pb_time = run_polars_bio()
-    print(f"  Czas: {pb_time:.4f}s  |  Wiersze: {len(pb_result)}")
+    print(f"  Time: {pb_time:.4f}s  |  Rows: {len(pb_result)}")
     print(pb_result)
 
     print("\n[2/2] Sail (PySpark Connect)...")
     sail_result, sail_time = run_sail()
-    print(f"  Czas: {sail_time:.4f}s  |  Wiersze: {len(sail_result)}")
+    print(f"  Time: {sail_time:.4f}s  |  Rows: {len(sail_result)}")
     print(sail_result)
 
     print("\n" + "=" * 60)
     print(f"  polars-bio : {pb_time:.4f}s")
     print(f"  Sail       : {sail_time:.4f}s")
     speedup = sail_time / pb_time if pb_time > 0 else float("inf")
-    print(f"  Stosunek   : {speedup:.1f}x (na małych danych nie jest miarodajny)")
+    print(f"  Ratio      : {speedup:.1f}x (not meaningful on small data)")
     print("=" * 60)
 
 

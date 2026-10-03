@@ -54,9 +54,9 @@ INTERVALS_B = [
 pytestmark = pytest.mark.skipif(
     not DIST_BINARY.exists(),
     reason=(
-        "dist_ops nie jest zbudowane — uruchom `cd ballista_genomics && "
-        "CARGO_BUILD_JOBS=1 cargo build --bin dist_ops` (CARGO_BUILD_JOBS=1 jest "
-        "obowiązkowe na tej maszynie, patrz OPIS.md)"
+        "dist_ops is not built - run `cd ballista_genomics && "
+        "CARGO_BUILD_JOBS=1 cargo build --bin dist_ops` (CARGO_BUILD_JOBS=1 is "
+        "required on this machine, see OPIS.md)"
     ),
 )
 
@@ -70,7 +70,7 @@ def _run_dist(op: str, timeout: int = 180) -> None:
         timeout=timeout,
     )
     assert result.returncode == 0, (
-        f"dist_ops {op} zakończyło się błędem:\n"
+        f"dist_ops {op} failed:\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
 
@@ -117,20 +117,20 @@ def test_ballista_distributed_merge_matches_oracle():
     """
     _run_dist("merge")
     out = OUTPUT_DIR / "dist_merge_result.csv"
-    assert out.exists(), f"nie znaleziono {out}"
+    assert out.exists(), f"not found: {out}"
 
     df = pd.read_csv(out)
     actual = {(r.chrom, int(r.start), int(r.end)) for _, r in df.iterrows()}
     expected = reference_merge_intervals(INTERVALS_A)
 
     assert actual == expected, (
-        f"Różnica względem wyroczni pb.merge().\n"
-        f"Tylko w pb.merge():        {expected - actual}\n"
-        f"Tylko w rozproszonym merge: {actual - expected}"
+        f"Difference from the oracle pb.merge().\n"
+        f"Only in pb.merge():        {expected - actual}\n"
+        f"Only in distributed merge: {actual - expected}"
     )
     assert ("chr1", 100, 300) in actual, (
-        "Brak scalonego [100,300) — interwały z RÓŻNYCH plików wejściowych nie "
-        "zostały połączone, co oznacza że hash-shuffle po chrom nie zadziałał."
+        "No merged [100,300) - intervals from DIFFERENT input files were not "
+        "joined, which means the hash shuffle by chrom did not work."
     )
 
 
@@ -146,16 +146,16 @@ def test_ballista_distributed_subtract_matches_oracle():
     """
     _run_dist("subtract")
     out = OUTPUT_DIR / "dist_subtract_result.csv"
-    assert out.exists(), f"nie znaleziono {out}"
+    assert out.exists(), f"not found: {out}"
 
     df = pd.read_csv(out)
     actual = {(r.chrom, int(r.start), int(r.end)) for _, r in df.iterrows()}
     expected = reference_subtract(INTERVALS_A, INTERVALS_B)
 
     assert actual == expected, (
-        f"Różnica względem wyroczni pb.subtract().\n"
-        f"Tylko w pb.subtract():         {expected - actual}\n"
-        f"Tylko w rozproszonym subtract: {actual - expected}"
+        f"Difference from the oracle pb.subtract().\n"
+        f"Only in pb.subtract():         {expected - actual}\n"
+        f"Only in distributed subtract: {actual - expected}"
     )
 
 
@@ -173,25 +173,25 @@ def test_ballista_distributed_nearest_matches_oracle_distances():
     """
     _run_dist("nearest")
     out = OUTPUT_DIR / "dist_nearest_result.csv"
-    assert out.exists(), f"nie znaleziono {out}"
+    assert out.exists(), f"not found: {out}"
 
     df = pd.read_csv(out)
     # Konwencja dostawcy: wynik ma wiersz na każdy wiersz PRAWEJ tabeli (odpytywanej), z
     # najbliższym sąsiadem z lewej (indeksowanej). Żeby odpowiadało pb.nearest(A, B),
     # A jest prawą tabelą — nazwy A są w `right_name`, wybrani sąsiedzi z B w `left_name`.
-    assert len(df) == len(INTERVALS_A), "nearest ma dać jeden wiersz na każdy przedział A"
+    assert len(df) == len(INTERVALS_A), "nearest must return one row per interval of A"
     actual = dict(zip(df["right_name"].tolist(), df["distance"].tolist()))
     expected = reference_nearest_min_distances(INTERVALS_A, INTERVALS_B)
 
     assert set(actual) == set(expected), (
-        f"Inny zbiór interwałów lewej tabeli.\n"
-        f"Tylko w pb.nearest(): {set(expected) - set(actual)}\n"
-        f"Tylko rozproszony:    {set(actual) - set(expected)}"
+        f"Different set of left-table intervals.\n"
+        f"Only in pb.nearest(): {set(expected) - set(actual)}\n"
+        f"Only distributed:     {set(actual) - set(expected)}"
     )
     for name, dist in expected.items():
         assert int(actual[name]) == int(dist), (
-            f"{name}: pb.nearest() dało odległość {dist}, "
-            f"rozproszony nearest {actual[name]}"
+            f"{name}: pb.nearest() gave distance {dist}, "
+            f"distributed nearest {actual[name]}"
         )
 
 
@@ -210,7 +210,7 @@ def test_distributed_nearest_agrees_with_local_nearest():
     local_csv = OUTPUT_DIR / "nearest_local_result.csv"
     if not local_csv.exists():
         pytest.skip(
-            "brak output/nearest_local_result.csv — uruchom najpierw "
+            "no output/nearest_local_result.csv - run first "
             "`cd ballista_genomics && ./target/debug/nearest_local`"
         )
     _run_dist("nearest")
@@ -223,11 +223,11 @@ def test_distributed_nearest_agrees_with_local_nearest():
     local_pairs = pairs(local_csv)
 
     assert dist_pairs == local_pairs, (
-        f"Rozproszony i lokalny nearest wybrały RÓŻNYCH partnerów — to sygnał, "
-        f"że broadcast lewej tabeli był niekompletny albo kolejność wierszy w "
-        f"left_batch się rozjechała.\n"
-        f"Tylko lokalnie:    {local_pairs - dist_pairs}\n"
-        f"Tylko rozproszony: {dist_pairs - local_pairs}"
+        f"Distributed and local nearest chose DIFFERENT partners - a sign "
+        f"that the left-table broadcast was incomplete or the row order in "
+        f"left_batch diverged.\n"
+        f"Only local:        {local_pairs - dist_pairs}\n"
+        f"Only distributed: {dist_pairs - local_pairs}"
     )
 
 
@@ -244,7 +244,7 @@ def test_ballista_distributed_coverage_matches_oracle():
     """
     _run_dist("coverage")
     out = OUTPUT_DIR / "dist_coverage_result.csv"
-    assert out.exists(), f"nie znaleziono {out}"
+    assert out.exists(), f"not found: {out}"
 
     df = pd.read_csv(out)
     actual = {
@@ -253,7 +253,7 @@ def test_ballista_distributed_coverage_matches_oracle():
     expected = reference_coverage(INTERVALS_A, INTERVALS_B)
 
     assert actual == expected, (
-        f"Różnica względem wyroczni pb.coverage().\n"
-        f"Tylko w pb.coverage():         {expected - actual}\n"
-        f"Tylko w rozproszonym coverage: {actual - expected}"
+        f"Difference from the oracle pb.coverage().\n"
+        f"Only in pb.coverage():         {expected - actual}\n"
+        f"Only in distributed coverage: {actual - expected}"
     )

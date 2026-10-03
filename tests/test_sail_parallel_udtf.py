@@ -162,10 +162,10 @@ def test_sail_udtf_correct_without_repartition_workaround():
     for attempt in range(REPEATS):
         actual = _run_merge_udtf(_make_merge_udtf)
         assert actual == expected, (
-            f"Próba {attempt + 1}/{REPEATS}: rozjazd z wyrocznią pb.merge().\n"
-            f"Brakuje: {expected - actual}\nNadmiar: {actual - expected}\n"
-            f"To sygnał, że współbieżny dostęp do globalnego kontekstu polars-bio "
-            f"nie jest już serializowany przez sail_pb_guard."
+            f"Attempt {attempt + 1}/{REPEATS}: mismatch with the pb.merge() oracle.\n"
+            f"Missing: {expected - actual}\nExtra: {actual - expected}\n"
+            f"A sign that concurrent access to the global polars-bio context "
+            f"is no longer serialized by sail_pb_guard."
         )
 
 
@@ -185,10 +185,10 @@ def test_lateral_over_many_partitions_is_not_a_sail_bug():
     expected = reference_merge_intervals(INTERVALS_A)
     actual = _run_merge_udtf(_make_pure_python_udtf)
     assert actual == expected, (
-        f"Czysto pythonowy UDTF nad wieloma partycjami dał zły wynik — to "
-        f"oznaczałoby, że w Sailu JEST jednak błąd w LATERAL/partycjonowaniu, "
-        f"wbrew ustaleniom Fazy H.\n"
-        f"Brakuje: {expected - actual}\nNadmiar: {actual - expected}"
+        f"A pure-Python UDTF over many partitions gave a wrong result - that "
+        f"would mean Sail DOES have a bug in LATERAL/partitioning after all, "
+        f"contrary to the Phase H findings.\n"
+        f"Missing: {expected - actual}\nExtra: {actual - expected}"
     )
 
 

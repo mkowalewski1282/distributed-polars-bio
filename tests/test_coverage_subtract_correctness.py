@@ -37,7 +37,7 @@ SUBTRACT_BINARY = BALLISTA_DIR / "target" / "debug" / "subtract_local"
 SUBTRACT_OUTPUT_CSV = BALLISTA_DIR / "output" / "subtract_local_result.csv"
 
 
-@pytest.mark.skipif(not COVERAGE_BINARY.exists(), reason="coverage_local nie jest zbudowane")
+@pytest.mark.skipif(not COVERAGE_BINARY.exists(), reason="coverage_local is not built")
 def test_ballista_local_coverage_matches_oracle():
     result = subprocess.run(
         [str(COVERAGE_BINARY)], cwd=BALLISTA_DIR, capture_output=True, text=True, timeout=30
@@ -47,11 +47,11 @@ def test_ballista_local_coverage_matches_oracle():
     actual = set(zip(df["chrom"].tolist(), df["start"].tolist(), df["end"].tolist(), df["coverage"].tolist()))
     expected = reference_coverage(INTERVALS_A, INTERVALS_B)
     assert actual == expected, (
-        f"Tylko w pb.coverage(): {expected - actual}\nTylko w Ballistrze: {actual - expected}"
+        f"Only in pb.coverage(): {expected - actual}\nOnly in Ballista: {actual - expected}"
     )
 
 
-@pytest.mark.skipif(not SUBTRACT_BINARY.exists(), reason="subtract_local nie jest zbudowane")
+@pytest.mark.skipif(not SUBTRACT_BINARY.exists(), reason="subtract_local is not built")
 def test_ballista_local_subtract_matches_oracle():
     result = subprocess.run(
         [str(SUBTRACT_BINARY)], cwd=BALLISTA_DIR, capture_output=True, text=True, timeout=30
@@ -61,7 +61,7 @@ def test_ballista_local_subtract_matches_oracle():
     actual = set(zip(df["chrom"].tolist(), df["start"].tolist(), df["end"].tolist()))
     expected = reference_subtract(INTERVALS_A, INTERVALS_B)
     assert actual == expected, (
-        f"Tylko w pb.subtract(): {expected - actual}\nTylko w Ballistrze: {actual - expected}"
+        f"Only in pb.subtract(): {expected - actual}\nOnly in Ballista: {actual - expected}"
     )
 
 
@@ -92,7 +92,7 @@ def test_sail_coverage_and_subtract_match_oracle():
     )
     expected_cov = reference_coverage(INTERVALS_A, INTERVALS_B)
     assert actual_cov == expected_cov, (
-        f"Tylko w pb.coverage(): {expected_cov - actual_cov}\nTylko w Sail: {actual_cov - expected_cov}"
+        f"Only in pb.coverage(): {expected_cov - actual_cov}\nOnly in Sail: {actual_cov - expected_cov}"
     )
 
     sail_sub = results["subtract_udtf"]
@@ -101,5 +101,5 @@ def test_sail_coverage_and_subtract_match_oracle():
     )
     expected_sub = reference_subtract(INTERVALS_A, INTERVALS_B)
     assert actual_sub == expected_sub, (
-        f"Tylko w pb.subtract(): {expected_sub - actual_sub}\nTylko w Sail: {actual_sub - expected_sub}"
+        f"Only in pb.subtract(): {expected_sub - actual_sub}\nOnly in Sail: {actual_sub - expected_sub}"
     )

@@ -74,6 +74,6 @@ def reference_nearest_min_distances(
 
     dist_col = next((c for c in result.columns if "distance" in c.lower()), None)
     if dist_col is None:
-        raise RuntimeError(f"pb.nearest() nie ma kolumny distance: {result.columns}")
+        raise RuntimeError(f"pb.nearest() has no distance column: {result.columns}")
 
     return dict(zip(result["name_1"].to_list(), result[dist_col].to_list()))

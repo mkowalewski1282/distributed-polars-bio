@@ -51,9 +51,9 @@ INTERVALS_B = [
 @pytest.mark.skipif(
     not BINARY.exists(),
     reason=(
-        "ballista_genomics nie jest zbudowane — uruchom "
-        "`cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build` (patrz OPIS.md "
-        "odnośnie ograniczeń pamięci na tej maszynie: użyj CARGO_BUILD_JOBS=1)"
+        "ballista_genomics is not built - run "
+        "`cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build` (see OPIS.md "
+        "on the memory limits of this machine: use CARGO_BUILD_JOBS=1)"
     ),
 )
 def test_ballista_distributed_overlap_matches_oracle():
@@ -71,11 +71,11 @@ def test_ballista_distributed_overlap_matches_oracle():
     )
 
     assert result.returncode == 0, (
-        f"binarka ballista_genomics zakończyła się błędem:\n"
+        f"the ballista_genomics binary failed:\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
 
-    assert OUTPUT_CSV.exists(), f"nie znaleziono {OUTPUT_CSV} — binarka nie zapisała wyniku"
+    assert OUTPUT_CSV.exists(), f"not found: {OUTPUT_CSV} - the binary did not write the result"
 
     df = pd.read_csv(OUTPUT_CSV)
 
@@ -83,8 +83,8 @@ def test_ballista_distributed_overlap_matches_oracle():
     actual_pairs = normalize_engine_pairs(df, "name_a", "name_b")
 
     assert actual_pairs == expected_pairs, (
-        f"Różnica względem wyroczni.\n"
-        f"Tylko w pb.overlap(): {expected_pairs - actual_pairs}\n"
-        f"Tylko w Ballistrze:   {actual_pairs - expected_pairs}"
+        f"Difference from the oracle.\n"
+        f"Only in pb.overlap(): {expected_pairs - actual_pairs}\n"
+        f"Only in Ballista:     {actual_pairs - expected_pairs}"
     )
     assert len(actual_pairs) == 8  # sanity check na znany, ustalony wynik

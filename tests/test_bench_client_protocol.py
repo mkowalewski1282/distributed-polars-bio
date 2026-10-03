@@ -25,9 +25,9 @@ PROTOCOL_KEYS = {"rows", "checksum", "t_total_s", "phases", "extra", "peak_rss_b
 
 
 def report(r: subprocess.CompletedProcess) -> dict:
-    assert r.returncode == 0, f"kod {r.returncode}\nstderr:\n{r.stderr[-3000:]}"
+    assert r.returncode == 0, f"exit code {r.returncode}\nstderr:\n{r.stderr[-3000:]}"
     lines = r.stdout.strip().splitlines()
-    assert len(lines) == 1, f"stdout ma być jedną linią JSON, jest:\n{r.stdout}"
+    assert len(lines) == 1, f"stdout must be one JSON line, got:\n{r.stdout}"
     return json.loads(lines[0])
 
 
@@ -58,7 +58,7 @@ def test_rust_checksum_matches_golden_values(op, tmp_path):
 )
 def test_checksum_mode_rejects_other_arguments(args):
     r = run_client(args, timeout=30)
-    assert r.returncode == 2, f"{args}: kod {r.returncode}, stderr: {r.stderr}"
+    assert r.returncode == 2, f"{args}: exit code {r.returncode}, stderr: {r.stderr}"
     assert "usage" in r.stderr and r.stdout == ""
 
 

@@ -31,7 +31,7 @@ MERGE_OUTPUT_CSV = BALLISTA_DIR / "output" / "merge_local_result.csv"
 
 @pytest.mark.skipif(
     not MERGE_BINARY.exists(),
-    reason="merge_local nie jest zbudowane — cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bin merge_local",
+    reason="merge_local is not built - cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bin merge_local",
 )
 def test_ballista_local_merge_matches_oracle():
     result = subprocess.run(
@@ -45,7 +45,7 @@ def test_ballista_local_merge_matches_oracle():
     expected = reference_merge_intervals(INTERVALS_A)
 
     assert actual == expected, (
-        f"Tylko w pb.merge(): {expected - actual}\nTylko w Ballistrze: {actual - expected}"
+        f"Only in pb.merge(): {expected - actual}\nOnly in Ballista: {actual - expected}"
     )
 
 
@@ -63,5 +63,5 @@ def test_sail_merge_matches_oracle():
     expected = reference_merge_intervals(INTERVALS_A)
 
     assert actual == expected, (
-        f"Tylko w pb.merge(): {expected - actual}\nTylko w Sail: {actual - expected}"
+        f"Only in pb.merge(): {expected - actual}\nOnly in Sail: {actual - expected}"
     )

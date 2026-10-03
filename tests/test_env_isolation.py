@@ -12,4 +12,4 @@ CLIENT_ENV_VARS = ("BALLISTA_SCHEDULER_URL", "DIST_OUTPUT_DIR", "BIO_TARGET_PART
 
 def test_client_env_vars_do_not_leak_into_tests():
     leaked = [name for name in CLIENT_ENV_VARS if name in os.environ]
-    assert not leaked, f"zmienne klienta widoczne w teście: {leaked}"
+    assert not leaked, f"client variables visible in the test: {leaked}"

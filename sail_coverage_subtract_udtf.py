@@ -187,13 +187,13 @@ def main():
     df_a.config_meta.set(coordinate_system_zero_based=True)
     df_b.config_meta.set(coordinate_system_zero_based=True)
 
-    print("\n[coverage] polars-bio (lokalnie)...")
+    print("\n[coverage] polars-bio (local)...")
     t0 = time.perf_counter()
     pb_cov = pb.coverage(df_a, df_b).collect()
-    print(f"  Czas: {time.perf_counter() - t0:.4f}s")
+    print(f"  Time: {time.perf_counter() - t0:.4f}s")
     print(pb_cov)
 
-    print("\n[coverage+subtract] Sail + polars-bio (UDTF, jedna sesja)...")
+    print("\n[coverage+subtract] Sail + polars-bio (UDTF, one session)...")
     sail_results = run_udtfs({
         "coverage_udtf": _make_coverage_udtf,
         "subtract_udtf": _make_subtract_udtf,
@@ -208,26 +208,26 @@ def main():
                           pb_cov["end"].to_list(), pb_cov[cov_col].to_list()))
     sail_cov_set = set(zip(sail_cov["chrom"].tolist(), sail_cov["start"].tolist(),
                             sail_cov["end"].tolist(), sail_cov["coverage"].tolist()))
-    print("\n  WYNIK coverage:", "identyczne ✓" if pb_cov_set == sail_cov_set else "RÓŻNICA!")
+    print("\n  RESULT coverage:", "identical ✓" if pb_cov_set == sail_cov_set else "DIFFERENCE!")
     if pb_cov_set != sail_cov_set:
-        print(f"    Tylko w polars-bio: {pb_cov_set - sail_cov_set}")
-        print(f"    Tylko w Sail:       {sail_cov_set - pb_cov_set}")
+        print(f"    Only in polars-bio: {pb_cov_set - sail_cov_set}")
+        print(f"    Only in Sail:       {sail_cov_set - pb_cov_set}")
 
-    print("\n[subtract] polars-bio (lokalnie)...")
+    print("\n[subtract] polars-bio (local)...")
     t0 = time.perf_counter()
     pb_sub = pb.subtract(df_a, df_b).collect()
-    print(f"  Czas: {time.perf_counter() - t0:.4f}s")
+    print(f"  Time: {time.perf_counter() - t0:.4f}s")
     print(pb_sub)
 
-    print("\n[subtract] Sail + polars-bio (UDTF, wynik z tej samej sesji co coverage)...")
+    print("\n[subtract] Sail + polars-bio (UDTF, result from the same session as coverage)...")
     print(sail_sub.sort_values(["chrom", "start"]).to_string(index=False))
 
     pb_sub_set = set(zip(pb_sub["chrom"].to_list(), pb_sub["start"].to_list(), pb_sub["end"].to_list()))
     sail_sub_set = set(zip(sail_sub["chrom"].tolist(), sail_sub["start"].tolist(), sail_sub["end"].tolist()))
-    print("\n  WYNIK subtract:", "identyczne ✓" if pb_sub_set == sail_sub_set else "RÓŻNICA!")
+    print("\n  RESULT subtract:", "identical ✓" if pb_sub_set == sail_sub_set else "DIFFERENCE!")
     if pb_sub_set != sail_sub_set:
-        print(f"    Tylko w polars-bio: {pb_sub_set - sail_sub_set}")
-        print(f"    Tylko w Sail:       {sail_sub_set - pb_sub_set}")
+        print(f"    Only in polars-bio: {pb_sub_set - sail_sub_set}")
+        print(f"    Only in Sail:       {sail_sub_set - pb_sub_set}")
 
     print("=" * 60)
 

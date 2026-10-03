@@ -50,7 +50,7 @@ BUILD_HINT = (
 
 def _require(binary: Path) -> None:
     if not binary.exists():
-        pytest.fail(f"brak binarki {binary.name} — zbuduj: {BUILD_HINT}")
+        pytest.fail(f"missing binary {binary.name} - build it: {BUILD_HINT}")
 
 
 def _free_port() -> int:
@@ -108,8 +108,8 @@ def _wait_for_executors(cluster: Cluster, expected: int, timeout: float = 60.0) 
         for name, p in cluster.procs.items():
             if p.poll() is not None:
                 pytest.fail(
-                    f"proces {name} zakończył się przedwcześnie (kod {p.returncode}); "
-                    f"logi w {cluster.log_dir}"
+                    f"process {name} exited early (code {p.returncode}); "
+                    f"logs in {cluster.log_dir}"
                 )
         try:
             executors = _registered_executors(cluster.scheduler_port)
@@ -119,8 +119,8 @@ def _wait_for_executors(cluster: Cluster, expected: int, timeout: float = 60.0) 
             last_error = e
         time.sleep(0.5)
     pytest.fail(
-        f"scheduler nie zarejestrował {expected} executorów w {timeout:.0f} s "
-        f"(ostatni błąd: {last_error}); logi w {cluster.log_dir}"
+        f"scheduler did not register {expected} executors in {timeout:.0f} s "
+        f"(last error: {last_error}); logs in {cluster.log_dir}"
     )
 
 
@@ -133,15 +133,15 @@ def _wait_for_scheduler(cluster: Cluster, timeout: float = 30.0) -> None:
     while time.monotonic() < deadline:
         if scheduler.poll() is not None:
             pytest.fail(
-                f"proces scheduler zakończył się przedwcześnie (kod {scheduler.returncode}); "
-                f"logi w {cluster.log_dir}"
+                f"process scheduler exited early (code {scheduler.returncode}); "
+                f"logs in {cluster.log_dir}"
             )
         try:
             _registered_executors(cluster.scheduler_port)
             return
         except OSError:
             time.sleep(0.2)
-    pytest.fail(f"scheduler nie zaczął nasłuchiwać w {timeout:.0f} s; logi w {cluster.log_dir}")
+    pytest.fail(f"scheduler did not start listening in {timeout:.0f} s; logs in {cluster.log_dir}")
 
 
 def _start_cluster(log_dir: Path, executors: list[tuple[str, list[str]]]) -> Cluster:
@@ -181,7 +181,7 @@ def _start_cluster(log_dir: Path, executors: list[tuple[str, list[str]]]) -> Clu
 @pytest.fixture(scope="module")
 def cluster(tmp_path_factory):
     c = _start_cluster(
-        tmp_path_factory.mktemp("p0_klaster"),
+        tmp_path_factory.mktemp("p0_cluster"),
         [("executor_1", []), ("executor_2", [])],
     )
     yield c
@@ -195,7 +195,7 @@ def test_ballista_node_rejects_bad_arguments():
     for args in (
         [],
         ["executor", "--port", "1"],
-        ["scheduler", "--port", "1", "--nieznana-flaga"],
+        ["scheduler", "--port", "1", "--unknown-flag"],
     ):
         r = subprocess.run(
             [str(NODE_BINARY), *args],
@@ -204,22 +204,22 @@ def test_ballista_node_rejects_bad_arguments():
             text=True,
             timeout=30,
         )
-        assert r.returncode == 2, f"{args}: kod {r.returncode}, stderr: {r.stderr}"
+        assert r.returncode == 2, f"{args}: exit code {r.returncode}, stderr: {r.stderr}"
         assert "usage" in r.stderr, f"{args}: no usage text: {r.stderr}"
 
 
 def test_start_cluster_reports_crashed_process(tmp_path):
     """Gdy węzeł padnie przy starcie, pomocnik ma wskazać KTÓRY, zamiast czekać
     w nieskończoność na rejestrację."""
-    with pytest.raises(pytest.fail.Exception, match="executor_zly"):
-        _start_cluster(tmp_path, [("executor_zly", ["--nieznana-flaga"])])
+    with pytest.raises(pytest.fail.Exception, match="executor_bad"):
+        _start_cluster(tmp_path, [("executor_bad", ["--unknown-flag"])])
 
 
 def test_cluster_stop_terminates_all_processes(tmp_path):
     c = _start_cluster(tmp_path, [("executor_1", [])])
     c.stop()
     still_running = [name for name, p in c.procs.items() if p.poll() is None]
-    assert not still_running, f"po stop() nadal działają: {still_running}"
+    assert not still_running, f"still running after stop(): {still_running}"
 
 
 def test_start_cluster_waits_for_scheduler_before_executors(tmp_path, monkeypatch):
@@ -248,7 +248,7 @@ def test_scheduler_sees_two_separate_executors(cluster):
     """Dowód 1 (część klastrowa): trzy osobne procesy, a scheduler widzi dwa
     RÓŻNE executory — różne identyfikatory i porty."""
     pids = cluster.pids()
-    assert len(set(pids.values())) == 3, f"PID-y nie są różne: {pids}"
+    assert len(set(pids.values())) == 3, f"PIDs are not distinct: {pids}"
     assert all(p.poll() is None for p in cluster.procs.values())
     executors = _registered_executors(cluster.scheduler_port)
     assert len({e["id"] for e in executors}) == 2, executors
@@ -309,7 +309,7 @@ def _run_client(op: str, scheduler_url: str | None, output_dir: Path, timeout: i
     except subprocess.TimeoutExpired:
         p.kill()
         out, err = p.communicate()
-        pytest.fail(f"dist_ops {op} przekroczyło {timeout} s\nstdout: {out}\nstderr: {err}")
+        pytest.fail(f"dist_ops {op} exceeded {timeout} s\nstdout: {out}\nstderr: {err}")
     return subprocess.CompletedProcess(p.args, p.returncode, out, err), p.pid
 
 
@@ -373,21 +373,21 @@ def _check_against_oracle(op: str, output_dir: Path) -> None:
         }
     else:
         raise ValueError(op)
-    assert actual == expected, f"{op}: wynik rozproszony {actual} != wyrocznia {expected}"
+    assert actual == expected, f"{op}: distributed result {actual} != oracle {expected}"
 
 
 def _write_evidence(op: str, pids: dict[str, int], new_jobs: dict[str, dict[str, set[str]]]) -> None:
     """Zapisuje, który executor liczył które etapy — materiał do opisu P0."""
     evidence = {
-        "operacja": op,
+        "operation": op,
         "pid": pids,
-        "etapy_na_executorach": {
+        "stages_on_executors": {
             name: {job: sorted(stages) for job, stages in jobs.items()}
             for name, jobs in new_jobs.items()
         },
     }
     OUTPUT_DIR.mkdir(exist_ok=True)
-    (OUTPUT_DIR / f"p0_dowod_{op}.json").write_text(
+    (OUTPUT_DIR / f"p0_evidence_{op}.json").write_text(
         json.dumps(evidence, indent=2, ensure_ascii=False)
     )
 
@@ -405,17 +405,17 @@ def test_operation_runs_distributed_across_processes(cluster, op, tmp_path):
         f"dist_ops {op}:\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
     assert "external Ballista scheduler" in result.stdout, (
-        f"klient nie użył trybu zdalnego:\n{result.stdout}"
+        f"the client did not use remote mode:\n{result.stdout}"
     )
     assert (tmp_path / f"dist_{op}_result.csv").exists(), (
-        f"{op}: wynik nie trafił do katalogu testu {tmp_path}"
+        f"{op}: the result did not reach the test directory {tmp_path}"
     )
     standalone_plan_after = (
         standalone_plan.stat().st_mtime_ns if standalone_plan.exists() else None
     )
     assert standalone_plan_after == standalone_plan_before, (
-        f"{op}: uruchomienie zdalne nadpisało {standalone_plan}, na którym opierają "
-        f"się testy trybu standalone"
+        f"{op}: the remote run overwrote {standalone_plan}, which the standalone-mode "
+        f"tests rely on"
     )
     after = {name: _stages_by_job(wd) for name, wd in cluster.work_dirs.items()}
     new_jobs = {
@@ -424,8 +424,8 @@ def test_operation_runs_distributed_across_processes(cluster, op, tmp_path):
     }
 
     # Dowód 1: cztery różne procesy.
-    pids = {**cluster.pids(), "klient": client_pid}
-    assert len(set(pids.values())) == 4, f"PID-y nie są różne: {pids}"
+    pids = {**cluster.pids(), "client": client_pid}
+    assert len(set(pids.values())) == 4, f"PIDs are not distinct: {pids}"
 
     # Dowód 2: poprawność względem polars-bio.
     _check_against_oracle(op, tmp_path)
@@ -433,15 +433,15 @@ def test_operation_runs_distributed_across_processes(cluster, op, tmp_path):
     # Dowód 3: praca wykonana w executorach, a dla operacji wielozadaniowych — w OBU.
     participating = sorted(name for name, jobs in new_jobs.items() if jobs)
     assert participating, (
-        f"{op}: żaden executor nie zapisał danych etapów — zapytanie nie przeszło przez klaster"
+        f"{op}: no executor wrote stage data - the query did not go through the cluster"
     )
     if op in MULTI_TASK_OPS:
         assert participating == sorted(cluster.work_dirs), (
-            f"{op}: pracowały tylko {participating}; etapy: {new_jobs}"
+            f"{op}: only {participating} worked; stages: {new_jobs}"
         )
     if op in SHUFFLE_OPS:
         stages = set().union(*(st for jobs in new_jobs.values() for st in jobs.values()))
-        assert len(stages) >= 2, f"{op}: oczekiwano ≥ 2 etapów (shuffle), są {stages}"
+        assert len(stages) >= 2, f"{op}: expected ≥ 2 stages (shuffle), got {stages}"
 
     _write_evidence(op, pids, new_jobs)
 
@@ -449,7 +449,7 @@ def test_operation_runs_distributed_across_processes(cluster, op, tmp_path):
 def test_client_fails_fast_when_scheduler_is_down(tmp_path):
     """Adres nieistniejącego schedulera ma dać błąd w rozsądnym czasie, nie zawieszenie."""
     result, _ = _run_client("merge", f"df://localhost:{_free_port()}", tmp_path, timeout=120)
-    assert result.returncode != 0, f"klient zakończył się sukcesem bez schedulera:\n{result.stdout}"
+    assert result.returncode != 0, f"the client succeeded without a scheduler:\n{result.stdout}"
 
 
 def test_empty_scheduler_url_means_standalone(tmp_path):
@@ -467,7 +467,7 @@ def test_scheduler_accepts_ballista_settings_from_client(tmp_path, monkeypatch):
     monkeypatch.setenv("RUST_LOG", "info,ballista_core::extension=debug")
     c = _start_cluster(tmp_path, [("executor_1", [])])
     try:
-        result, _ = _run_client("merge", c.url, tmp_path / "wyniki")
+        result, _ = _run_client("merge", c.url, tmp_path / "results")
         scheduler_log = (tmp_path / "scheduler.log").read_text()
     finally:
         c.stop()
@@ -478,7 +478,7 @@ def test_scheduler_accepts_ballista_settings_from_client(tmp_path, monkeypatch):
         if "could not set configuration key: `ballista." in line
     ]
     assert not rejected, (
-        "scheduler odrzucił ustawienia Ballisty od klienta:\n" + "\n".join(rejected[:5])
+        "the scheduler rejected Ballista settings from the client:\n" + "\n".join(rejected[:5])
     )
 
 
@@ -501,8 +501,8 @@ def test_executor_without_codecs_cannot_run_bio_plan(tmp_path):
     w oknie obserwacji oraz komunikat dekodowania, który executor zwrócił
     schedulerowi (log schedulera)."""
     _require(DIST_BINARY)
-    c = _start_cluster(tmp_path, [("executor_bez_koderow", ["--no-codecs"])])
-    output_dir = tmp_path / "wyniki"
+    c = _start_cluster(tmp_path, [("executor_no_codecs", ["--no-codecs"])])
+    output_dir = tmp_path / "results"
     out_csv = output_dir / "dist_merge_result.csv"
     client = subprocess.Popen(
         [str(DIST_BINARY), "merge"],
@@ -523,8 +523,8 @@ def test_executor_without_codecs_cannot_run_bio_plan(tmp_path):
         scheduler_log = (tmp_path / "scheduler.log").read_text()
     finally:
         c.stop()
-    assert not client_succeeded, "zapytanie przeszło mimo executora bez koderów"
-    assert not out_csv.exists(), "wynik zapisany mimo braku koderów"
+    assert not client_succeeded, "the query succeeded despite an executor without codecs"
+    assert not out_csv.exists(), "result written despite missing codecs"
     assert "Could not deserialize" in scheduler_log, (
-        f"brak śladu odrzucenia planu przez executor; log: {tmp_path / 'scheduler.log'}"
+        f"no trace of the executor rejecting the plan; log: {tmp_path / 'scheduler.log'}"
     )

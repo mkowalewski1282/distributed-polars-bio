@@ -125,14 +125,14 @@ def main():
     print("  Genomic merge: polars-bio vs Sail+polars-bio (UDTF)")
     print("=" * 60)
 
-    print("\n[1/2] polars-bio (lokalnie)...")
+    print("\n[1/2] polars-bio (local)...")
     pb_result, pb_time = run_polars_bio()
-    print(f"  Czas: {pb_time:.4f}s  |  Wiersze: {len(pb_result)}")
+    print(f"  Time: {pb_time:.4f}s  |  Rows: {len(pb_result)}")
     print(pb_result)
 
     print("\n[2/2] Sail + polars-bio (UDTF)...")
     sail_result, sail_time = run_sail_merge()
-    print(f"  Czas: {sail_time:.4f}s  |  Wiersze: {len(sail_result)}")
+    print(f"  Time: {sail_time:.4f}s  |  Rows: {len(sail_result)}")
     print(sail_result.sort_values(["chrom", "start"]).to_string(index=False))
 
     pb_cols = pb_result.columns
@@ -149,11 +149,11 @@ def main():
 
     print("\n" + "=" * 60)
     if pb_set == sail_set:
-        print("  WYNIK: identyczne zmergowane interwały ✓")
+        print("  RESULT: identical merged intervals ✓")
     else:
-        print("  WYNIK: RÓŻNICA!")
-        print(f"  Tylko w polars-bio: {pb_set - sail_set}")
-        print(f"  Tylko w Sail:       {sail_set - pb_set}")
+        print("  RESULT: DIFFERENCE!")
+        print(f"  Only in polars-bio: {pb_set - sail_set}")
+        print(f"  Only in Sail:       {sail_set - pb_set}")
     print("=" * 60)
 
 if __name__ == "__main__":

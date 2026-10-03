@@ -36,7 +36,7 @@ def _explain(op: str) -> tuple[str, list[tuple[int, int]]]:
     path = OUTPUT_DIR / f"dist_{op}_explain.txt"
     if not path.exists():
         pytest.skip(
-            f"brak {path} — uruchom najpierw: "
+            f"no {path} - run first: "
             f"cd ballista_genomics && ./target/debug/dist_ops {op}"
         )
     txt = path.read_text()
@@ -52,7 +52,7 @@ def _explain(op: str) -> tuple[str, list[tuple[int, int]]]:
 def test_merge_plan_is_split_into_stages():
     """Plan musi zostać pocięty na etapy — inaczej nie było żadnego shuffle."""
     txt, stages = _explain("merge")
-    assert len(stages) >= 2, f"merge policzył się w jednym stage'u:\n{txt}"
+    assert len(stages) >= 2, f"merge ran in a single stage:\n{txt}"
 
 
 def test_merge_has_hash_shuffle_on_contig():
@@ -75,7 +75,7 @@ def test_merge_operator_reads_from_network():
     merge_pos = txt.index("MergeExec")
     after = txt[merge_pos:]
     assert "ShuffleReaderExec" in after, (
-        f"MergeExec nie czyta z ShuffleReaderExec — brak realnego shuffle:\n{txt}"
+        f"MergeExec does not read from ShuffleReaderExec - no real shuffle:\n{txt}"
     )
     assert re.search(r"ShuffleReaderExec: partitioning: Hash\(\[chrom", after), after
 
@@ -87,16 +87,16 @@ def test_merge_source_stage_is_parallel():
     gene_A1/gene_A2 w różnych plikach) nie testowałby dystrybucji.
     """
     txt, stages = _explain("merge")
-    assert stages[0][1] >= 2, f"stage źródłowy nie jest równoległy:\n{txt}"
+    assert stages[0][1] >= 2, f"source stage is not parallel:\n{txt}"
     assert re.search(r"file_groups=\{2 groups:", txt), (
-        f"oba pliki parts_a/ powinny być czytane jako osobne grupy:\n{txt}"
+        f"both parts_a/ files should be read as separate groups:\n{txt}"
     )
 
 
 def test_merge_compute_stage_is_parallel():
     """Stage liczący MergeExec musi mieć >1 partycji."""
     txt, stages = _explain("merge")
-    assert max(p for _, p in stages) > 1, f"wszystkie stage'y jednopartycyjne:\n{txt}"
+    assert max(p for _, p in stages) > 1, f"all stages have a single partition:\n{txt}"
 
 
 # --------------------------------------------------------------------------
@@ -111,9 +111,9 @@ def test_subtract_has_two_shuffled_inputs():
     — w planie widać to jako dwa osobne stage'e źródłowe z hash-shuffle.
     """
     txt, stages = _explain("subtract")
-    assert len(stages) >= 3, f"subtract potrzebuje >=3 stage'ów:\n{txt}"
+    assert len(stages) >= 3, f"subtract needs >=3 stages:\n{txt}"
     assert txt.count("partitioning=Hash([chrom") >= 2, (
-        f"obie strony subtract powinny być hash-partycjonowane po chrom:\n{txt}"
+        f"both subtract sides should be hash-partitioned by chrom:\n{txt}"
     )
 
 
@@ -127,8 +127,8 @@ def test_subtract_operator_reads_both_sides_from_network():
     block = after if stage_end == -1 else after[:stage_end]
     readers = len(re.findall(r"ShuffleReaderExec: partitioning: Hash\(\[chrom", block))
     assert readers == 2, (
-        f"SubtractExec powinien czytać z 2 ShuffleReaderExec (Hash po chrom), "
-        f"znalazłem {readers}:\n{block}"
+        f"SubtractExec should read from 2 ShuffleReaderExec (Hash by chrom), "
+        f"found {readers}:\n{block}"
     )
 
 
@@ -136,7 +136,7 @@ def test_subtract_both_source_stages_are_parallel():
     """Oba stage'e źródłowe (parts_a i parts_b) muszą być równoległe."""
     txt, stages = _explain("subtract")
     assert stages[0][1] >= 2 and stages[1][1] >= 2, (
-        f"oba stage'e źródłowe powinny mieć >=2 partycji:\n{txt}"
+        f"both source stages should have >=2 partitions:\n{txt}"
     )
     assert txt.count("file_groups={2 groups:") >= 2, txt
 
@@ -156,7 +156,7 @@ def test_nearest_is_broadcast_not_shuffle():
     txt, stages = _explain("nearest")
     assert "NearestExec" in txt, txt
     assert not re.search(r"partitioning=Hash\(", txt), (
-        f"nearest nie powinien mieć hash-shuffle (wzorzec broadcast):\n{txt}"
+        f"nearest should not have a hash shuffle (broadcast pattern):\n{txt}"
     )
 
 
@@ -164,10 +164,10 @@ def test_nearest_compute_stage_is_parallel():
     """NearestExec musi liczyć się na >1 partycji (równoległość z prawej strony)."""
     txt, stages = _explain("nearest")
     assert max(p for _, p in stages) >= 2, (
-        f"NearestExec nie liczy się równolegle:\n{txt}"
+        f"NearestExec does not run in parallel:\n{txt}"
     )
     assert re.search(r"file_groups=\{2 groups:", txt), (
-        f"prawa tabela powinna być czytana jako 2 osobne grupy plików:\n{txt}"
+        f"the right table should be read as 2 separate file groups:\n{txt}"
     )
 
 
@@ -181,10 +181,10 @@ def test_nearest_left_table_travels_in_plan_not_as_scan():
     więc wyłącznie skan A (parts_a).
     """
     txt, _ = _explain("nearest")
-    assert "parts_a" in txt, f"brak skanu prawej tabeli (A):\n{txt}"
+    assert "parts_a" in txt, f"no scan of the right table (A):\n{txt}"
     assert "parts_b" not in txt, (
-        "Lewa tabela pojawiła się w planie jako skan — to znaczy, że NIE jest "
-        f"broadcastowana w ładunku planu:\n{txt}"
+        "The left table appears in the plan as a scan - so it is NOT "
+        f"broadcast in the plan payload:\n{txt}"
     )
 
 
@@ -222,8 +222,8 @@ def test_coverage_roundrobin_is_absent():
     """
     txt, _ = _explain("coverage")
     assert "RoundRobinBatch" not in txt, (
-        f"RoundRobinBatch pojawił się w planie rozproszonym — sprawdź, czy "
-        f"Ballista zmieniła zachowanie:\n{txt}"
+        f"RoundRobinBatch appeared in the distributed plan - check whether "
+        f"Ballista changed its behaviour:\n{txt}"
     )
 
 
@@ -242,7 +242,7 @@ def test_overlap_crosses_serialization_boundary():
     txt, stages = _explain("overlap")
     assert len(stages) >= 2, txt
     assert "IntervalJoinExec" in txt, txt
-    assert "alg=Coitrees" in txt, f"COITrees nie są używane po stronie executora:\n{txt}"
+    assert "alg=Coitrees" in txt, f"COITrees are not used on the executor side:\n{txt}"
     assert "ShuffleReaderExec" in txt, txt
 
 
@@ -270,7 +270,7 @@ def test_overlap_has_no_hash_partitioned_parallelism():
     has_hash = bool(re.search(r"partitioning=Hash\(", txt))
     max_parts = max(p for _, p in stages)
     assert not has_hash and max_parts == 1, (
-        "Overlap uzyskał równoległość hash-partycjonowaną — to ZMIANA na lepsze "
-        "względem udokumentowanego stanu. Zaktualizuj ten test i OPIS.md.\n"
+        "Overlap gained hash-partitioned parallelism - a CHANGE for the better "
+        "compared with the documented state. Update this test and OPIS.md.\n"
         f"{txt}"
     )

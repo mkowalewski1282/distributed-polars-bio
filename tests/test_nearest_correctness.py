@@ -37,7 +37,7 @@ NEAREST_OUTPUT_CSV = BALLISTA_DIR / "output" / "nearest_local_result.csv"
 
 @pytest.mark.skipif(
     not NEAREST_BINARY.exists(),
-    reason="nearest_local nie jest zbudowane — cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bin nearest_local",
+    reason="nearest_local is not built - cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bin nearest_local",
 )
 def test_ballista_local_nearest_matches_oracle():
     """
@@ -57,12 +57,12 @@ def test_ballista_local_nearest_matches_oracle():
     # najbliższym sąsiadem z lewej (indeksowanej). Żeby odpowiadało pb.nearest(A, B),
     # A jest prawą tabelą — nazwy A są w `right_name`, wybrani sąsiedzi z B w `left_name`.
     df = pd.read_csv(NEAREST_OUTPUT_CSV)
-    assert len(df) == len(INTERVALS_A), "nearest ma dać jeden wiersz na każdy przedział A"
+    assert len(df) == len(INTERVALS_A), "nearest must return one row per interval of A"
     actual_distances = dict(zip(df["right_name"].tolist(), df["distance"].tolist()))
     expected_distances = reference_nearest_min_distances(INTERVALS_A, INTERVALS_B)
 
     assert actual_distances == expected_distances, (
-        f"Różnica w odległościach.\n"
+        f"Difference in distances.\n"
         f"pb.nearest():  {expected_distances}\n"
         f"Ballista:      {actual_distances}"
     )
@@ -91,7 +91,7 @@ def test_ballista_and_pb_nearest_pick_same_neighbours():
     pb_pairs = reference_nearest_pairs(INTERVALS_A, INTERVALS_B)
 
     assert ballista_pairs == pb_pairs, (
-        "Ballista i pb.nearest() wybrały różnych sąsiadów (różne reguły remisów) — "
+        "Ballista and pb.nearest() chose different neighbours (different tie rules) - "
         f"Ballista: {sorted(ballista_pairs)}, pb: {sorted(pb_pairs)}"
     )
 
@@ -104,5 +104,5 @@ def test_sail_nearest_matches_oracle():
     expected = reference_nearest_pairs(INTERVALS_A, INTERVALS_B)
 
     assert actual == expected, (
-        f"Tylko w pb.nearest(): {expected - actual}\nTylko w Sail: {actual - expected}"
+        f"Only in pb.nearest(): {expected - actual}\nOnly in Sail: {actual - expected}"
     )

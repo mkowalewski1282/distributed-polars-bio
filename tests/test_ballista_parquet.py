@@ -39,7 +39,7 @@ def run_client(
     args: list[str], env: dict[str, str] | None = None, timeout: int = 180
 ) -> subprocess.CompletedProcess:
     if not CLIENT.exists():
-        pytest.fail(f"brak binarki bench_client — zbuduj: {BUILD_HINT}")
+        pytest.fail(f"missing binary bench_client - build it: {BUILD_HINT}")
     return subprocess.run(
         [str(CLIENT), *args], cwd=BALLISTA_DIR, capture_output=True, text=True,
         timeout=timeout, env=env,
@@ -52,9 +52,9 @@ def op_args(op: str, left: Path, right: Path | None, out: Path) -> list[str]:
 
 
 def check_result(op: str, r: subprocess.CompletedProcess, out: Path, expected) -> None:
-    assert r.returncode == 0, f"bench_client {op}: kod {r.returncode}\nstderr:\n{r.stderr[-3000:]}"
+    assert r.returncode == 0, f"bench_client {op}: exit code {r.returncode}\nstderr:\n{r.stderr[-3000:]}"
     lines = r.stdout.strip().splitlines()
-    assert len(lines) == 1, f"stdout ma być jedną linią JSON, jest:\n{r.stdout}"
+    assert len(lines) == 1, f"stdout must be one JSON line, got:\n{r.stdout}"
     report = json.loads(lines[0])
     df = pl.read_parquet(out)
     assert report["rows"] == df.height
@@ -62,7 +62,7 @@ def check_result(op: str, r: subprocess.CompletedProcess, out: Path, expected) -
     assert report["checksum"] == format_checksum(checksum_rows(op, expected.elements()))
     assert tuple(df.columns) == OUTPUT_COLUMNS[op]
     actual = row_multiset(op, df)
-    assert actual == expected, f"{op}: rozjazd z polars-bio — {describe_diff(expected, actual)}"
+    assert actual == expected, f"{op}: mismatch with polars-bio - {describe_diff(expected, actual)}"
 
 
 @pytest.mark.parametrize(
@@ -82,13 +82,13 @@ def check_result(op: str, r: subprocess.CompletedProcess, out: Path, expected) -
 )
 def test_bench_client_rejects_bad_arguments(args):
     r = run_client(args, timeout=30)
-    assert r.returncode == 2, f"{args}: kod {r.returncode}, stderr: {r.stderr}"
+    assert r.returncode == 2, f"{args}: exit code {r.returncode}, stderr: {r.stderr}"
     assert "usage" in r.stderr
     assert r.stdout == ""
 
 
 def test_missing_data_path_is_reported(tmp_path):
-    missing = tmp_path / "nie_ma_takiego_katalogu"
+    missing = tmp_path / "no_such_dir"
     r = run_client(["--op", "merge", "--left", str(missing)])
     assert r.returncode == 1, r.stderr
     assert str(missing) in r.stderr

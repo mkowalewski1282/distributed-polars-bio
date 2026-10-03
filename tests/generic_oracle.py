@@ -49,5 +49,5 @@ def reference(
     elif op in ("overlap", "nearest", "coverage", "subtract"):
         result = getattr(pb, op)(left, right, cols1=c, cols2=c)
     else:
-        raise ValueError(f"nieznana operacja {op!r}")
+        raise ValueError(f"unknown operation {op!r}")
     return normalize_polars_bio(op, result.collect(), tuple(cols))

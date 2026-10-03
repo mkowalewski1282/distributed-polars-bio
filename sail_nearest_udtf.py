@@ -143,14 +143,14 @@ def main():
     print("  Genomic nearest: polars-bio vs Sail+polars-bio (UDTF)")
     print("=" * 60)
 
-    print("\n[1/2] polars-bio (lokalnie)...")
+    print("\n[1/2] polars-bio (local)...")
     pb_result, pb_time = run_polars_bio()
-    print(f"  Czas: {pb_time:.4f}s  |  Wiersze: {len(pb_result)}")
+    print(f"  Time: {pb_time:.4f}s  |  Rows: {len(pb_result)}")
     print(pb_result)
 
     print("\n[2/2] Sail + polars-bio (UDTF)...")
     sail_result, sail_time = run_sail_nearest()
-    print(f"  Czas: {sail_time:.4f}s  |  Wiersze: {len(sail_result)}")
+    print(f"  Time: {sail_time:.4f}s  |  Rows: {len(sail_result)}")
     print(sail_result.sort_values(["chrom", "start_a"]).to_string(index=False))
 
     pb_pairs = set(zip(pb_result["name_1"].to_list(), pb_result["name_2"].to_list()))
@@ -158,11 +158,11 @@ def main():
 
     print("\n" + "=" * 60)
     if pb_pairs == sail_pairs:
-        print("  WYNIK: identyczne pary nearest ✓")
+        print("  RESULT: identical nearest pairs ✓")
     else:
-        print("  WYNIK: RÓŻNICA!")
-        print(f"  Tylko w polars-bio: {pb_pairs - sail_pairs}")
-        print(f"  Tylko w Sail:       {sail_pairs - pb_pairs}")
+        print("  RESULT: DIFFERENCE!")
+        print(f"  Only in polars-bio: {pb_pairs - sail_pairs}")
+        print(f"  Only in Sail:       {sail_pairs - pb_pairs}")
     print("=" * 60)
 
 if __name__ == "__main__":

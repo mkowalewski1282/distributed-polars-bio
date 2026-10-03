@@ -4,8 +4,8 @@ napisy, komunikaty, f-stringi). Polskich słów bez znaków diakrytycznych nie w
 nawrotem, nie zastępuje przeglądu.
 
 Zakres: pliki .py śledzone przez git i pliki .rs w ballista_genomics/src. Poza zakresem: kod
-zwendorowany (należy do upstreamu) i źródła raportów w raporty/ (podpisy rysunków do polskich
-raportów to treść dokumentu, nie komunikaty programu)."""
+zwendorowany (należy do upstreamu), źródła raportów w raporty/ (podpisy rysunków do polskich
+raportów to treść dokumentu, nie komunikaty programu) i ten plik (dane testowe skanera)."""
 
 from __future__ import annotations
 
@@ -115,7 +115,9 @@ def source_files() -> list[Path]:
         ["git", "ls-files", "--", "*.py", "ballista_genomics/src/*.rs"],
         cwd=REPO, capture_output=True, text=True, check=True,
     ).stdout.split()
-    return [REPO / name for name in listed if not name.startswith(EXCLUDED)]
+    # Bez tego pliku: jego przypadki testowe celowo zawierają polskie znaki w napisach.
+    own = Path(__file__).resolve()
+    return [REPO / name for name in listed if not name.startswith(EXCLUDED) and REPO / name != own]
 
 
 
@@ -164,9 +166,9 @@ def test_source_files_cover_python_and_rust_without_excluded_trees():
     names = {str(path.relative_to(REPO)) for path in source_files()}
     assert {"bench/orchestrator.py", "ballista_genomics/src/bin/bench_client.rs"} <= names
     assert not any(name.startswith(EXCLUDED) for name in names)
+    assert "tests/test_code_language.py" not in names
 
 
-@pytest.mark.xfail(strict=True, reason="translation in progress (plan 3b-1, tasks 7-9)")
 def test_source_code_outside_comments_is_english():
     found = [
         f"{path.relative_to(REPO)}:{line}: {text[:100]}"

@@ -41,7 +41,7 @@ STANDALONE_HANG_TIMEOUT_S = 90
 _STANDALONE_BROADCAST_HANGS = pytest.mark.xfail(
     raises=subprocess.TimeoutExpired,
     strict=True,
-    reason="standalone: limit 4 MiB klienta gRPC executora przy broadcaście (specyfikacja 9.2)",
+    reason="standalone: 4 MiB gRPC client limit of the executor with a broadcast (spec 9.2)",
 )
 STANDALONE_CASES = [
     pytest.param(op, marks=_STANDALONE_BROADCAST_HANGS) if op in ("nearest", "coverage") else op
@@ -53,7 +53,7 @@ _PROBLEMS = verify(data_dir(), {n: r for n, r in expected_rows().items() if n in
 pytestmark = [
     pytest.mark.real_data,
     pytest.mark.skipif(
-        bool(_PROBLEMS), reason=f"brak kompletnych danych pary {PAIR} w {data_dir()}: {_PROBLEMS}"
+        bool(_PROBLEMS), reason=f"incomplete data for pair {PAIR} in {data_dir()}: {_PROBLEMS}"
     ),
 ]
 
