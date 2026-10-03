@@ -29,10 +29,10 @@ pub fn expect_string_literal(args: &[Expr], idx: usize, fname: &str) -> Result<S
     match args.get(idx) {
         Some(Expr::Literal(ScalarValue::Utf8(Some(v)), _)) => Ok(v.clone()),
         Some(other) => Err(DataFusionError::Plan(format!(
-            "{fname}(): argument {idx} musi być literałem tekstowym, dostałem: {other}"
+            "{fname}(): argument {idx} must be a string literal, got: {other}"
         ))),
         None => Err(DataFusionError::Plan(format!(
-            "{fname}(): brakuje argumentu {idx}"
+            "{fname}(): missing argument {idx}"
         ))),
     }
 }
@@ -52,10 +52,10 @@ pub fn expect_i64_literal(args: &[Expr], idx: usize, fname: &str) -> Result<i64>
         Some(Expr::Literal(ScalarValue::Int32(Some(v)), _)) => Ok(*v as i64),
         Some(Expr::Literal(ScalarValue::UInt64(Some(v)), _)) => Ok(*v as i64),
         Some(other) => Err(DataFusionError::Plan(format!(
-            "{fname}(): argument {idx} musi być literałem całkowitoliczbowym, dostałem: {other}"
+            "{fname}(): argument {idx} must be an integer literal, got: {other}"
         ))),
         None => Err(DataFusionError::Plan(format!(
-            "{fname}(): brakuje argumentu {idx}"
+            "{fname}(): missing argument {idx}"
         ))),
     }
 }
@@ -63,7 +63,7 @@ pub fn expect_i64_literal(args: &[Expr], idx: usize, fname: &str) -> Result<i64>
 fn parse_merge(args: &[Expr]) -> Result<DistPayload> {
     if args.len() < 6 {
         return Err(DataFusionError::Plan(
-            "dist_merge() oczekuje: table, csv_path, col_chrom, col_start, col_end, \
+            "dist_merge() expects: table, csv_path, col_chrom, col_start, col_end, \
              min_dist [, 'strict'|'weak']"
                 .to_string(),
         ));
@@ -86,7 +86,7 @@ fn parse_merge(args: &[Expr]) -> Result<DistPayload> {
 fn parse_subtract(args: &[Expr]) -> Result<DistPayload> {
     if args.len() < 7 {
         return Err(DataFusionError::Plan(
-            "dist_subtract() oczekuje: left_table, left_path, right_table, right_path, \
+            "dist_subtract() expects: left_table, left_path, right_table, right_path, \
              col_chrom, col_start, col_end [, 'strict'|'weak']"
                 .to_string(),
         ));
@@ -115,10 +115,10 @@ fn expect_bool_literal(args: &[Expr], idx: usize, fname: &str) -> Result<bool> {
     match args.get(idx) {
         Some(Expr::Literal(ScalarValue::Boolean(Some(v)), _)) => Ok(*v),
         Some(other) => Err(DataFusionError::Plan(format!(
-            "{fname}(): argument {idx} musi być literałem logicznym, dostałem: {other}"
+            "{fname}(): argument {idx} must be a boolean literal, got: {other}"
         ))),
         None => Err(DataFusionError::Plan(format!(
-            "{fname}(): brakuje argumentu {idx}"
+            "{fname}(): missing argument {idx}"
         ))),
     }
 }
@@ -126,7 +126,7 @@ fn expect_bool_literal(args: &[Expr], idx: usize, fname: &str) -> Result<bool> {
 fn parse_nearest(args: &[Expr]) -> Result<DistPayload> {
     if args.len() < 10 {
         return Err(DataFusionError::Plan(
-            "dist_nearest() oczekuje: left_table, left_path, right_table, right_path, \
+            "dist_nearest() expects: left_table, left_path, right_table, right_path, \
              k, include_overlaps, compute_distance, col_chrom, col_start, col_end \
              [, 'strict'|'weak']"
                 .to_string(),
@@ -161,7 +161,7 @@ fn parse_nearest(args: &[Expr]) -> Result<DistPayload> {
 fn parse_coverage(args: &[Expr]) -> Result<DistPayload> {
     if args.len() < 7 {
         return Err(DataFusionError::Plan(
-            "dist_coverage() oczekuje: reads_table, reads_path, targets_table, targets_path, \
+            "dist_coverage() expects: reads_table, reads_path, targets_table, targets_path, \
              col_chrom, col_start, col_end [, 'strict'|'weak']"
                 .to_string(),
         ));
@@ -190,7 +190,7 @@ fn parse_coverage(args: &[Expr]) -> Result<DistPayload> {
 fn parse_overlap(args: &[Expr]) -> Result<DistPayload> {
     if args.len() < 7 {
         return Err(DataFusionError::Plan(
-            "dist_overlap() oczekuje: left_table, left_csv, right_table, right_csv, \
+            "dist_overlap() expects: left_table, left_csv, right_table, right_csv, \
              col_chrom, col_start, col_end [, 'strict'|'weak']"
                 .to_string(),
         ));

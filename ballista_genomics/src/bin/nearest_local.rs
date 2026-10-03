@@ -12,7 +12,7 @@ use datafusion_bio_function_ranges::create_bio_session;
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("============================================================");
-    println!("  Faza C: nearest (lokalnie, datafusion-bio-function-ranges)");
+    println!("  Phase C: nearest (local, datafusion-bio-function-ranges)");
     println!("============================================================\n");
 
     let ctx = create_bio_session();
@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
     let result = df.collect().await?;
     let elapsed = t0.elapsed();
 
-    println!("Czas: {:.4}s", elapsed.as_secs_f64());
+    println!("Time: {:.4}s", elapsed.as_secs_f64());
     for batch in &result {
         println!(
             "{}",
@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
     for batch in &result {
         writer.write(batch)?;
     }
-    println!("Wynik zapisany do output/nearest_local_result.csv");
+    println!("Result written to output/nearest_local_result.csv");
     println!("============================================================");
 
     Ok(())

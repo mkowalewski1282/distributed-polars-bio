@@ -37,9 +37,9 @@ fn col(source: &str, alias: &str) -> String {
 impl Scenario {
     pub fn validate(&self) -> Result<(), String> {
         match (self.op, self.right.is_some()) {
-            (DistOp::Merge, true) => Err("merge działa na jednej tabeli — bez --right".to_string()),
+            (DistOp::Merge, true) => Err("merge takes a single table (no --right)".to_string()),
             (DistOp::Merge, false) | (_, true) => Ok(()),
-            (op, false) => Err(format!("{} wymaga --right", op.as_str())),
+            (op, false) => Err(format!("{} requires --right", op.as_str())),
         }
     }
 

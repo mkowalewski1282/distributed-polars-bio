@@ -14,7 +14,7 @@ async fn main() -> Result<()> {
     let arg = std::env::args().nth(1);
     let Some(op) = arg.as_deref().and_then(DistOp::from_cli) else {
         eprintln!(
-            "użycie: dist_ops <overlap|merge|subtract|nearest|coverage>, dostałem: {:?}",
+            "usage: dist_ops <overlap|merge|subtract|nearest|coverage>, got: {:?}",
             arg
         );
         std::process::exit(2);

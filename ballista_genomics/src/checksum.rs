@@ -66,7 +66,7 @@ impl Checksum {
         for name in key_columns(self.op) {
             let column = batch.column_by_name(name).ok_or_else(|| {
                 DataFusionError::Execution(format!(
-                    "suma kontrolna {}: brak kolumny {name} w wyniku",
+                    "checksum {}: no column {name} in the result",
                     self.op.as_str()
                 ))
             })?;

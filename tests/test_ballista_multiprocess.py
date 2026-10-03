@@ -205,7 +205,7 @@ def test_ballista_node_rejects_bad_arguments():
             timeout=30,
         )
         assert r.returncode == 2, f"{args}: kod {r.returncode}, stderr: {r.stderr}"
-        assert "użycie" in r.stderr, f"{args}: brak instrukcji użycia: {r.stderr}"
+        assert "usage" in r.stderr, f"{args}: no usage text: {r.stderr}"
 
 
 def test_start_cluster_reports_crashed_process(tmp_path):
@@ -404,7 +404,7 @@ def test_operation_runs_distributed_across_processes(cluster, op, tmp_path):
     assert result.returncode == 0, (
         f"dist_ops {op}:\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
-    assert "zewnętrznym schedulerem" in result.stdout, (
+    assert "external Ballista scheduler" in result.stdout, (
         f"klient nie użył trybu zdalnego:\n{result.stdout}"
     )
     assert (tmp_path / f"dist_{op}_result.csv").exists(), (

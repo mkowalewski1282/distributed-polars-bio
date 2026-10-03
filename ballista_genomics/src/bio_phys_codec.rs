@@ -145,11 +145,11 @@ fn decode_subtract(
     let has_extra_cols = read_bool(buf, pos)?;
     let left = inputs
         .first()
-        .ok_or_else(|| DataFusionError::Internal("SubtractExec: brak lewego wejscia".into()))?
+        .ok_or_else(|| DataFusionError::Internal("SubtractExec: missing left input".into()))?
         .clone();
     let right = inputs
         .get(1)
-        .ok_or_else(|| DataFusionError::Internal("SubtractExec: brak prawego wejscia".into()))?
+        .ok_or_else(|| DataFusionError::Internal("SubtractExec: missing right input".into()))?
         .clone();
     build_subtract_exec(
         left,
@@ -176,7 +176,7 @@ fn byte_to_filter_op(b: u8) -> Result<FilterOp> {
         1 => FilterOp::Strict,
         other => {
             return Err(DataFusionError::Internal(format!(
-                "nieprawidlowy bajt FilterOp: {other}"
+                "invalid FilterOp byte: {other}"
             )));
         }
     })
@@ -252,7 +252,7 @@ fn decode_nearest(
     let left_batch = read_batch_ipc(buf, pos)?;
     let right = inputs
         .first()
-        .ok_or_else(|| DataFusionError::Internal("NearestExec: brak wejscia".into()))?
+        .ok_or_else(|| DataFusionError::Internal("NearestExec: missing input".into()))?
         .clone();
     build_nearest_exec(
         right,
@@ -294,7 +294,7 @@ fn decode_coverage(
     let left_batch = read_batch_ipc(buf, pos)?;
     let right = inputs
         .first()
-        .ok_or_else(|| DataFusionError::Internal("DistCoverageExec: brak wejscia".into()))?
+        .ok_or_else(|| DataFusionError::Internal("DistCoverageExec: missing input".into()))?
         .clone();
     let inner = build_count_overlaps_exec(
         right,
@@ -336,7 +336,7 @@ fn decode_merge(
     let min_dist = read_i64(buf, pos)?;
     let input = inputs
         .first()
-        .ok_or_else(|| DataFusionError::Internal("MergeExec: brak wejscia".into()))?
+        .ok_or_else(|| DataFusionError::Internal("MergeExec: missing input".into()))?
         .clone();
     build_merge_exec(input, schema, columns, min_dist, strict)
 }
@@ -375,7 +375,7 @@ impl PhysicalExtensionCodec for BioRangesPhysicalCodec {
             TAG_NEAREST => decode_nearest(buf, &mut pos, inputs),
             TAG_COVERAGE => decode_coverage(buf, &mut pos, inputs),
             other => Err(DataFusionError::Internal(format!(
-                "BioRangesPhysicalCodec: nieznany tag operacji {other}"
+                "BioRangesPhysicalCodec: unknown operation tag {other}"
             ))),
         }
     }

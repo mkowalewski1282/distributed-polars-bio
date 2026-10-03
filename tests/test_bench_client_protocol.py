@@ -59,7 +59,7 @@ def test_rust_checksum_matches_golden_values(op, tmp_path):
 def test_checksum_mode_rejects_other_arguments(args):
     r = run_client(args, timeout=30)
     assert r.returncode == 2, f"{args}: kod {r.returncode}, stderr: {r.stderr}"
-    assert "użycie" in r.stderr and r.stdout == ""
+    assert "usage" in r.stderr and r.stdout == ""
 
 
 @pytest.mark.parametrize("op", OPS)

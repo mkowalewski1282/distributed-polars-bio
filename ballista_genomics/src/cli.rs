@@ -18,14 +18,14 @@ pub fn parse_flags(
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         let value = if value_flags.contains(&arg.as_str()) {
-            Some(it.next().ok_or_else(|| format!("brak wartości dla {arg}"))?.clone())
+            Some(it.next().ok_or_else(|| format!("missing value for {arg}"))?.clone())
         } else if bool_flags.contains(&arg.as_str()) {
             None
         } else {
-            return Err(format!("nieznany argument: {arg}"));
+            return Err(format!("unknown argument: {arg}"));
         };
         if flags.insert(arg.clone(), value).is_some() {
-            return Err(format!("powtórzony argument: {arg}"));
+            return Err(format!("repeated argument: {arg}"));
         }
     }
     Ok(flags)
@@ -33,7 +33,7 @@ pub fn parse_flags(
 
 /// Wymagana flaga z wartością danego typu.
 pub fn required<T: FromStr>(flags: &Flags, name: &str) -> Result<T, String> {
-    optional(flags, name)?.ok_or_else(|| format!("brak wymaganej flagi {name}"))
+    optional(flags, name)?.ok_or_else(|| format!("missing required flag {name}"))
 }
 
 /// Opcjonalna flaga z wartością danego typu; brak flagi → `None`.
@@ -43,6 +43,6 @@ pub fn optional<T: FromStr>(flags: &Flags, name: &str) -> Result<Option<T>, Stri
         Some(v) => v
             .parse::<T>()
             .map(Some)
-            .map_err(|_| format!("niepoprawna wartość flagi {name}")),
+            .map_err(|_| format!("invalid value for flag {name}")),
     }
 }

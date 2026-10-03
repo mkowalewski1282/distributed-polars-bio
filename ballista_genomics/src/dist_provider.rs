@@ -190,7 +190,7 @@ async fn register_source(session: &DFSessionContext, t: &TableRef) -> Result<()>
     let path = Path::new(&t.path);
     if !path.exists() {
         return Err(DataFusionError::Plan(format!(
-            "brak danych tabeli {}: {}",
+            "no data for table {}: {}",
             t.name, t.path
         )));
     }

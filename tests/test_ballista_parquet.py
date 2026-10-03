@@ -83,7 +83,7 @@ def check_result(op: str, r: subprocess.CompletedProcess, out: Path, expected) -
 def test_bench_client_rejects_bad_arguments(args):
     r = run_client(args, timeout=30)
     assert r.returncode == 2, f"{args}: kod {r.returncode}, stderr: {r.stderr}"
-    assert "użycie" in r.stderr
+    assert "usage" in r.stderr
     assert r.stdout == ""
 
 

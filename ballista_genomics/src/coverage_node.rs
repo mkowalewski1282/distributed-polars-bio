@@ -308,5 +308,5 @@ impl TableProvider for DistCoverageProvider {
 
 /// Pomocnicze: `DataFusionError` z komunikatem o brakujacym wejsciu.
 pub fn missing_input(what: &str) -> DataFusionError {
-    DataFusionError::Internal(format!("DistCoverageExec: brak {what}"))
+    DataFusionError::Internal(format!("DistCoverageExec: missing {what}"))
 }

@@ -35,14 +35,14 @@ use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::prelude::{ParquetReadOptions, SessionContext};
 use futures::StreamExt;
 
-const USAGE: &str = "użycie:
-  bench_client --op <overlap|nearest|coverage|merge|subtract> --left <ŚCIEŻKA>
-               [--right <ŚCIEŻKA>] [--cols <kontig,start,koniec>] [--output <PLIK.parquet>]
-  bench_client --op <OPERACJA> --checksum <PLIK.parquet>
-  ŚCIEŻKA: plik albo katalog plików Parquet (lub CSV); --right dla operacji innych niż merge.
-  Domyślne --cols: contig,pos_start,pos_end (zbiory databio-8p).
-  --checksum: suma kontrolna pliku w schemacie znormalizowanym, bez uruchamiania operacji.
-  Środowisko: BALLISTA_SCHEDULER_URL (klaster), BIO_TARGET_PARTITIONS (≥ 2, domyślnie 4).";
+const USAGE: &str = "usage:
+  bench_client --op <overlap|nearest|coverage|merge|subtract> --left <PATH>
+               [--right <PATH>] [--cols <contig,start,end>] [--output <FILE.parquet>]
+  bench_client --op <OPERATION> --checksum <FILE.parquet>
+  PATH: a Parquet (or CSV) file or a directory of them; --right for operations other than merge.
+  Default --cols: contig,pos_start,pos_end (databio-8p datasets).
+  --checksum: checksum of a file in the normalized schema, without running an operation.
+  Environment: BALLISTA_SCHEDULER_URL (cluster), BIO_TARGET_PARTITIONS (≥ 2, default 4).";
 
 const DEFAULT_COLS: &str = "contig,pos_start,pos_end";
 
@@ -60,13 +60,13 @@ fn parse(args: &[String]) -> std::result::Result<Mode, String> {
         &[],
     )?;
     let op_name: String = required(&flags, "--op")?;
-    let op = DistOp::from_cli(&op_name).ok_or_else(|| format!("nieznana operacja: {op_name}"))?;
+    let op = DistOp::from_cli(&op_name).ok_or_else(|| format!("unknown operation: {op_name}"))?;
     if let Some(file) = optional::<String>(&flags, "--checksum")? {
         if let Some(other) = ["--left", "--right", "--cols", "--output"]
             .into_iter()
             .find(|f| flags.contains_key(*f))
         {
-            return Err(format!("--checksum nie łączy się z {other}"));
+            return Err(format!("--checksum cannot be combined with {other}"));
         }
         return Ok(Mode::Checksum { op, file });
     }
@@ -79,9 +79,9 @@ fn parse(args: &[String]) -> std::result::Result<Mode, String> {
         .map(str::to_string)
         .collect::<Vec<_>>()
         .try_into()
-        .map_err(|_| format!("--cols: trzy nazwy oddzielone przecinkami, dostałem: {cols_raw}"))?;
+        .map_err(|_| format!("--cols: expected three comma-separated names, got: {cols_raw}"))?;
     if cols.iter().any(String::is_empty) {
-        return Err(format!("--cols: pusta nazwa kolumny w {cols_raw}"));
+        return Err(format!("--cols: empty column name in {cols_raw}"));
     }
     let scenario = Scenario {
         op,
@@ -122,7 +122,7 @@ fn peak_rss_bytes() -> std::io::Result<u64> {
         .and_then(|v| v.trim().strip_suffix(" kB"))
         .and_then(|kb| kb.trim().parse::<u64>().ok())
         .map(|kb| kb * 1024)
-        .ok_or_else(|| std::io::Error::other("brak VmHWM w /proc/self/status"))
+        .ok_or_else(|| std::io::Error::other("no VmHWM in /proc/self/status"))
 }
 
 struct Report {
@@ -188,7 +188,7 @@ async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Najpierw WYŁĄCZNIE parsowanie (kod 2), potem działanie (kod 1) — jak w ballista_node.
     let mode = parse(&args).unwrap_or_else(|msg| {
-        eprintln!("błąd: {msg}\n{USAGE}");
+        eprintln!("error: {msg}\n{USAGE}");
         std::process::exit(2);
     });
     init_logging();

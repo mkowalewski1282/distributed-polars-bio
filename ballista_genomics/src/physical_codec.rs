@@ -307,7 +307,7 @@ impl PhysicalExtensionCodec for IntervalJoinPhysicalCodec {
         // identyczny niezależnie czy liczony po stronie klienta czy executora.
         let intervals = parse_intervals(filter.as_ref()).ok_or_else(|| {
             DataFusionError::Internal(
-                "IntervalJoinPhysicalCodec: nie udało się odtworzyć ColIntervals z filter".into(),
+                "IntervalJoinPhysicalCodec: could not rebuild ColIntervals from the filter".into(),
             )
         })?;
 

@@ -56,7 +56,7 @@ pub fn target_partitions() -> std::result::Result<usize, String> {
             .parse::<usize>()
             .ok()
             .filter(|n| *n >= 2)
-            .ok_or_else(|| format!("{TARGET_PARTITIONS_ENV}: liczba całkowita ≥ 2, jest {v:?}")),
+            .ok_or_else(|| format!("{TARGET_PARTITIONS_ENV}: expected an integer ≥ 2, got {v:?}")),
         _ => Ok(DEFAULT_TARGET_PARTITIONS),
     }
 }
@@ -128,7 +128,7 @@ pub fn spec(op: DistOp) -> OpSpec {
                 .to_string(),
             output_csv: "dist_overlap_result.csv",
             explain_txt: "dist_overlap_explain.txt",
-            title: "dist_overlap + COITrees w pełni rozproszone",
+            title: "dist_overlap + COITrees, fully distributed",
         },
         DistOp::Merge => OpSpec {
             // Dane celowo rozbite na DWA pliki (data/parts_a/): nakładające się
@@ -143,7 +143,7 @@ pub fn spec(op: DistOp) -> OpSpec {
                 .to_string(),
             output_csv: "dist_merge_result.csv",
             explain_txt: "dist_merge_explain.txt",
-            title: "dist_merge w pełni rozproszony (hash-shuffle po chrom)",
+            title: "dist_merge, fully distributed (hash shuffle by chrom)",
         },
         DistOp::Subtract => OpSpec {
             // Wezel BINARNY: obie strony musza byc ko-partycjonowane po chrom,
@@ -158,7 +158,7 @@ pub fn spec(op: DistOp) -> OpSpec {
                 .to_string(),
             output_csv: "dist_subtract_result.csv",
             explain_txt: "dist_subtract_explain.txt",
-            title: "dist_subtract w pełni rozproszony (dwustronny hash-shuffle)",
+            title: "dist_subtract, fully distributed (two-sided hash shuffle)",
         },
         DistOp::Nearest => OpSpec {
             // Wzorzec BROADCAST, nie hash-shuffle: NearestExec nie nadpisuje
@@ -182,7 +182,7 @@ pub fn spec(op: DistOp) -> OpSpec {
                 .to_string(),
             output_csv: "dist_nearest_result.csv",
             explain_txt: "dist_nearest_explain.txt",
-            title: "dist_nearest w pełni rozproszony (broadcast lewej tabeli)",
+            title: "dist_nearest, fully distributed (broadcast of the left table)",
         },
         DistOp::Coverage => OpSpec {
             // ODWROCONA KONWENCJA ARGUMENTOW, udokumentowana w Fazie C:
@@ -198,7 +198,7 @@ pub fn spec(op: DistOp) -> OpSpec {
                 .to_string(),
             output_csv: "dist_coverage_result.csv",
             explain_txt: "dist_coverage_explain.txt",
-            title: "dist_coverage w pełni rozproszony (broadcast + węzeł-nośnik)",
+            title: "dist_coverage, fully distributed (broadcast + carrier node)",
         },
     }
 }
@@ -211,17 +211,17 @@ pub async fn run(op: DistOp) -> Result<()> {
     println!("============================================================\n");
 
     match scheduler_url() {
-        Some(url) => println!("Łączenie z zewnętrznym schedulerem Ballisty: {url}"),
-        None => println!("Łączenie z Ballista standalone (scheduler + executor in-proc)..."),
+        Some(url) => println!("Connecting to external Ballista scheduler: {url}"),
+        None => println!("Connecting to Ballista standalone (scheduler + executor in-proc)..."),
     }
     let ctx = connect_from_env().await?;
-    println!("Klaster Ballista gotowy.\n");
+    println!("Ballista cluster ready.\n");
 
     let t0 = Instant::now();
     let result = ctx.sql(&s.sql).await?.collect().await?;
     let elapsed = t0.elapsed();
 
-    println!("Czas: {:.4}s", elapsed.as_secs_f64());
+    println!("Time: {:.4}s", elapsed.as_secs_f64());
     for batch in &result {
         println!(
             "{}",
@@ -235,7 +235,7 @@ pub async fn run(op: DistOp) -> Result<()> {
     let output_csv = out_dir.join(s.output_csv);
     let explain_txt = out_dir.join(s.explain_txt);
     write_csv(&result, &output_csv)?;
-    println!("Wynik zapisany do {}", output_csv.display());
+    println!("Result written to {}", output_csv.display());
 
     // PUNKT KONTROLNY: zrzut planu ROZPROSZONEGO z podziałem na query stage'e.
     // Ballista implementuje EXPLAIN ANALYZE tak, że zwraca sekcje
@@ -248,13 +248,13 @@ pub async fn run(op: DistOp) -> Result<()> {
             Ok(batches) => {
                 std::fs::write(&explain_txt, extract_text(&batches))?;
                 println!(
-                    "Plan rozproszony (EXPLAIN ANALYZE) zapisany do {}",
+                    "Distributed plan (EXPLAIN ANALYZE) written to {}",
                     explain_txt.display()
                 );
             }
-            Err(e) => eprintln!("UWAGA: EXPLAIN ANALYZE nie wykonało się: {e}"),
+            Err(e) => eprintln!("WARNING: EXPLAIN ANALYZE failed: {e}"),
         },
-        Err(e) => eprintln!("UWAGA: EXPLAIN ANALYZE nie sparsowało się: {e}"),
+        Err(e) => eprintln!("WARNING: EXPLAIN ANALYZE could not be parsed: {e}"),
     }
 
     Ok(())

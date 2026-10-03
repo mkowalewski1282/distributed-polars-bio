@@ -18,7 +18,7 @@ pub fn write_u32(buf: &mut Vec<u8>, v: u32) {
 pub fn read_u32(buf: &[u8], pos: &mut usize) -> Result<u32> {
     let bytes = buf
         .get(*pos..*pos + 4)
-        .ok_or_else(|| DataFusionError::Internal("codec_io: bufor obcięty (u32)".into()))?;
+        .ok_or_else(|| DataFusionError::Internal("codec_io: truncated buffer (u32)".into()))?;
     *pos += 4;
     Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
 }
@@ -30,7 +30,7 @@ pub fn write_i64(buf: &mut Vec<u8>, v: i64) {
 pub fn read_i64(buf: &[u8], pos: &mut usize) -> Result<i64> {
     let bytes = buf
         .get(*pos..*pos + 8)
-        .ok_or_else(|| DataFusionError::Internal("codec_io: bufor obcięty (i64)".into()))?;
+        .ok_or_else(|| DataFusionError::Internal("codec_io: truncated buffer (i64)".into()))?;
     *pos += 8;
     Ok(i64::from_le_bytes(bytes.try_into().unwrap()))
 }
@@ -42,7 +42,7 @@ pub fn write_bool(buf: &mut Vec<u8>, v: bool) {
 pub fn read_bool(buf: &[u8], pos: &mut usize) -> Result<bool> {
     let b = *buf
         .get(*pos)
-        .ok_or_else(|| DataFusionError::Internal("codec_io: bufor obcięty (bool)".into()))?;
+        .ok_or_else(|| DataFusionError::Internal("codec_io: truncated buffer (bool)".into()))?;
     *pos += 1;
     Ok(b != 0)
 }
@@ -54,7 +54,7 @@ pub fn write_u8(buf: &mut Vec<u8>, v: u8) {
 pub fn read_u8(buf: &[u8], pos: &mut usize) -> Result<u8> {
     let b = *buf
         .get(*pos)
-        .ok_or_else(|| DataFusionError::Internal("codec_io: bufor obcięty (u8)".into()))?;
+        .ok_or_else(|| DataFusionError::Internal("codec_io: truncated buffer (u8)".into()))?;
     *pos += 1;
     Ok(b)
 }
@@ -68,7 +68,7 @@ pub fn read_bytes<'a>(buf: &'a [u8], pos: &mut usize) -> Result<&'a [u8]> {
     let len = read_u32(buf, pos)? as usize;
     let slice = buf
         .get(*pos..*pos + len)
-        .ok_or_else(|| DataFusionError::Internal("codec_io: bufor obcięty (bytes)".into()))?;
+        .ok_or_else(|| DataFusionError::Internal("codec_io: truncated buffer (bytes)".into()))?;
     *pos += len;
     Ok(slice)
 }
@@ -80,7 +80,7 @@ pub fn write_str(buf: &mut Vec<u8>, s: &str) {
 pub fn read_str(buf: &[u8], pos: &mut usize) -> Result<String> {
     let bytes = read_bytes(buf, pos)?;
     String::from_utf8(bytes.to_vec())
-        .map_err(|e| DataFusionError::Internal(format!("codec_io: niepoprawny UTF-8: {e}")))
+        .map_err(|e| DataFusionError::Internal(format!("codec_io: invalid UTF-8: {e}")))
 }
 
 /// Trójka nazw kolumn (kontig, start, koniec) — powtarza się w KAŻDEJ operacji

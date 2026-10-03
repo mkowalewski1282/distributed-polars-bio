@@ -24,7 +24,7 @@ use ballista_scheduler::cluster::BallistaCluster;
 use ballista_scheduler::config::{SchedulerConfig, TaskDistributionPolicy};
 use ballista_scheduler::scheduler_process::start_server;
 
-const USAGE: &str = "użycie:
+const USAGE: &str = "usage:
   ballista_node scheduler --port <P>
   ballista_node executor --scheduler-port <P> --port <F> --grpc-port <G> \\
                          --work-dir <DIR> --concurrent-tasks <N> [--no-codecs]";
@@ -79,7 +79,7 @@ async fn run_scheduler(port: u16) -> Result<(), Box<dyn Error>> {
 
     let addr: SocketAddr = format!("127.0.0.1:{port}").parse()?;
     let cluster = BallistaCluster::new_from_config(&config).await?;
-    println!("ballista_node: scheduler nasłuchuje na {addr}");
+    println!("ballista_node: scheduler listening on {addr}");
     start_server(cluster, addr, Arc::new(config)).await?;
     Ok(())
 }
@@ -108,12 +108,12 @@ async fn run_executor(o: ExecutorOpts) -> Result<(), Box<dyn Error>> {
         ..ExecutorProcessConfig::default()
     };
     println!(
-        "ballista_node: executor (flight {}, grpc {}, katalog {}, sloty {}, kodery: {})",
+        "ballista_node: executor (flight {}, grpc {}, work dir {}, slots {}, codecs: {})",
         o.port,
         o.grpc_port,
         o.work_dir,
         o.concurrent_tasks,
-        if o.codecs { "tak" } else { "NIE (kontrola negatywna)" }
+        if o.codecs { "yes" } else { "NO (negative control)" }
     );
     start_executor_process(Arc::new(config)).await?;
     Ok(())
@@ -131,7 +131,7 @@ fn init_logging() {
 }
 
 fn usage_error(msg: &str) -> ! {
-    eprintln!("błąd: {msg}\n{USAGE}");
+    eprintln!("error: {msg}\n{USAGE}");
     std::process::exit(2);
 }
 
@@ -158,7 +158,7 @@ async fn main() {
             init_logging();
             run_executor(opts).await
         }
-        _ => usage_error("podaj rolę: scheduler albo executor"),
+        _ => usage_error("role required: scheduler or executor"),
     };
     if let Err(e) = outcome {
         eprintln!("ballista_node: {e}");
