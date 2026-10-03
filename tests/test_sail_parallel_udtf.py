@@ -128,12 +128,16 @@ def _run_merge_udtf(factory) -> set[tuple[str, int, int]]:
     spark = SparkSession.builder.remote(f"sc://{ip}:{port}").create()
     try:
         spark.udtf.register("merge_udtf", factory())
-        grouped = spark.createDataFrame(INTERVALS_A, schema=SCHEMA).groupBy("chrom").agg(
+        # Kolumna grupująca nie może nazywać się jak kolumna wyniku UDTF (chrom) — Sail 0.7.2 psuje
+        # wtedy konwersję wyniku LATERAL (tests/test_sail_parallel_udtf.py, plan 3b-1).
+        grouped = spark.createDataFrame(INTERVALS_A, schema=SCHEMA).groupBy(
+            F.col("chrom").alias("group_chrom")
+        ).agg(
             F.collect_list(F.struct("start", "end", "name")).alias("rows")
         )
         grouped.createOrReplaceTempView("grouped_by_chrom")
         out = spark.sql(
-            "SELECT o.* FROM grouped_by_chrom g, LATERAL merge_udtf(g.chrom, g.rows) o"
+            "SELECT o.* FROM grouped_by_chrom g, LATERAL merge_udtf(g.group_chrom, g.rows) o"
         ).toPandas()
         return {(r.chrom, int(r.start), int(r.end)) for _, r in out.iterrows()}
     finally:
@@ -186,3 +190,51 @@ def test_lateral_over_many_partitions_is_not_a_sail_bug():
         f"wbrew ustaleniom Fazy H.\n"
         f"Brakuje: {expected - actual}\nNadmiar: {actual - expected}"
     )
+
+
+
+def _sail_python_worker_error():
+    from pyspark.errors.exceptions.connect import PythonException
+
+    return PythonException
+
+
+@pytest.mark.xfail(
+    raises=_sail_python_worker_error(),
+    strict=True,
+    reason="Sail 0.7.2: LATERAL UDTF output column named like an outer column fails Arrow conversion",
+)
+def test_lateral_udtf_output_named_like_outer_column():
+    """Regresja Saila 0.7.2 (plan 3b-1, 03.10.2026): w `… g, LATERAL f(g.chrom, …) o` wynik UDTF
+    z kolumną o tej samej nazwie co kolumna relacji zewnętrznej (`chrom`) nie przechodzi konwersji
+    do Arrow („Could not convert 'chr1' with type str: tried to convert to int64”). Inne nazwy
+    kolumn wyniku albo wywołanie bez LATERAL działają; w 0.5.3 działało. Skrypty Faz C/H omijają to,
+    nazywając kolumnę grupującą `group_chrom`. Test pokaże, kiedy Sail to naprawi."""
+    from pyspark.sql import SparkSession
+    from pyspark.sql.functions import udtf
+    from pysail.spark import SparkConnectServer
+
+    server = SparkConnectServer()
+    server.start(background=True)
+    ip, port = server.listening_address
+    spark = SparkSession.builder.remote(f"sc://{ip}:{port}").create()
+    try:
+        # Dekorator udtf wymaga aktywnej sesji Spark Connect — jak w _make_merge_udtf().
+        @udtf(returnType="chrom: string, start: long, end: long")
+        class Echo:
+            def eval(self, chrom, rows):
+                for r in rows:
+                    yield (chrom, int(r["start"]), int(r["end"]))
+
+        spark.udtf.register("echo", Echo)
+        rows = spark.sql(
+            "SELECT o.* FROM (SELECT 'chr1' AS chrom, array(named_struct('start', 1L, 'end', 2L)) AS rows) g, "
+            "LATERAL echo(g.chrom, g.rows) o"
+        ).collect()
+        assert [tuple(r) for r in rows] == [("chr1", 1, 2)]
+    finally:
+        try:
+            spark.stop()
+        except Exception:
+            pass
+        server.stop()

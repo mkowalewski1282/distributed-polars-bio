@@ -203,7 +203,9 @@ def run_sail_overlap():
     df_combined = df_a.union(df_b)
 
     interval_struct = F.struct(F.col("start"), F.col("end"), F.col("name"))
-    grouped = df_combined.groupBy("chrom").agg(
+    # Kolumna grupująca nie może nazywać się jak kolumna wyniku UDTF (chrom) — Sail 0.7.2 psuje
+    # wtedy konwersję wyniku LATERAL (tests/test_sail_parallel_udtf.py, plan 3b-1).
+    grouped = df_combined.groupBy(F.col("chrom").alias("group_chrom")).agg(
         F.collect_list(F.when(F.col("source") == F.lit("a"), interval_struct)).alias("rows_a"),
         F.collect_list(F.when(F.col("source") == F.lit("b"), interval_struct)).alias("rows_b"),
     )
@@ -218,7 +220,7 @@ def run_sail_overlap():
     grouped.createOrReplaceTempView("grouped_by_chrom")
     result = spark.sql(
         """
-        SELECT o.* FROM grouped_by_chrom g, LATERAL overlap_udtf(g.chrom, g.rows_a, g.rows_b) o
+        SELECT o.* FROM grouped_by_chrom g, LATERAL overlap_udtf(g.group_chrom, g.rows_a, g.rows_b) o
         """
     ).toPandas()
     elapsed = time.perf_counter() - t0

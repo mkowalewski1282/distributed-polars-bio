@@ -190,3 +190,23 @@ etapami, po jednej zmianie. Punkty dopisywane po każdym etapie.
      Wniosek dla pracy: zgodność wyników „przypadkiem” przy jednej wersji biblioteki nie dowodzi
      poprawnej konfiguracji — test porównawczy wykrył błąd dopiero, gdy biblioteka zaczęła
      rozróżniać konwencje.
+3. **Sail 0.7.2 (PySpark 4.2.0): ustalenia z 0.5.3 sprawdzone od nowa (sondy 03.10.2026).**
+   - Zmienne `SAIL_*` używane przez narzędzie bez zmian (te same klucze i wartości domyślne
+     w `application.yaml` 0.5.3 i 0.7.2). API `pysail.spark.SparkConnectServer` bez zmian.
+   - Pula workerów na sesję: obowiązuje — każda sesja (osobny proces runnera) dostaje własne
+     workery numerowane od 1.
+   - Dodatkowy worker przy N = 1 (zbiór testowy w 8 plikach na stronę, 16 zadań skanowania
+     > 8 slotów): 0 z 10 sesji; przy N = 2 zawsze 2 workery. W planie 3a dodatkowy worker
+     pojawiał się sporadycznie na danych rzeczywistych — do potwierdzenia w smoke (Zadanie 11).
+   - Sesje po kolei w jednym procesie klienta: wszystkie 5 zakończone (0,1–0,3 s) —
+     zawieszanie czwartej sesji z 0.5.3 zniknęło.
+   - Serwer drivera jest w 0.7.2 wspólny dla sesji („driver server is ready” raz, przy starcie
+     serwera); pula workerów należy do drivera sesji.
+   - **Nowa regresja:** w `… g, LATERAL f(g.chrom, …) o` wynik UDTF z kolumną o tej samej nazwie
+     co kolumna relacji zewnętrznej (`chrom`) nie przechodzi konwersji do Arrow („Could not
+     convert 'chr1' with type str: tried to convert to int64”). Inne nazwy kolumn wyniku albo
+     wywołanie bez LATERAL działają; w 0.5.3 działało. Ścieżka pomiarowa (`sail_bio.py`, jedna
+     kolumna wyniku `res`) nie jest dotknięta. Skrypty Faz C/H nazywają teraz kolumnę grupującą
+     `group_chrom`; regresję przypina test xfail(strict)
+     `test_lateral_udtf_output_named_like_outer_column`. Kolejny przykład niedojrzałości ścieżki
+     UDTF w Sailu (porównaj obserwację zbiorczą z planu 2).

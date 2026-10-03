@@ -102,15 +102,17 @@ def run_sail_merge():
 
     df = spark.createDataFrame(INTERVALS_A, schema=SCHEMA)
     interval_struct = F.struct(F.col("start"), F.col("end"), F.col("name"))
+    # Kolumna grupująca nie może nazywać się jak kolumna wyniku UDTF (chrom) — Sail 0.7.2 psuje
+    # wtedy konwersję wyniku LATERAL (tests/test_sail_parallel_udtf.py, plan 3b-1).
     grouped = (
-        df.groupBy("chrom")
+        df.groupBy(F.col("chrom").alias("group_chrom"))
         .agg(F.collect_list(interval_struct).alias("rows"))
     )
     grouped.createOrReplaceTempView("grouped_by_chrom")
 
     t0 = time.perf_counter()
     result = spark.sql(
-        "SELECT o.* FROM grouped_by_chrom g, LATERAL merge_udtf(g.chrom, g.rows) o"
+        "SELECT o.* FROM grouped_by_chrom g, LATERAL merge_udtf(g.group_chrom, g.rows) o"
     ).toPandas()
     elapsed = time.perf_counter() - t0
 
