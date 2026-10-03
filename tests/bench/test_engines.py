@@ -70,6 +70,7 @@ def test_missing_ballista_binaries_are_reported_with_build_command(tmp_path, mon
         engines.require_ballista_binaries("release")
 
 
+@pytest.mark.nodes(2)
 def test_ballista_cluster_is_pinned_and_configured(tmp_path):
     engine = engines.make_engine("ballista", 2, data_root=tmp_path, log_dir=tmp_path / "logs", profile="debug")
     engine.start()
@@ -92,6 +93,7 @@ def test_ballista_cluster_is_pinned_and_configured(tmp_path):
     assert not any(d.exists() for d in dirs)
 
 
+@pytest.mark.nodes(1)
 def test_ballista_start_retries_when_executor_registration_fails(tmp_path, monkeypatch):
     """Ballista 53 rejestruje executor, zanim jego serwer gRPC przyjmuje połączenia (TODO
     w ballista_executor::executor_server), a scheduler w trybie push od razu łączy się
@@ -115,6 +117,7 @@ def test_ballista_start_retries_when_executor_registration_fails(tmp_path, monke
         blocker.close()
 
 
+@pytest.mark.nodes(1)
 def test_ballista_restart_replaces_processes(tmp_path):
     engine = engines.make_engine("ballista", 1, data_root=tmp_path, log_dir=tmp_path / "logs", profile="debug")
     engine.start()
@@ -127,6 +130,7 @@ def test_ballista_restart_replaces_processes(tmp_path):
         engine.stop()
 
 
+@pytest.mark.nodes(2)
 def test_sail_server_is_pinned_and_configured(tmp_path):
     engine = engines.make_engine("sail", 2, data_root=tmp_path, log_dir=tmp_path / "logs", profile="debug")
     engine.start()

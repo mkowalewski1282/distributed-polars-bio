@@ -1,6 +1,6 @@
 # Smoke (specyfikacja 7.3, etap 0): pełna macierz na parze 1-2 (merge: zbiór 1),
 # 1 przebieg bez rozgrzewki — poprawność narzędzia; uruchamiany przed każdą dużą serią:
-#   python -m bench.orchestrator bench/conf/smoke.yaml
+#   uv run python -m bench.orchestrator bench/conf/smoke.yaml
 series: smoke
 scenarios:
   - {op: overlap, pair: "1-2"}

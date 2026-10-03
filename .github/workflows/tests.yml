@@ -1,0 +1,59 @@
+# Testy poprawności (specyfikacja 3b-1, sekcja 6): budowanie Ballisty i pakiet testów bez danych
+# rzeczywistych. CI służy wyłącznie sprawdzaniu poprawności - nigdy pomiarom.
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      # Bez debuginfo (Cargo.toml ma już debug = false; zmienna chroni przed zmianą profilu).
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v7
+
+      # Rust z ballista_genomics/rust-toolchain.toml (przed cache - klucz zawiera wersję rustc).
+      - name: Rust toolchain
+        working-directory: ballista_genomics
+        run: |
+          rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" --profile minimal
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ballista_genomics -> target
+          cache-on-failure: true
+
+      - name: Build Ballista binaries
+        working-directory: ballista_genomics
+        run: cargo build --bins --locked
+
+      - name: Disk usage
+        run: df -h / && du -sh ballista_genomics/target
+
+      # Wersja uv z required-version w pyproject.toml.
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-python: true
+
+      - name: Python environment
+        run: uv sync --locked
+
+      - name: Tests (without real data)
+        run: uv run --locked pytest -m "not real_data" -ra

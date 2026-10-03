@@ -51,3 +51,22 @@ def pytest_configure(config):
         "markers",
         "real_data: needs the downloaded databio-8p dataset (python -m bench.data.download)",
     )
+    config.addinivalue_line(
+        "markers",
+        "nodes(n): pins processes to emulated nodes 1..n (CPUs 0..2n+1); "
+        "skipped when the process cannot use all of them",
+    )
+
+
+def pytest_runtest_setup(item):
+    """Znacznik nodes(n): test przypinający procesy do węzłów 1..n jest pomijany, gdy procesowi
+    brakuje któregoś z CPU rdzenia systemowego i węzłów (specyfikacja 3b-1, sekcja 6)."""
+    marker = item.get_closest_marker("nodes")
+    if marker is None:
+        return
+    from bench.engines import SYSTEM_CPUS, cluster_cpus
+
+    n = marker.args[0]
+    missing = sorted({*SYSTEM_CPUS, *cluster_cpus(n)} - os.sched_getaffinity(0))
+    if missing:
+        pytest.skip(f"needs CPUs 0-{2 * n + 1} for {n} node(s); unavailable: {missing}")

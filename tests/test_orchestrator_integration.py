@@ -49,6 +49,7 @@ def series(data_root, tmp_path_factory):
     return summary, pl.read_parquet(summary.parquet)
 
 
+@pytest.mark.nodes(2)
 def test_every_planned_run_is_recorded(series):
     summary, df = series
     # wzorzec: 5 scenariuszy (kontrola overlap/1-2 jest wśród nich); bloki: A1, B2,
@@ -57,12 +58,14 @@ def test_every_planned_run_is_recorded(series):
     assert summary.rows == df.height and not summary.failures
 
 
+@pytest.mark.nodes(2)
 def test_every_run_is_valid(series):
     _, df = series
     bad = df.filter(~pl.col("valid")).select("variant", "n_nodes", "op", "invalid_reason")
     assert bad.is_empty(), bad.to_dicts()
 
 
+@pytest.mark.nodes(2)
 def test_threads_follow_variant_and_n(series):
     _, df = series
     partitions = {
@@ -75,6 +78,7 @@ def test_threads_follow_variant_and_n(series):
     }
 
 
+@pytest.mark.nodes(2)
 def test_every_runner_reports_checksum_time(series):
     """Koszt sumy kontrolnej zależy od silnika (Python albo Rust, rdzenie węzła albo systemowe)
     i jest częścią t_total_s — każdy runner go podaje (przegląd końcowy planu 3a)."""
@@ -83,6 +87,7 @@ def test_every_runner_reports_checksum_time(series):
     assert all(0 < t for t in times) and (df["t_total_s"] >= pl.Series(times)).all()
 
 
+@pytest.mark.nodes(2)
 def test_memory_is_measured_per_process(series):
     _, df = series
 
@@ -96,6 +101,7 @@ def test_memory_is_measured_per_process(series):
     assert (df["peak_rss_sum"] > 10 * 2**20).all()
 
 
+@pytest.mark.nodes(2)
 def test_ballista_shuffle_volume_is_measured(series):
     _, df = series
     ballista = df.filter(pl.col("variant") == "ballista")
@@ -103,6 +109,7 @@ def test_ballista_shuffle_volume_is_measured(series):
     assert df.filter(pl.col("variant") != "ballista")["shuffle_bytes"].is_null().all()
 
 
+@pytest.mark.nodes(1)
 def test_main_resolves_relative_data_root(data_root, tmp_path, monkeypatch):
     """Runnery Pythona działają w katalogu repozytorium, a Ballisty w ballista_genomics/ —
     względna ścieżka danych musi zostać zamieniona na bezwzględną przed startem serii."""
