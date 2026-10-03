@@ -3,22 +3,23 @@ name = "distributed-polars-bio"
 version = "0.1.0"
 description = "Genomic interval operations from polars-bio on distributed engines (Apache Ballista, Sail) - master's thesis code"
 requires-python = ">=3.12,<3.13"
-# Etapy 1-4 planu 3b-1: polars-bio 0.36 (z pyarrow 23-24), Sail 0.7 i PySpark 4.2; reszta - wersje
-# zainstalowane dotąd w ~/.local (wyjątek: numpy 1.24.0 nie ma pakietu dla Pythona 3.12).
+# Silniki będące przedmiotem pomiarów są przypięte do wersji minor, żeby `uv lock --upgrade`
+# nie zmienił ich w trakcie pomiarów (specyfikacja 3b-1, sekcja 3). Pozostałe zależności mają
+# tylko dolne granice; dokładne wersje są w uv.lock.
 dependencies = [
     "polars-bio==0.36.*",
     "pysail==0.7.*",
     "pyspark[connect]==4.2.*",
-    "polars==1.39.3",
-    "pyarrow==24.*",
-    "pandas==2.3.3",
-    "numpy==1.26.*",
-    "pyyaml==6.0.2",
-    "requests==2.31.0",
+    "polars>=1.44",
+    "pyarrow>=24",
+    "pandas>=3.0",
+    "numpy>=2.5",
+    "pyyaml>=6.0.3",
+    "requests>=2.34",
 ]
 
 [dependency-groups]
-dev = ["pytest==6.2.5"]
+dev = ["pytest>=9.1"]
 
 [tool.uv]
 # Projekt "wirtualny": kod działa z katalogu repozytorium, uv niczego nie instaluje jako pakiet.

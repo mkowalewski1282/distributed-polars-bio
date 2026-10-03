@@ -210,3 +210,14 @@ etapami, po jednej zmianie. Punkty dopisywane po każdym etapie.
      `group_chrom`; regresję przypina test xfail(strict)
      `test_lateral_udtf_output_named_like_outer_column`. Kolejny przykład niedojrzałości ścieżki
      UDTF w Sailu (porównaj obserwację zbiorczą z planu 2).
+4. **Pozostałe biblioteki do najnowszych wersji (numpy 2.5.3, pandas 3.0.6, pytest 9.1.1,
+   polars 1.44.2).**
+   - Pakiet testów bez zmian w kodzie. Suma kontrolna jest odporna na reguły promocji numpy 2,
+     bo używa jawnych skalarów `uint64`.
+   - PySpark 4.2.0 ostrzega, że pandas ≥ 3 „nie jest jeszcze w pełni wspierany”
+     (`FutureWarning`), i używa w `pyspark/sql/pandas/types.py` przestarzałego w pandas 3
+     parametru `copy` (`Pandas4Warning`). Testy samego pysail 0.7.2 przypinają `pandas<3`.
+   - Ścieżka UDTF projektu (wiersze, nie pandas UDF) działa, a testy porównują jej wynik
+     z polars-bio.
+   - Do sprawdzenia w planie 3b-2 przy przejściu na UDTF ze strzałką (Arrow), gdzie PySpark
+     konwertuje partie przez pandas.
