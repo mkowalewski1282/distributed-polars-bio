@@ -20,7 +20,7 @@ def free_port() -> int:
 
 def check_alive(name: str, proc: subprocess.Popen, log: Path) -> None:
     if proc.poll() is not None:
-        raise EngineError(f"proces {name} zakończył się (kod {proc.returncode}); log: {log}")
+        raise EngineError(f"process {name} exited (code {proc.returncode}); log: {log}")
 
 
 def wait_for_port(
@@ -35,4 +35,4 @@ def wait_for_port(
                 return
         except OSError:
             time.sleep(0.2)
-    raise EngineError(f"{name} nie nasłuchuje na porcie {port} po {timeout:.0f} s; log: {log}")
+    raise EngineError(f"{name} not listening on port {port} after {timeout:.0f} s; log: {log}")

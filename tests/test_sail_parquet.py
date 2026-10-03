@@ -49,7 +49,7 @@ def test_run_op_rejects_wrong_number_of_tables(op, with_right, spark, parquet_di
     import sail_bio
 
     a, b = parquet_dirs
-    with pytest.raises(ValueError, match="wymaga"):
+    with pytest.raises(ValueError, match="requires"):
         sail_bio.run_op(spark, op, a, b if with_right else None)
 
 
@@ -57,7 +57,7 @@ def _hwm_mb() -> int:
     for line in open("/proc/self/status"):
         if line.startswith("VmHWM"):
             return int(line.split()[1]) // 1024
-    raise RuntimeError("brak VmHWM w /proc/self/status")
+    raise RuntimeError("no VmHWM in /proc/self/status")
 
 
 def test_sail_memory_does_not_scale_with_output_times_group(spark, tmp_path):
@@ -79,4 +79,4 @@ def test_sail_memory_does_not_scale_with_output_times_group(spark, tmp_path):
     df = sail_bio.run_op(spark, "merge", d)
     growth = _hwm_mb() - start
     assert len(df) == n
-    assert growth < 300, f"szczyt pamięci wzrósł o {growth} MB przy {n} przedziałach w jednej grupie"
+    assert growth < 300, f"peak memory grew by {growth} MB with {n} intervals in one group"

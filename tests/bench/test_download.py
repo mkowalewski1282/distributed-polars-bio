@@ -51,7 +51,7 @@ def _make_zip(path: Path, pos_type=pa.int32()) -> None:
 
 
 def _no_download(*args, **kwargs):
-    raise AssertionError("pobieranie nie powinno być potrzebne")
+    raise AssertionError("download should not be needed")
 
 
 class _QuietHandler(SimpleHTTPRequestHandler):
@@ -96,12 +96,12 @@ def test_verify_accepts_complete_dataset(extracted):
 def test_verify_reports_missing_part(extracted):
     next((extracted / "exons").glob("part-*.parquet")).unlink()
     problems = dl.verify(extracted, EXPECTED, tolerance=0)
-    assert len(problems) == 1 and "exons" in problems[0] and "7 plików" in problems[0]
+    assert len(problems) == 1 and "exons" in problems[0] and "7 part-*.parquet files" in problems[0]
 
 
 def test_verify_reports_missing_dataset(extracted):
     problems = dl.verify(extracted, {**EXPECTED, "ex-anno": 16}, tolerance=0)
-    assert len(problems) == 1 and "ex-anno" in problems[0] and "0 plików" in problems[0]
+    assert len(problems) == 1 and "ex-anno" in problems[0] and "0 part-*.parquet files" in problems[0]
 
 
 def test_verify_reports_wrong_schema(tmp_path):
@@ -110,12 +110,12 @@ def test_verify_reports_wrong_schema(tmp_path):
     dest = tmp_path / "databio-8p"
     dl.extract_parts(zip_path, dest)
     problems = dl.verify(dest, EXPECTED, tolerance=0)
-    assert len(problems) == 2 and all("schemat" in p for p in problems)
+    assert len(problems) == 2 and all("schema" in p for p in problems)
 
 
 def test_verify_reports_wrong_row_count(extracted):
     problems = dl.verify(extracted, {**EXPECTED, "exons": 17}, tolerance=0)
-    assert len(problems) == 1 and "exons" in problems[0] and "wierszy" in problems[0]
+    assert len(problems) == 1 and "exons" in problems[0] and "rows" in problems[0]
 
 
 def test_failed_extraction_keeps_previous_dataset(tmp_path):
@@ -126,38 +126,38 @@ def test_failed_extraction_keeps_previous_dataset(tmp_path):
     zip_path.write_bytes(bytes(data))
     dest = tmp_path / "databio-8p"
     dest.mkdir()
-    (dest / "znacznik").write_text("poprzednia wersja")
+    (dest / "marker").write_text("previous version")
     with pytest.raises(zipfile.BadZipFile):
         dl.extract_parts(zip_path, dest)
-    assert (dest / "znacznik").read_text() == "poprzednia wersja"
+    assert (dest / "marker").read_text() == "previous version"
     assert not (tmp_path / "databio-8p.tmp").exists()
 
 
 def test_download_rejects_html_page(http_dir, tmp_path):
     www, base = http_dir
-    (www / "strona.html").write_text("<html>Quota exceeded</html>")
+    (www / "page.html").write_text("<html>Quota exceeded</html>")
     target = tmp_path / "x.zip"
     with pytest.raises(RuntimeError, match="HTML"):
-        dl.download(f"{base}/strona.html", target, expected_bytes=10)
+        dl.download(f"{base}/page.html", target, expected_bytes=10)
     assert not target.exists()
     assert not (tmp_path / "x.zip.part").exists()
 
 
 def test_download_rejects_truncated_file(http_dir, tmp_path):
     www, base = http_dir
-    (www / "dane.bin").write_bytes(b"x" * 100)
+    (www / "data.bin").write_bytes(b"x" * 100)
     target = tmp_path / "x.zip"
-    with pytest.raises(RuntimeError, match="niekompletne"):
-        dl.download(f"{base}/dane.bin", target, expected_bytes=200)
+    with pytest.raises(RuntimeError, match="incomplete"):
+        dl.download(f"{base}/data.bin", target, expected_bytes=200)
     assert not target.exists()
     assert not (tmp_path / "x.zip.part").exists()
 
 
 def test_download_saves_complete_file(http_dir, tmp_path):
     www, base = http_dir
-    (www / "dane.bin").write_bytes(b"x" * 100)
+    (www / "data.bin").write_bytes(b"x" * 100)
     target = tmp_path / "x.zip"
-    dl.download(f"{base}/dane.bin", target, expected_bytes=100)
+    dl.download(f"{base}/data.bin", target, expected_bytes=100)
     assert target.read_bytes() == b"x" * 100
 
 
@@ -196,8 +196,8 @@ def test_ensure_dataset_reuses_downloaded_zip(tmp_path, monkeypatch):
 
 def test_main_reports_failure_with_exit_code_1(monkeypatch, capsys):
     def fail(*args, **kwargs):
-        raise RuntimeError("symulowany błąd")
+        raise RuntimeError("simulated error")
 
     monkeypatch.setattr(dl, "ensure_dataset", fail)
-    assert dl.main(["--root", "/tmp/nieistotne"]) == 1
-    assert "symulowany błąd" in capsys.readouterr().err
+    assert dl.main(["--root", "/tmp/irrelevant"]) == 1
+    assert "simulated error" in capsys.readouterr().err

@@ -41,7 +41,7 @@ def test_cpu_layout_follows_spec():
     ],
 )
 def test_polars_bio_runs_pinned_with_explicit_threads(variant, n, threads, cpus, tmp_path):
-    engine = engines.make_engine(variant, n, data_root=tmp_path, log_dir=tmp_path / "logi", profile="debug")
+    engine = engines.make_engine(variant, n, data_root=tmp_path, log_dir=tmp_path / "logs", profile="debug")
     cmd = engine.command(Scenario("overlap", "1-2"))
     base = tmp_path / "databio-8p"
     assert cmd.argv == [
@@ -60,18 +60,18 @@ def test_merge_command_has_no_right_side(tmp_path):
 
 
 def test_unknown_variant_is_rejected(tmp_path):
-    with pytest.raises(ValueError, match="nieznany wariant"):
+    with pytest.raises(ValueError, match="unknown variant"):
         engines.make_engine("spark", 1, data_root=tmp_path, log_dir=tmp_path, profile="debug")
 
 
 def test_missing_ballista_binaries_are_reported_with_build_command(tmp_path, monkeypatch):
     monkeypatch.setattr(engines, "BALLISTA_DIR", tmp_path)
-    with pytest.raises(EngineError, match=r"brak binarki .*ballista_node.*cargo build --release"):
+    with pytest.raises(EngineError, match=r"missing binary .*ballista_node.*cargo build --release"):
         engines.require_ballista_binaries("release")
 
 
 def test_ballista_cluster_is_pinned_and_configured(tmp_path):
-    engine = engines.make_engine("ballista", 2, data_root=tmp_path, log_dir=tmp_path / "logi", profile="debug")
+    engine = engines.make_engine("ballista", 2, data_root=tmp_path, log_dir=tmp_path / "logs", profile="debug")
     engine.start()
     try:
         pids = engine.server_pids()
@@ -105,18 +105,18 @@ def test_ballista_start_retries_when_executor_registration_fails(tmp_path, monke
     calls = itertools.count(1)
     # Pierwsza próba losuje porty: schedulera, flight executora 1 i gRPC executora 1 (zajęty).
     monkeypatch.setattr(engines, "free_port", lambda: taken if next(calls) == 3 else real_free_port())
-    engine = engines.make_engine("ballista", 1, data_root=tmp_path, log_dir=tmp_path / "logi", profile="debug")
+    engine = engines.make_engine("ballista", 1, data_root=tmp_path, log_dir=tmp_path / "logs", profile="debug")
     try:
         engine.start()
         assert set(engine.server_pids()) == {"scheduler", "executor_1"}
-        assert "Connection refused" in (tmp_path / "logi" / "executor_1.log").read_text()
+        assert "Connection refused" in (tmp_path / "logs" / "executor_1.log").read_text()
     finally:
         engine.stop()
         blocker.close()
 
 
 def test_ballista_restart_replaces_processes(tmp_path):
-    engine = engines.make_engine("ballista", 1, data_root=tmp_path, log_dir=tmp_path / "logi", profile="debug")
+    engine = engines.make_engine("ballista", 1, data_root=tmp_path, log_dir=tmp_path / "logs", profile="debug")
     engine.start()
     try:
         before = set(engine.server_pids().values())
@@ -128,7 +128,7 @@ def test_ballista_restart_replaces_processes(tmp_path):
 
 
 def test_sail_server_is_pinned_and_configured(tmp_path):
-    engine = engines.make_engine("sail", 2, data_root=tmp_path, log_dir=tmp_path / "logi", profile="debug")
+    engine = engines.make_engine("sail", 2, data_root=tmp_path, log_dir=tmp_path / "logs", profile="debug")
     engine.start()
     try:
         pid = engine.server_pids()["sail_server"]

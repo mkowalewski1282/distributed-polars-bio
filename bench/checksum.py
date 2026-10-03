@@ -113,7 +113,7 @@ class Checksum:
 
     def __init__(self, op: str):
         if op not in KEY_COLUMNS:
-            raise ValueError(f"nieznana operacja {op!r}")
+            raise ValueError(f"unknown operation {op!r}")
         self.op = op
         self.rows = 0
         self._sum = np.uint64(0)
@@ -126,7 +126,7 @@ class Checksum:
         names = KEY_COLUMNS[self.op]
         missing = [n for n in names if n not in data.schema.names]
         if missing:
-            raise KeyError(f"{self.op}: brak kolumn {missing}; są {data.schema.names}")
+            raise KeyError(f"{self.op}: missing columns {missing}; got {data.schema.names}")
         if data.num_rows == 0:
             return
         acc = np.zeros(data.num_rows, dtype=np.uint64)

@@ -92,7 +92,7 @@ def verify(
         parts = sorted(d.glob("part-*.parquet")) if d.is_dir() else []
         if len(parts) != PARTS_PER_DATASET:
             problems.append(
-                f"{name}: {len(parts)} plików part-*.parquet zamiast {PARTS_PER_DATASET}"
+                f"{name}: {len(parts)} part-*.parquet files instead of {PARTS_PER_DATASET}"
             )
             continue
         rows = 0
@@ -100,19 +100,19 @@ def verify(
             try:
                 pf = pq.ParquetFile(p)
             except Exception as e:  # uszkodzony albo nie-Parquet
-                problems.append(f"{name}/{p.name}: nieczytelny Parquet ({e})")
+                problems.append(f"{name}/{p.name}: unreadable Parquet ({e})")
                 break
             if not pf.schema_arrow.equals(EXPECTED_SCHEMA):
                 problems.append(
-                    f"{name}/{p.name}: schemat {_schema_text(pf.schema_arrow)} "
-                    f"zamiast {_schema_text(EXPECTED_SCHEMA)}"
+                    f"{name}/{p.name}: schema {_schema_text(pf.schema_arrow)} "
+                    f"instead of {_schema_text(EXPECTED_SCHEMA)}"
                 )
                 break
             rows += pf.metadata.num_rows
         else:
             if abs(rows - rows_expected) > tolerance:
                 problems.append(
-                    f"{name}: {rows} wierszy, oczekiwano {rows_expected} ± {tolerance}"
+                    f"{name}: {rows} rows, expected {rows_expected} ± {tolerance}"
                 )
     return problems
 
@@ -134,9 +134,9 @@ def download(url: str, target: Path, expected_bytes: int, timeout: float = 60) -
         r.raise_for_status()
         if r.headers.get("Content-Type", "").startswith("text/html"):
             raise RuntimeError(
-                "Google Drive zwrócił stronę HTML zamiast archiwum (limit pobrań albo zmiana "
-                f"adresu). Pobierz ręcznie https://drive.google.com/uc?id={GDRIVE_ID} "
-                f"i zapisz jako {target}"
+                "Google Drive returned an HTML page instead of the archive (download limit or a changed "
+                f"address). Download it manually from https://drive.google.com/uc?id={GDRIVE_ID} "
+                f"and save it as {target}"
             )
         with open(part, "wb") as f:
             for chunk in r.iter_content(1 << 20):
@@ -145,7 +145,7 @@ def download(url: str, target: Path, expected_bytes: int, timeout: float = 60) -
     if size != expected_bytes:
         part.unlink()
         raise RuntimeError(
-            f"pobrano {size} B zamiast {expected_bytes} B — archiwum niekompletne"
+            f"downloaded {size} B instead of {expected_bytes} B - incomplete archive"
         )
     part.rename(target)
 
@@ -170,7 +170,7 @@ def ensure_dataset(
     problems = verify(dest, expected)
     if problems:
         raise RuntimeError(
-            "zbiór po rozpakowaniu jest niepoprawny (archiwum zostaje do wglądu):\n"
+            "the extracted dataset is invalid (the archive is kept for inspection):\n"
             + "\n".join(problems)
         )
     zip_path.unlink()
@@ -178,23 +178,23 @@ def ensure_dataset(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Pobiera i weryfikuje zbiór databio-8p.")
+    parser = argparse.ArgumentParser(description="Downloads and verifies the databio-8p dataset.")
     parser.add_argument(
         "--root",
         type=Path,
         default=None,
-        help="katalog danych (domyślnie $BENCH_DATA_ROOT albo ~/bench_data)",
+        help="data directory (default: $BENCH_DATA_ROOT or ~/bench_data)",
     )
     args = parser.parse_args(argv)
     try:
         dest = ensure_dataset(args.root)
     except (RuntimeError, OSError, requests.RequestException, zipfile.BadZipFile) as e:
-        print(f"BŁĄD: {e}", file=sys.stderr)
+        print(f"ERROR: {e}", file=sys.stderr)
         return 1
-    print(f"{'id':>2}  {'zbiór':<18} {'pliki':>5} {'wiersze':>12}")
+    print(f"{'id':>2}  {'dataset':<18} {'files':>5} {'rows':>12}")
     for idx, name, files, rows in summarize(dest):
         print(f"{idx:>2}  {name:<18} {files:>5} {rows:>12}")
-    print(f"Dane: {dest}")
+    print(f"Data: {dest}")
     return 0
 
 

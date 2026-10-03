@@ -107,5 +107,5 @@ def test_missing_key_column_is_reported():
 
 
 def test_unknown_operation_is_rejected():
-    with pytest.raises(ValueError, match="nieznana operacja"):
+    with pytest.raises(ValueError, match="unknown operation"):
         cs.Checksum("join")

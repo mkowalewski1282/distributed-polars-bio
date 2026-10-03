@@ -59,7 +59,7 @@ def data_dir(root: Path | None = None) -> Path:
 
 def dataset_dir(idx: int, root: Path | None = None) -> Path:
     if idx not in DATASETS:
-        raise ValueError(f"nieznany zbiór {idx!r}; dozwolone: 0–8")
+        raise ValueError(f"unknown dataset {idx!r}; allowed: 0–8")
     return data_dir(root) / DATASETS[idx]
 
 
@@ -68,7 +68,7 @@ def resolve(scenario: str, root: Path | None = None) -> tuple[Path, Path | None]
     m = _SCENARIO.fullmatch(scenario)
     if m is None:
         raise ValueError(
-            f"niepoprawny identyfikator danych {scenario!r}; oczekiwano 'a' albo 'a-b', a, b ∈ 0–8"
+            f"invalid data identifier {scenario!r}; expected 'a' or 'a-b', a, b ∈ 0–8"
         )
     left = dataset_dir(int(m.group(1)), root)
     right = dataset_dir(int(m.group(2)), root) if m.group(2) is not None else None

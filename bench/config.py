@@ -73,84 +73,84 @@ class SeriesConfig:
 def _int(raw: dict, key: str, minimum: int) -> int:
     value = raw[key]
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-        raise ConfigError(f"{key}: liczba całkowita ≥ {minimum}, jest {value!r}")
+        raise ConfigError(f"{key}: expected an integer ≥ {minimum}, got {value!r}")
     return value
 
 
 def _positive(raw: dict, key: str) -> float:
     value = raw[key]
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-        raise ConfigError(f"{key}: liczba > 0, jest {value!r}")
+        raise ConfigError(f"{key}: expected a number > 0, got {value!r}")
     return float(value)
 
 
 def _list(raw: dict, key: str) -> list:
     value = raw[key]
     if not isinstance(value, list) or not value:
-        raise ConfigError(f"{key}: niepusta lista, jest {value!r}")
+        raise ConfigError(f"{key}: expected a non-empty list, got {value!r}")
     if len({repr(v) for v in value}) != len(value):
-        raise ConfigError(f"{key}: powtórzone elementy w {value!r}")
+        raise ConfigError(f"{key}: repeated items in {value!r}")
     return value
 
 
 def _scenario(item, i: int) -> Scenario:
     where = f"scenarios[{i}]"
     if not isinstance(item, dict):
-        raise ConfigError(f"{where}: oczekiwano słownika, jest {item!r}")
+        raise ConfigError(f"{where}: expected a mapping, got {item!r}")
     if "algorithm" in item:
-        raise ConfigError(f"{where}: parametr algorithm nie jest jeszcze obsługiwany (plan 3b)")
+        raise ConfigError(f"{where}: the algorithm parameter is not supported yet (plan 3b-3)")
     unknown = set(item) - _SCENARIO_KEYS
     if unknown:
-        raise ConfigError(f"{where}: nieznane klucze {sorted(unknown)}")
+        raise ConfigError(f"{where}: unknown keys {sorted(unknown)}")
     op = item.get("op")
     if op not in OPS:
-        raise ConfigError(f"{where}: nieznana operacja {op!r}; dozwolone: {', '.join(OPS)}")
+        raise ConfigError(f"{where}: unknown operation {op!r}; allowed: {', '.join(OPS)}")
     if op in UNARY_OPS:
         if "pair" in item or "dataset" not in item:
-            raise ConfigError(f"{where}: {op} działa na jednym zbiorze — podaj dataset, bez pair")
+            raise ConfigError(f"{where}: {op} works on a single dataset - give dataset, not pair")
         dataset = item["dataset"]
         if isinstance(dataset, bool) or not isinstance(dataset, int) or not 0 <= dataset <= 8:
-            raise ConfigError(f"{where}: dataset to liczba 0–8, jest {dataset!r}")
+            raise ConfigError(f"{where}: dataset must be a number 0–8, got {dataset!r}")
         return Scenario(op, str(dataset))
     if "dataset" in item or "pair" not in item:
         raise ConfigError(
-            f'{where}: {op} działa na parze zbiorów — podaj pair (np. "1-2"), bez dataset'
+            f'{where}: {op} works on a pair of datasets - give pair (e.g. "1-2"), not dataset'
         )
     pair = item["pair"]
     if not isinstance(pair, str) or not _PAIR.fullmatch(pair):
-        raise ConfigError(f'{where}: pair w postaci "a-b", a, b ∈ 0–8, jest {pair!r}')
+        raise ConfigError(f'{where}: pair must look like "a-b", a, b ∈ 0–8, got {pair!r}')
     return Scenario(op, pair)
 
 
 def parse(raw) -> SeriesConfig:
     """Słownik z YAML → SeriesConfig; każdy błąd → ConfigError z miejscem i przyczyną."""
     if not isinstance(raw, dict):
-        raise ConfigError("konfiguracja: oczekiwano słownika na najwyższym poziomie")
+        raise ConfigError("configuration: expected a mapping at the top level")
     unknown = set(raw) - _KEYS
     if unknown:
-        raise ConfigError(f"nieznane klucze: {sorted(unknown)}")
+        raise ConfigError(f"unknown keys: {sorted(unknown)}")
     missing = [k for k in _REQUIRED if k not in raw]
     if missing:
-        raise ConfigError(f"brak wymaganych kluczy: {missing}")
+        raise ConfigError(f"missing required keys: {missing}")
     raw = {**DEFAULTS, **raw}
     series = raw["series"]
     if not isinstance(series, str) or not _SERIES_NAME.fullmatch(series):
-        raise ConfigError(f"series: nazwa z małych liter, cyfr, - i _, jest {series!r}")
+        raise ConfigError(f"series: a name of lowercase letters, digits, - and _, got {series!r}")
     scenarios = tuple(_scenario(item, i) for i, item in enumerate(_list(raw, "scenarios")))
     ids = [s.id for s in scenarios]
     duplicated = sorted({i for i in ids if ids.count(i) > 1})
     if duplicated:
-        raise ConfigError(f"scenarios: powtórzony scenariusz {', '.join(duplicated)}")
+        raise ConfigError(f"scenarios: repeated scenario {', '.join(duplicated)}")
     variants = tuple(_list(raw, "variants"))
     unknown_variants = [v for v in variants if v not in VARIANTS]
     if unknown_variants:
-        raise ConfigError(f"variants: nieznane {unknown_variants}; dozwolone: {', '.join(VARIANTS)}")
+        raise ConfigError(f"variants: unknown {unknown_variants}; allowed: {', '.join(VARIANTS)}")
     nodes = _list(raw, "nodes")
     if any(isinstance(n, bool) or not isinstance(n, int) or n not in NODES for n in nodes):
-        raise ConfigError(f"nodes: wartości z {NODES}, jest {nodes!r}")
+        raise ConfigError(f"nodes: values from {NODES}, got {nodes!r}")
     seed = raw["seed"]
     if isinstance(seed, bool) or not isinstance(seed, int):
-        raise ConfigError(f"seed: liczba całkowita, jest {seed!r}")
+        raise ConfigError(f"seed: expected an integer, got {seed!r}")
     cfg = SeriesConfig(
         series=series,
         scenarios=scenarios,
@@ -163,7 +163,7 @@ def parse(raw) -> SeriesConfig:
         control_tolerance=_positive(raw, "control_tolerance"),
     )
     if not blocks(cfg):
-        raise ConfigError("konfiguracja nie daje żadnego bloku (polars_bio_b wymaga N ≥ 2)")
+        raise ConfigError("the configuration gives no blocks (polars_bio_b needs N ≥ 2)")
     return cfg
 
 
@@ -171,7 +171,7 @@ def load(path: Path) -> SeriesConfig:
     try:
         raw = yaml.safe_load(Path(path).read_text())
     except yaml.YAMLError as e:
-        raise ConfigError(f"{path}: niepoprawny YAML: {e}") from e
+        raise ConfigError(f"{path}: invalid YAML: {e}") from e
     return parse(raw)
 
 
@@ -208,5 +208,5 @@ def check_data(cfg: SeriesConfig, root: Path) -> None:
                 missing.add(str(path))
     if missing:
         raise ConfigError(
-            "brak danych (python -m bench.data.download): " + ", ".join(sorted(missing))
+            "missing data (python -m bench.data.download): " + ", ".join(sorted(missing))
         )

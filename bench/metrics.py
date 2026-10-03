@@ -19,14 +19,14 @@ def _field(path: Path, key: str) -> str:
         name, sep, value = line.partition(":")
         if sep and name == key:
             return value.strip()
-    raise KeyError(f"brak pola {key} w {path}")
+    raise KeyError(f"no field {key} in {path}")
 
 
 def _kib_field(path: Path, key: str) -> int:
     value = _field(path, key)
     number, _, unit = value.partition(" ")
     if unit.strip() != "kB":
-        raise ValueError(f"{path}: pole {key} w nieoczekiwanej jednostce: {value!r}")
+        raise ValueError(f"{path}: field {key} in an unexpected unit: {value!r}")
     return int(number) * 1024
 
 
@@ -54,7 +54,7 @@ def _vmstat(key: str, proc: Path) -> int:
         name, _, value = line.partition(" ")
         if name == key:
             return int(value)
-    raise KeyError(f"brak {key} w {proc / 'vmstat'}")
+    raise KeyError(f"no {key} in {proc / 'vmstat'}")
 
 
 def pswpout(proc: Path = PROC) -> int:

@@ -57,37 +57,37 @@ def test_smoke_config_is_the_full_matrix_on_pair_1_2():
 @pytest.mark.parametrize(
     "overrides, message",
     [
-        ({"extra_key": 1}, "nieznane klucze"),
-        ({"seed": _DELETE}, "brak wymaganych kluczy"),
+        ({"extra_key": 1}, "unknown keys"),
+        ({"seed": _DELETE}, "missing required keys"),
         ({"seed": "x"}, "seed"),
         ({"seed": True}, "seed"),
         ({"series": "Smoke!"}, "series"),
-        ({"scenarios": []}, "scenarios: niepusta lista"),
-        ({"scenarios": ["overlap"]}, "słownika"),
+        ({"scenarios": []}, "scenarios: expected a non-empty list"),
+        ({"scenarios": ["overlap"]}, "expected a mapping"),
         ({"scenarios": [{"op": "overlap", "pair": "1-2", "algorithm": "Lapper"}]}, "plan 3b"),
-        ({"scenarios": [{"op": "overlap", "pair": "1-2", "x": 1}]}, "nieznane klucze"),
-        ({"scenarios": [{"op": "join", "pair": "1-2"}]}, "nieznana operacja"),
-        ({"scenarios": [{"op": "merge", "pair": "1-2"}]}, "jednym zbiorze"),
-        ({"scenarios": [{"op": "overlap", "dataset": 1}]}, "parze zbiorów"),
+        ({"scenarios": [{"op": "overlap", "pair": "1-2", "x": 1}]}, "unknown keys"),
+        ({"scenarios": [{"op": "join", "pair": "1-2"}]}, "unknown operation"),
+        ({"scenarios": [{"op": "merge", "pair": "1-2"}]}, "single dataset"),
+        ({"scenarios": [{"op": "overlap", "dataset": 1}]}, "pair of datasets"),
         ({"scenarios": [{"op": "overlap", "pair": "1-9"}]}, "pair"),
         ({"scenarios": [{"op": "overlap", "pair": 12}]}, "pair"),
         ({"scenarios": [{"op": "merge", "dataset": 9}]}, "dataset"),
         ({"scenarios": [{"op": "merge", "dataset": True}]}, "dataset"),
         (
             {"scenarios": [{"op": "merge", "dataset": 1}, {"dataset": 1, "op": "merge"}]},
-            "powtórzony scenariusz",
+            "repeated scenario",
         ),
-        ({"variants": ["spark"]}, "variants: nieznane"),
-        ({"variants": "ballista"}, "variants: niepusta lista"),
+        ({"variants": ["spark"]}, "variants: unknown"),
+        ({"variants": "ballista"}, "variants: expected a non-empty list"),
         ({"nodes": [4]}, "nodes"),
         ({"nodes": [True]}, "nodes"),
         ({"nodes": [1.0]}, "nodes"),
-        ({"nodes": [1, 1]}, "powtórzone"),
+        ({"nodes": [1, 1]}, "repeated items"),
         ({"repeats": 0}, "repeats"),
         ({"warmup": -1}, "warmup"),
         ({"timeout_s": 0}, "timeout_s"),
         ({"control_tolerance": "10%"}, "control_tolerance"),
-        ({"variants": ["polars_bio_b"], "nodes": [1]}, "żadnego bloku"),
+        ({"variants": ["polars_bio_b"], "nodes": [1]}, "no blocks"),
     ],
 )
 def test_invalid_config_is_rejected_before_any_run(overrides, message):
@@ -147,14 +147,14 @@ def test_check_data_ignores_files_that_are_not_parts(tmp_path):
 
 
 def test_load_reports_invalid_yaml(tmp_path):
-    path = tmp_path / "zly.yaml"
-    path.write_text("series: [niedomknięta\n")
-    with pytest.raises(ConfigError, match="niepoprawny YAML"):
+    path = tmp_path / "broken.yaml"
+    path.write_text("series: [unclosed\n")
+    with pytest.raises(ConfigError, match="invalid YAML"):
         load(path)
 
 
 def test_load_rejects_non_mapping(tmp_path):
-    path = tmp_path / "lista.yaml"
+    path = tmp_path / "list.yaml"
     path.write_text("- 1\n- 2\n")
-    with pytest.raises(ConfigError, match="słownika"):
+    with pytest.raises(ConfigError, match="expected a mapping"):
         load(path)

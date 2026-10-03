@@ -54,7 +54,7 @@ class ResultsWriter:
         unknown, missing = set(row) - set(SCHEMA), set(SCHEMA) - set(row)
         if unknown or missing:
             raise ValueError(
-                f"wiersz wyniku: nieznane pola {sorted(unknown)}, brakujące {sorted(missing)}"
+                f"result row: unknown fields {sorted(unknown)}, missing {sorted(missing)}"
             )
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")

@@ -100,7 +100,7 @@ def run(tmp_path, cfg=None, **kwargs):
     kwargs.setdefault("factory", make_factory())
     kwargs.setdefault("probe", probe())
     return orch.run_series(
-        cfg or config(), data_root=tmp_path, results_dir=tmp_path / "wyniki",
+        cfg or config(), data_root=tmp_path, results_dir=tmp_path / "results",
         out=lambda line: None, **kwargs,
     )
 
@@ -151,7 +151,7 @@ def test_wrong_result_invalidates_only_that_scenario(tmp_path):
     assert set(zip(bad["variant"], bad["op"])) == {("ballista", "merge")}
     assert bad.height == 3  # rozgrzewka i dwie rundy
     assert set(bad["invalid_reason"]) == {
-        "suma kontrolna 0x00000000000000bb ≠ wzorzec 0x00000000000000aa"
+        "checksum 0x00000000000000bb ≠ reference 0x00000000000000aa"
     }
     assert not summary.ok and summary.invalid == 3
 
@@ -162,7 +162,7 @@ def test_engine_error_is_recorded_with_its_message(tmp_path):
 
     bad = rows(run(tmp_path, factory=make_factory(args_for))).filter(~pl.col("valid"))
     assert set(bad["scenario_id"]) == {"overlap/1-2"} and set(bad["variant"]) == {"ballista"}
-    assert set(bad["invalid_reason"]) == {"kod wyjścia 1: silnik padł: błąd testowy"}
+    assert set(bad["invalid_reason"]) == {"exit code 1: engine crashed: test error"}
 
 
 def test_garbage_on_stdout_invalidates_run(tmp_path):
@@ -171,7 +171,7 @@ def test_garbage_on_stdout_invalidates_run(tmp_path):
 
     bad = rows(run(tmp_path, factory=make_factory(args_for))).filter(~pl.col("valid"))
     assert bad.height == 6
-    assert all(r.startswith("stdout runnera: niepoprawny JSON") for r in bad["invalid_reason"])
+    assert all(r.startswith("runner stdout: invalid JSON") for r in bad["invalid_reason"])
 
 
 def test_timeout_kills_runner_and_skips_scenario_for_rest_of_block(tmp_path):
@@ -181,13 +181,13 @@ def test_timeout_kills_runner_and_skips_scenario_for_rest_of_block(tmp_path):
     factory = make_factory(args_for)
     summary = run(tmp_path, cfg=config(timeout_s=1), factory=factory)
     merge = block(rows(summary), "ballista").filter(pl.col("op") == "merge").sort("rep")
-    assert merge["invalid_reason"].to_list() == ["timeout", "pominięty: timeout", "pominięty: timeout"]
+    assert merge["invalid_reason"].to_list() == ["timeout", "skipped: timeout", "skipped: timeout"]
     assert merge["wall_s"][0] < 10 and merge["wall_s"][1:].is_null().all()
     assert ("restart", "ballista", 1) in factory.log
 
 
 def test_memory_watchdog_kills_runner(tmp_path):
-    marker = tmp_path / "pamiec_sie_konczy"
+    marker = tmp_path / "memory_running_out"
 
     def mem_available():
         if marker.exists():
@@ -202,8 +202,8 @@ def test_memory_watchdog_kills_runner(tmp_path):
 
     summary = run(tmp_path, factory=make_factory(args_for), probe=probe(mem_available=mem_available))
     merge = block(rows(summary), "ballista").filter(pl.col("op") == "merge").sort("rep")
-    reason = "strażnik pamięci: MemAvailable 100 MiB < 300 MiB"
-    assert merge["invalid_reason"].to_list() == [reason, f"pominięty: {reason}", f"pominięty: {reason}"]
+    reason = "memory guard: MemAvailable 100 MiB < 300 MiB"
+    assert merge["invalid_reason"].to_list() == [reason, f"skipped: {reason}", f"skipped: {reason}"]
 
 
 def test_swap_during_run_invalidates_it(tmp_path):
@@ -241,7 +241,7 @@ def test_swap_in_is_recorded_without_invalidating(tmp_path):
 
 
 def _control_times(tmp_path, times: list[float]):
-    path = tmp_path / "czasy_kontroli.txt"
+    path = tmp_path / "control_times.txt"
     path.write_text("\n".join(map(str, times)))
 
     def args_for(variant, n, scenario):
@@ -257,7 +257,7 @@ def test_control_drift_repeats_block_once(tmp_path):
     df = rows(summary).filter(~pl.col("is_reference"))
     first, second = df.filter(pl.col("attempt") == 1), df.filter(pl.col("attempt") == 2)
     assert first.height == second.height == 8
-    assert set(first["invalid_reason"]) == {"dryf kontrolny 100%"} and not first["valid"].any()
+    assert set(first["invalid_reason"]) == {"control drift 100%"} and not first["valid"].any()
     assert second["valid"].all()
     assert summary.invalid == 8 and not summary.ok
 
@@ -275,7 +275,7 @@ def test_reference_failure_aborts_series_but_keeps_written_rows(tmp_path):
 
     with pytest.raises(orch.SeriesError, match="merge/1"):
         run(tmp_path, factory=make_factory(args_for))
-    df = pl.read_parquet(next((tmp_path / "wyniki").rglob("runs.parquet")))
+    df = pl.read_parquet(next((tmp_path / "results").rglob("runs.parquet")))
     assert df["scenario_id"].to_list() == ["overlap/1-2", "merge/1"] and df["is_reference"].all()
 
 
@@ -283,11 +283,11 @@ def test_engine_start_failure_is_reported_and_other_blocks_run(tmp_path):
     def customize(engine):
         if engine.variant == "ballista":
             def start():
-                raise EngineError("executor nie wstał")
+                raise EngineError("executor did not start")
             engine.start = start
 
     summary = run(tmp_path, factory=make_factory(customize=customize))
-    assert summary.failures == ["ballista N=1: executor nie wstał"] and not summary.ok
+    assert summary.failures == ["ballista N=1: executor did not start"] and not summary.ok
     df = rows(summary)
     assert "ballista" not in set(df["variant"]) and block(df, "polars_bio_a").height == 6
 
@@ -302,9 +302,9 @@ def test_interrupt_keeps_finished_rows_and_stops_engine(tmp_path):
     factory = make_factory(customize=customize)
     with pytest.raises(KeyboardInterrupt):
         run(tmp_path, factory=factory)
-    df = pl.read_parquet(next((tmp_path / "wyniki").rglob("runs.parquet")))
+    df = pl.read_parquet(next((tmp_path / "results").rglob("runs.parquet")))
     assert block(df, "polars_bio_a")["valid"].all()
-    assert df["invalid_reason"][-1] == "seria przerwana"  # kontrola przerwanego bloku Ballisty
+    assert df["invalid_reason"][-1] == "series interrupted"  # kontrola przerwanego bloku Ballisty
     assert factory.log[-1] == ("stop", "ballista", 1)
 
 
@@ -324,10 +324,10 @@ def args_for(variant, n, scenario):
 factory = make_factory(args_for)
 orch.handle_termination_signals()
 try:
-    orch.run_series(config(), data_root=tmp, results_dir=tmp / "wyniki", factory=factory,
+    orch.run_series(config(), data_root=tmp, results_dir=tmp / "results", factory=factory,
                     probe=probe(), out=lambda line: None)
 finally:
-    (tmp / "dziennik.txt").write_text(repr(factory.log))
+    (tmp / "journal.txt").write_text(repr(factory.log))
 """
 
 
@@ -351,13 +351,13 @@ def test_termination_signal_keeps_rows_and_stops_runner_and_engine(tmp_path, sig
     deadline = time.monotonic() + 60
     while not started.exists():
         assert proc.poll() is None, proc.communicate()[1][-2000:]
-        assert time.monotonic() < deadline, "runner Ballisty nie wystartował"
+        assert time.monotonic() < deadline, "Ballista runner did not start"
         time.sleep(0.1)
     proc.send_signal(sig)
     proc.communicate(timeout=30)
-    df = pl.read_parquet(next((tmp_path / "wyniki").rglob("runs.parquet")))
-    assert df["invalid_reason"][-1] == "seria przerwana"  # kontrola przerwanego bloku Ballisty
-    assert "('stop', 'ballista', 1)" in (tmp_path / "dziennik.txt").read_text()
+    df = pl.read_parquet(next((tmp_path / "results").rglob("runs.parquet")))
+    assert df["invalid_reason"][-1] == "series interrupted"  # kontrola przerwanego bloku Ballisty
+    assert "('stop', 'ballista', 1)" in (tmp_path / "journal.txt").read_text()
     assert not [p for p in Path("/proc").glob("[0-9]*") if _cmdline_contains(p, str(started))]
 
 
@@ -382,9 +382,9 @@ def test_dead_server_process_invalidates_run_and_restarts_engine(tmp_path):
         probe=probe(peak_rss=metrics.peak_rss, reset_peak_rss=metrics.reset_peak_rss),
     )
     reasons = block(rows(summary), "ballista")["invalid_reason"].to_list()
-    died = "proces executor_1 zakończył się w trakcie przebiegu"
+    died = "process executor_1 exited during the run"
     assert reasons.count(died) == 2  # pierwszy przebieg każdego scenariusza
-    assert all(r in (died, f"pominięty: {died}") for r in reasons)
+    assert all(r in (died, f"skipped: {died}") for r in reasons)
     assert factory.log.count(("restart", "ballista", 1)) == 2
 
 
@@ -397,22 +397,22 @@ def _fixture_data(root: Path) -> Path:
 
 
 def test_main_fails_fast_without_ballista_binaries(tmp_path, monkeypatch, capsys):
-    root = _fixture_data(tmp_path / "dane")
-    cfg = tmp_path / "seria.yaml"
+    root = _fixture_data(tmp_path / "data")
+    cfg = tmp_path / "series.yaml"
     cfg.write_text(yaml.safe_dump({
         "series": "b", "scenarios": [{"op": "overlap", "pair": "1-2"}],
         "variants": ["ballista"], "nodes": [1], "seed": 1,
     }))
-    monkeypatch.setattr(engines, "BALLISTA_DIR", tmp_path / "brak")
-    code = orch.main([str(cfg), "--data-root", str(root), "--results-dir", str(tmp_path / "wyniki")])
+    monkeypatch.setattr(engines, "BALLISTA_DIR", tmp_path / "missing")
+    code = orch.main([str(cfg), "--data-root", str(root), "--results-dir", str(tmp_path / "results")])
     assert code == 2
-    assert "brak binarki" in capsys.readouterr().err
-    assert not (tmp_path / "wyniki").exists()
+    assert "missing binary" in capsys.readouterr().err
+    assert not (tmp_path / "results").exists()
 
 
 def test_main_reports_config_error_with_code_2(tmp_path, capsys):
-    cfg = tmp_path / "zla.yaml"
+    cfg = tmp_path / "bad.yaml"
     cfg.write_text("series: x\n")
-    assert orch.main([str(cfg), "--results-dir", str(tmp_path / "wyniki")]) == 2
-    assert "brak wymaganych kluczy" in capsys.readouterr().err
-    assert not (tmp_path / "wyniki").exists()
+    assert orch.main([str(cfg), "--results-dir", str(tmp_path / "results")]) == 2
+    assert "missing required keys" in capsys.readouterr().err
+    assert not (tmp_path / "results").exists()

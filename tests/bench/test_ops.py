@@ -102,7 +102,7 @@ def test_row_multiset_reports_missing_key_column():
 
 def test_describe_diff_shows_counts_and_examples():
     text = ops.describe_diff(Counter({("a",): 2, ("b",): 1}), Counter({("a",): 1, ("c",): 1}))
-    assert "brakuje 2" in text and "nadmiarowych 1" in text and "('c',)" in text
+    assert "missing 2" in text and "extra 1" in text and "('c',)" in text
 
 
 def test_normalize_arrow_renames_and_orders_batch():

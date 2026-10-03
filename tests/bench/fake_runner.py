@@ -11,9 +11,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--rows", type=int, default=3)
 parser.add_argument("--checksum", default="0x00000000000000aa")
 parser.add_argument("--t", type=float, default=0.25)
-parser.add_argument("--t-file", type=Path, help="kolejne czasy, po jednym na wywołanie")
+parser.add_argument("--t-file", type=Path, help="successive times, one per call")
 parser.add_argument("--sleep", type=float, default=0.0)
-parser.add_argument("--touch", type=Path, help="plik tworzony na starcie (sygnał dla testu)")
+parser.add_argument("--touch", type=Path, help="file created on start (signal for the test)")
 parser.add_argument("--exit", type=int, default=0)
 parser.add_argument("--garbage", action="store_true")
 parser.add_argument("--stderr-mb", type=int, default=0)
@@ -27,10 +27,10 @@ if args.stderr_mb:
         sys.stderr.write(line)
 time.sleep(args.sleep)
 if args.exit:
-    print("silnik padł: błąd testowy", file=sys.stderr)
+    print("engine crashed: test error", file=sys.stderr)
     sys.exit(args.exit)
 if args.garbage:
-    print("to nie jest JSON")
+    print("this is not JSON")
     sys.exit(0)
 t = args.t
 if args.t_file:

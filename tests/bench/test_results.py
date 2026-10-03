@@ -37,18 +37,18 @@ def test_rows_round_trip_through_jsonl_and_parquet(tmp_path):
 
 
 def test_missing_jsonl_gives_empty_table_with_schema(tmp_path):
-    assert to_parquet(tmp_path / "brak.jsonl", tmp_path / "runs.parquet") == 0
+    assert to_parquet(tmp_path / "missing.jsonl", tmp_path / "runs.parquet") == 0
     df = pl.read_parquet(tmp_path / "runs.parquet")
     assert df.height == 0 and df.schema == pl.Schema(SCHEMA)
 
 
-@pytest.mark.parametrize("unknown, removed", [("nieznane", None), (None, "valid")])
+@pytest.mark.parametrize("unknown, removed", [("unknown_field", None), (None, "valid")])
 def test_row_with_unknown_or_missing_field_is_rejected(tmp_path, unknown, removed):
     row = full_row()
     if unknown:
         row[unknown] = 1
     if removed:
         row.pop(removed)
-    with pytest.raises(ValueError, match="wiersz wyniku"):
+    with pytest.raises(ValueError, match="result row"):
         ResultsWriter(tmp_path / "runs.jsonl").write(row)
     assert not (tmp_path / "runs.jsonl").exists()

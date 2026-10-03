@@ -25,7 +25,7 @@ PROTOCOL_KEYS = {"rows", "checksum", "t_total_s", "phases", "extra", "peak_rss_b
 @pytest.fixture(scope="module")
 def server(tmp_path_factory):
     port = free_port()
-    log = tmp_path_factory.mktemp("sail_serwer") / "server.log"
+    log = tmp_path_factory.mktemp("sail_server") / "server.log"
     with log.open("w") as f:
         proc = subprocess.Popen(
             [sys.executable, "-m", "bench.runners.sail_server", "--port", str(port)],
@@ -52,9 +52,9 @@ def scenario_args(op, a, b) -> list[str]:
 
 
 def report(r: subprocess.CompletedProcess) -> dict:
-    assert r.returncode == 0, f"kod {r.returncode}\nstderr:\n{r.stderr[-3000:]}"
+    assert r.returncode == 0, f"exit code {r.returncode}\nstderr:\n{r.stderr[-3000:]}"
     lines = r.stdout.strip().splitlines()
-    assert len(lines) == 1, f"stdout ma być jedną linią JSON, jest:\n{r.stdout}"
+    assert len(lines) == 1, f"stdout must be one JSON line, got:\n{r.stdout}"
     return json.loads(lines[0])
 
 
@@ -107,12 +107,12 @@ def test_server_keeps_exactly_n_workers(server, parquet_dirs):
 )
 def test_runner_rejects_bad_arguments(args):
     r = run_runner(args, timeout=60)
-    assert r.returncode == 2, f"{args}: kod {r.returncode}, stderr: {r.stderr}"
+    assert r.returncode == 2, f"{args}: exit code {r.returncode}, stderr: {r.stderr}"
     assert r.stdout == ""
 
 
 def test_missing_data_path_is_reported(server, tmp_path):
-    missing = tmp_path / "nie_ma_takiego_katalogu"
+    missing = tmp_path / "no_such_dir"
     r = run_runner(["--op", "merge", "--left", str(missing), "--remote", server.url])
     assert r.returncode == 1, r.stderr
     assert str(missing) in r.stderr and r.stdout == ""

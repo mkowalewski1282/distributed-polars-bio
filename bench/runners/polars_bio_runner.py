@@ -76,11 +76,11 @@ def run(op: str, left: Path, right: Path | None, cols: tuple[str, str, str], thr
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = scenario_parser(PROG, "Jeden scenariusz w polars-bio; wynik: jedna linia JSON.")
+    parser = scenario_parser(PROG, "One scenario in polars-bio; result: one JSON line.")
     parser.add_argument("--threads", type=int, required=True, help="target_partitions polars-bio (≥ 1)")
     args = parse_scenario(parser, argv)
     if args.threads < 1:
-        parser.error("--threads: liczba całkowita ≥ 1")
+        parser.error("--threads: expected an integer ≥ 1")
     return main_guard(PROG, lambda: run(args.op, args.left, args.right, args.cols, args.threads))
 
 

@@ -112,7 +112,7 @@ def execute(command: Command, *, timeout_s: float, mem_floor: int, probe: Probe,
                     available = probe.mem_available()
                     if available < mem_floor:
                         killed = (
-                            f"strażnik pamięci: MemAvailable {available // 2**20} MiB "
+                            f"memory guard: MemAvailable {available // 2**20} MiB "
                             f"< {mem_floor // 2**20} MiB"
                         )
                 if killed:
@@ -140,7 +140,7 @@ def git_commit() -> str:
     def git(*args: str) -> str:
         return subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True).stdout.strip()
 
-    head = git("rev-parse", "HEAD") or "nieznany"
+    head = git("rev-parse", "HEAD") or "unknown"
     return f"{head}-dirty" if git("status", "--porcelain", "--untracked-files=no") else head
 
 
@@ -149,7 +149,7 @@ def engine_versions(profile: str) -> dict[str, str]:
 
     def locked(name: str) -> str:
         m = re.search(rf'name = "{re.escape(name)}"\nversion = "([^"]+)"', lock)
-        return m.group(1) if m else "nieznana"
+        return m.group(1) if m else "unknown"
 
     return {
         "polars_bio": version("polars-bio"),
@@ -174,15 +174,15 @@ def _invalidate(rows: list[dict], reason: str) -> list[dict]:
 
 def _progress(row: dict) -> str:
     if row["is_reference"]:
-        kind = "wzorzec"
+        kind = "reference"
     elif row["is_control"]:
-        kind = "kontrola"
+        kind = "control"
     elif row["is_warmup"]:
-        kind = "rozgrzewka"
+        kind = "warmup"
     else:
-        kind = f"runda {row['rep']}"
+        kind = f"round {row['rep']}"
     t = f"{row['t_total_s']:9.3f} s" if row["t_total_s"] is not None else "        – s"
-    status = "OK" if row["valid"] else f"NIEWAŻNY: {row['invalid_reason']}"
+    status = "OK" if row["valid"] else f"INVALID: {row['invalid_reason']}"
     return f"{row['variant']:<14} N={row['n_nodes']} {kind:<10} {row['scenario_id']:<14} {t}  {status}"
 
 
@@ -262,7 +262,7 @@ class _Series:
             except (OSError, KeyError):
                 dead.append(name)
         if dead:
-            reasons.append(f"proces {', '.join(dead)} zakończył się w trakcie przebiegu")
+            reasons.append(f"process {', '.join(dead)} exited during the run")
         measured = {
             "valid": not reasons,
             "invalid_reason": "; ".join(reasons) or None,
@@ -294,7 +294,7 @@ class _Series:
                 self.out(_progress(row))
                 if measured["rows"] is None:
                     raise SeriesError(
-                        f"brak wyniku wzorcowego {scenario.id}: {measured['invalid_reason']}"
+                        f"no reference result for {scenario.id}: {measured['invalid_reason']}"
                     )
                 expected[scenario.id] = Expected(measured["rows"], measured["checksum"])
         finally:
@@ -314,7 +314,7 @@ class _Series:
             else:
                 eng, variant, n = engine, block.variant, block.n_nodes
             if not is_control and scenario.id in skipped:
-                measured = _skipped(f"pominięty: {skipped[scenario.id]}")
+                measured = _skipped(f"skipped: {skipped[scenario.id]}")
             else:
                 measured, restart = self.measure(eng, scenario, expected[scenario.id])
                 if restart:
@@ -330,7 +330,7 @@ class _Series:
         try:
             first = run(CONTROL, 0, is_control=True)
             for w in range(1, self.cfg.warmup + 1):
-                for scenario in round_order(self.cfg, block, f"rozgrzewka-{w}"):
+                for scenario in round_order(self.cfg, block, f"warmup-{w}"):
                     run(scenario, 0, warmup=True)
             for r in range(1, self.cfg.repeats + 1):
                 for scenario in round_order(self.cfg, block, str(r)):
@@ -343,9 +343,9 @@ class _Series:
         if not block_drifted(t_start, t_end, self.cfg.control_tolerance):
             return False
         if t_start is not None and t_end is not None:
-            reason = f"dryf kontrolny {drift(t_start, t_end):.0%}"
+            reason = f"control drift {drift(t_start, t_end):.0%}"
         else:
-            reason = "przebieg kontrolny nieważny"
+            reason = "control run invalid"
         _invalidate(rows, reason)
         return True
 
@@ -355,18 +355,18 @@ class _Series:
             try:
                 drifted = self.run_block(block, attempt, expected, rows)
             except EngineError as e:
-                self.write(_invalidate(rows, f"blok przerwany: {e}"))
+                self.write(_invalidate(rows, f"block interrupted: {e}"))
                 self.summary.failures.append(f"{block.label}: {e}")
-                self.out(f"{block.label}: blok przerwany — {e}")
+                self.out(f"{block.label}: block interrupted - {e}")
                 return
             except BaseException:
-                self.write(_invalidate(rows, "seria przerwana"))
+                self.write(_invalidate(rows, "series interrupted"))
                 raise
             self.write(rows)
             if not drifted:
                 return
             last = attempt == MAX_BLOCK_ATTEMPTS
-            self.out(f"{block.label}: dryf przebiegu kontrolnego — {'blok nieważny' if last else 'powtarzam blok'}")
+            self.out(f"{block.label}: control run drift - {'block invalid' if last else 'repeating the block'}")
 
 
 def _new_directory(results_dir: Path, series: str) -> Path:
@@ -405,7 +405,7 @@ def run_series(
     summary = SeriesSummary(directory=directory, parquet=directory / "runs.parquet")
     writer = ResultsWriter(directory / "runs.jsonl")
     series = _Series(cfg, factory, probe or Probe(), mem_floor, scratch, writer, out, summary, profile)
-    out(f"seria {cfg.series}: wyniki w {directory}")
+    out(f"series {cfg.series}: results in {directory}")
     try:
         expected = series.reference_pass()
         for block in blocks(cfg):
@@ -417,7 +417,7 @@ def run_series(
 
 
 def _interrupt(signum, frame) -> None:
-    raise KeyboardInterrupt(f"sygnał {signal.Signals(signum).name}")
+    raise KeyboardInterrupt(f"signal {signal.Signals(signum).name}")
 
 
 def handle_termination_signals() -> dict:
@@ -433,7 +433,7 @@ def preflight(cfg: SeriesConfig, profile: str) -> None:
     needed = max(cluster_cpus(max(cfg.nodes))) + 1
     if (os.cpu_count() or 0) < needed:
         raise ConfigError(
-            f"za mało rdzeni: N = {max(cfg.nodes)} wymaga {needed} wątków, jest {os.cpu_count()}"
+            f"not enough CPUs: N = {max(cfg.nodes)} needs {needed} threads, found {os.cpu_count()}"
         )
     if "ballista" in cfg.variants:
         require_ballista_binaries(profile)
@@ -442,12 +442,12 @@ def preflight(cfg: SeriesConfig, profile: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m bench.orchestrator",
-        description="Seria pomiarowa według konfiguracji YAML (specyfikacja 8).",
+        description="Measurement series from a YAML configuration (methodology spec, section 8).",
     )
-    parser.add_argument("config", type=Path, help="plik YAML serii, np. bench/conf/smoke.yaml")
+    parser.add_argument("config", type=Path, help="series YAML file, e.g. bench/conf/smoke.yaml")
     parser.add_argument(
         "--data-root", type=Path,
-        help="katalog nadrzędny databio-8p (domyślnie $BENCH_DATA_ROOT albo ~/bench_data)",
+        help="parent directory of databio-8p (default: $BENCH_DATA_ROOT or ~/bench_data)",
     )
     parser.add_argument("--results-dir", type=Path, default=REPO / "bench" / "results")
     parser.add_argument("--ballista-profile", choices=PROFILES, default="release")
@@ -459,7 +459,7 @@ def main(argv: list[str] | None = None) -> int:
         check_data(cfg, root)
         preflight(cfg, args.ballista_profile)
     except (ConfigError, EngineError, OSError) as e:
-        print(f"błąd: {e}", file=sys.stderr)
+        print(f"error: {e}", file=sys.stderr)
         return 2
     os.sched_setaffinity(0, SYSTEM_CPUS)
     previous = handle_termination_signals()
@@ -469,14 +469,14 @@ def main(argv: list[str] | None = None) -> int:
             profile=args.ballista_profile,
         )
     except SeriesError as e:
-        print(f"seria przerwana: {e}", file=sys.stderr)
+        print(f"series interrupted: {e}", file=sys.stderr)
         return 1
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
     print(
-        f"przebiegi: {summary.rows}, nieważne: {summary.invalid}, "
-        f"przerwane bloki: {len(summary.failures)}; wyniki: {summary.parquet}"
+        f"runs: {summary.rows}, invalid: {summary.invalid}, "
+        f"interrupted blocks: {len(summary.failures)}; results: {summary.parquet}"
     )
     return 0 if summary.ok else 1
 

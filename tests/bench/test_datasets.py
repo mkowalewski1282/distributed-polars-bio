@@ -38,7 +38,7 @@ def test_data_dir_empty_env_means_default(monkeypatch):
 
 
 def test_explicit_root_wins_over_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("BENCH_DATA_ROOT", "/nie/tutaj")
+    monkeypatch.setenv("BENCH_DATA_ROOT", "/not/here")
     assert ds.data_dir(tmp_path) == tmp_path / "databio-8p"
 
 
@@ -55,10 +55,10 @@ def test_resolve_single_dataset(tmp_path):
     "bad", ["", "9", "1-9", "1-2-3", "a-b", "-1", "1-", " 1-2", "1-2\n", "01-2"]
 )
 def test_resolve_rejects_malformed_ids(bad, tmp_path):
-    with pytest.raises(ValueError, match="niepoprawny identyfikator"):
+    with pytest.raises(ValueError, match="invalid data identifier"):
         ds.resolve(bad, tmp_path)
 
 
 def test_data_dir_expands_home(monkeypatch):
-    monkeypatch.setenv("BENCH_DATA_ROOT", "~/dane_testowe")
-    assert ds.data_dir() == Path.home() / "dane_testowe" / "databio-8p"
+    monkeypatch.setenv("BENCH_DATA_ROOT", "~/test_data")
+    assert ds.data_dir() == Path.home() / "test_data" / "databio-8p"

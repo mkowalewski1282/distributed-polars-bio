@@ -30,7 +30,7 @@ SCENARIOS = [{"op": op, "dataset": 1} if op in UNARY_OPS else {"op": op, "pair":
 
 @pytest.fixture(scope="module")
 def data_root(tmp_path_factory):
-    root = tmp_path_factory.mktemp("dane")
+    root = tmp_path_factory.mktemp("data")
     write_parts(FIXTURE_A, root / "databio-8p" / DATASETS[1])
     write_parts(FIXTURE_B, root / "databio-8p" / DATASETS[2])
     return root
@@ -39,11 +39,11 @@ def data_root(tmp_path_factory):
 @pytest.fixture(scope="module")
 def series(data_root, tmp_path_factory):
     cfg = parse({
-        "series": "integracja", "scenarios": SCENARIOS, "variants": list(VARIANTS),
+        "series": "integration", "scenarios": SCENARIOS, "variants": list(VARIANTS),
         "nodes": [1, 2], "repeats": 1, "warmup": 0, "seed": 1, "control_tolerance": 100.0,
     })
     summary = orch.run_series(
-        cfg, data_root=data_root, results_dir=tmp_path_factory.mktemp("wyniki"),
+        cfg, data_root=data_root, results_dir=tmp_path_factory.mktemp("results"),
         profile="debug", probe=orch.Probe(pswpout=lambda: 0),
     )
     return summary, pl.read_parquet(summary.parquet)
@@ -108,15 +108,15 @@ def test_main_resolves_relative_data_root(data_root, tmp_path, monkeypatch):
     względna ścieżka danych musi zostać zamieniona na bezwzględną przed startem serii."""
     monkeypatch.chdir(data_root.parent)
     monkeypatch.setattr(orch, "Probe", functools.partial(orch.Probe, pswpout=lambda: 0))
-    cfg = tmp_path / "seria.yaml"
+    cfg = tmp_path / "series.yaml"
     cfg.write_text(yaml.safe_dump({
-        "series": "sciezki", "scenarios": [{"op": "overlap", "pair": "1-2"}],
+        "series": "paths", "scenarios": [{"op": "overlap", "pair": "1-2"}],
         "variants": ["polars_bio_a"], "nodes": [1], "repeats": 1, "warmup": 0, "seed": 1,
         "control_tolerance": 100.0,
     }))
     affinity = os.sched_getaffinity(0)
     try:
-        code = orch.main([str(cfg), "--data-root", data_root.name, "--results-dir", str(tmp_path / "wyniki")])
+        code = orch.main([str(cfg), "--data-root", data_root.name, "--results-dir", str(tmp_path / "results")])
     finally:
         os.sched_setaffinity(0, affinity)
     assert code == 0

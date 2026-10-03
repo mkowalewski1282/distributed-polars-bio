@@ -62,8 +62,8 @@ def run(op: str, left: Path, right: Path | None, cols: tuple[str, str, str], rem
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = scenario_parser(PROG, "Jeden scenariusz w Sailu (serwer zewnętrzny); wynik: jedna linia JSON.")
-    parser.add_argument("--remote", required=True, help="adres serwera, np. sc://127.0.0.1:50051")
+    parser = scenario_parser(PROG, "One scenario in Sail (external server); result: one JSON line.")
+    parser.add_argument("--remote", required=True, help="server address, e.g. sc://127.0.0.1:50051")
     args = parse_scenario(parser, argv)
     return main_guard(PROG, lambda: run(args.op, args.left, args.right, args.cols, args.remote))
 

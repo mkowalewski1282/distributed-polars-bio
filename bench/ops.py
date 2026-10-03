@@ -54,7 +54,7 @@ def normalize_polars_bio(op: str, df: pl.DataFrame, cols: tuple[str, str, str]) 
     names = polars_bio_names(op, cols)
     missing = [src for src in names if src not in df.columns]
     if missing:
-        raise KeyError(f"{op}: wynik polars-bio nie ma kolumn {missing}; ma {df.columns}")
+        raise KeyError(f"{op}: polars-bio result lacks columns {missing}; has {df.columns}")
     return df.select([pl.col(src).alias(dst) for src, dst in names.items()])
 
 
@@ -65,7 +65,7 @@ def normalize_arrow(op: str, data, cols: tuple[str, str, str]):
     names = polars_bio_names(op, cols)
     missing = [src for src in names if src not in data.schema.names]
     if missing:
-        raise KeyError(f"{op}: wynik polars-bio nie ma kolumn {missing}; ma {data.schema.names}")
+        raise KeyError(f"{op}: polars-bio result lacks columns {missing}; has {data.schema.names}")
     return type(data).from_arrays([data.column(src) for src in names], names=list(names.values()))
 
 
@@ -76,7 +76,7 @@ def row_multiset(op: str, df) -> Counter:
     key = KEY_COLUMNS[op]
     missing = [k for k in key if k not in df.columns]
     if missing:
-        raise KeyError(f"{op}: brak kolumn {missing}; są {df.columns}")
+        raise KeyError(f"{op}: missing columns {missing}; got {df.columns}")
     exprs = [
         pl.col(k).cast(pl.Utf8) if k.startswith("chrom") else pl.col(k).cast(pl.Int64)
         for k in key
@@ -89,6 +89,6 @@ def describe_diff(expected: Counter, actual: Counter, limit: int = 5) -> str:
     missing = expected - actual
     extra = actual - expected
     return (
-        f"brakuje {sum(missing.values())} wierszy, np. {list(missing)[:limit]}; "
-        f"nadmiarowych {sum(extra.values())}, np. {list(extra)[:limit]}"
+        f"missing {sum(missing.values())} rows, e.g. {list(missing)[:limit]}; "
+        f"extra {sum(extra.values())}, e.g. {list(extra)[:limit]}"
     )

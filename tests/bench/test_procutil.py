@@ -33,15 +33,15 @@ def test_wait_for_port_returns_when_process_listens(tmp_path):
 def test_wait_for_port_reports_dead_process(tmp_path):
     proc = subprocess.Popen([sys.executable, "-c", "raise SystemExit(3)"])
     proc.wait()
-    with pytest.raises(EngineError, match=r"proces serwer_testowy zakończył się \(kod 3\)"):
-        wait_for_port(free_port(), proc, name="serwer_testowy", log=tmp_path / "log", timeout=5)
+    with pytest.raises(EngineError, match=r"process test_server exited \(code 3\)"):
+        wait_for_port(free_port(), proc, name="test_server", log=tmp_path / "log", timeout=5)
 
 
 def test_wait_for_port_times_out(tmp_path):
     proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
     try:
-        with pytest.raises(EngineError, match="nie nasłuchuje"):
-            wait_for_port(free_port(), proc, name="cichy", log=tmp_path / "log", timeout=1)
+        with pytest.raises(EngineError, match="not listening"):
+            wait_for_port(free_port(), proc, name="silent", log=tmp_path / "log", timeout=1)
     finally:
         proc.kill()
         proc.wait()

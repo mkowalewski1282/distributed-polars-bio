@@ -38,7 +38,7 @@ def sail_env(n_nodes: int) -> dict[str, str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="sail_server", description="Serwer Spark Connect (Sail) na 127.0.0.1."
+        prog="sail_server", description="Spark Connect server (Sail) on 127.0.0.1."
     )
     parser.add_argument("--port", type=int, required=True)
     args = parser.parse_args(argv)
@@ -47,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
 
     server = SparkConnectServer("127.0.0.1", args.port)
     server.start(background=True)
-    print(f"sail_server: nasłuchuje na 127.0.0.1:{args.port}", flush=True)
+    print(f"sail_server: listening on 127.0.0.1:{args.port}", flush=True)
     while server.running:
         time.sleep(1)
     return 0

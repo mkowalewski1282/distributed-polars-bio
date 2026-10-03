@@ -79,7 +79,7 @@ def test_missing_field_is_reported(tmp_path):
 def test_unexpected_unit_is_rejected(tmp_path):
     (tmp_path / "1").mkdir()
     (tmp_path / "1" / "status").write_text("VmHWM:\t  12 MB\n")
-    with pytest.raises(ValueError, match="jednostce"):
+    with pytest.raises(ValueError, match="unexpected unit"):
         metrics.peak_rss(1, tmp_path)
 
 
@@ -107,10 +107,10 @@ def test_real_proc_counters_are_readable():
 
 def test_dir_size_counts_regular_files_recursively(tmp_path):
     (tmp_path / "a.arrow").write_bytes(b"x" * 10)
-    (tmp_path / "etap" / "1").mkdir(parents=True)
-    (tmp_path / "etap" / "1" / "b.arrow").write_bytes(b"y" * 20)
-    big = tmp_path.parent / f"{tmp_path.name}_poza.bin"
+    (tmp_path / "stage" / "1").mkdir(parents=True)
+    (tmp_path / "stage" / "1" / "b.arrow").write_bytes(b"y" * 20)
+    big = tmp_path.parent / f"{tmp_path.name}_outside.bin"
     big.write_bytes(b"z" * 1000)
-    os.symlink(big, tmp_path / "dowiazanie")
+    os.symlink(big, tmp_path / "symlink")
     assert metrics.dir_size(tmp_path) == 30
-    assert metrics.dir_size(tmp_path / "nie_ma") == 0
+    assert metrics.dir_size(tmp_path / "missing") == 0

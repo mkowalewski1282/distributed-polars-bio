@@ -134,7 +134,7 @@ def register(spark, op: str) -> None:
     """Rejestruje UDTF operacji w sesji — przed `build_query`. Runner pomiarowy robi to przed
     pomiarem czasu, tak jak bench_client rejestruje funkcje dist_* przy połączeniu."""
     if op not in RETURN_TYPES:
-        raise ValueError(f"nieznana operacja {op!r}")
+        raise ValueError(f"unknown operation {op!r}")
     spark.udtf.register(udtf_name(op), make_udtf(op))
 
 
@@ -144,10 +144,10 @@ def build_query(spark, op: str, left, right=None, cols: tuple[str, str, str] = C
     from pyspark.sql import functions as F
 
     if op not in RETURN_TYPES:
-        raise ValueError(f"nieznana operacja {op!r}")
+        raise ValueError(f"unknown operation {op!r}")
     if (op in UNARY_OPS) != (right is None):
         raise ValueError(
-            f"{op} wymaga {'jednej tabeli' if op in UNARY_OPS else 'dwóch tabel'}"
+            f"{op} requires {'one table' if op in UNARY_OPS else 'two tables'}"
         )
     c, s, e = cols
 

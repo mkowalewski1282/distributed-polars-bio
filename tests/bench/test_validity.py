@@ -31,11 +31,11 @@ def test_parse_report_accepts_protocol_line():
 @pytest.mark.parametrize(
     "stdout, message",
     [
-        ("", "jednej linii"),
-        (json.dumps(GOOD) + "\n" + json.dumps(GOOD), "jednej linii"),
-        ("to nie JSON", "niepoprawny JSON"),
-        ("[1, 2]", "obiektu"),
-        (json.dumps({k: v for k, v in GOOD.items() if k != "extra"}), "brak pól"),
+        ("", "one JSON line"),
+        (json.dumps(GOOD) + "\n" + json.dumps(GOOD), "one JSON line"),
+        ("not JSON", "invalid JSON"),
+        ("[1, 2]", "a JSON object"),
+        (json.dumps({k: v for k, v in GOOD.items() if k != "extra"}), "missing fields"),
         (json.dumps({**GOOD, "rows": -1}), "rows"),
         (json.dumps({**GOOD, "rows": True}), "rows"),
         (json.dumps({**GOOD, "checksum": "0xAA"}), "checksum"),
@@ -60,20 +60,20 @@ def test_killed_run_reports_why_it_was_killed_and_swap():
 
 
 def test_engine_error_quotes_last_stderr_line():
-    got = reasons(returncode=1, report=None, stderr="log\nbench_client: brak danych: /x\n\n")
-    assert got == ["kod wyjścia 1: bench_client: brak danych: /x"]
+    got = reasons(returncode=1, report=None, stderr="log\nbench_client: missing data: /x\n\n")
+    assert got == ["exit code 1: bench_client: missing data: /x"]
 
 
 def test_missing_report_uses_parse_error():
-    got = reasons(report=None, report_error="stdout runnera: niepoprawny JSON")
-    assert got == ["stdout runnera: niepoprawny JSON"]
+    got = reasons(report=None, report_error="runner stdout: invalid JSON")
+    assert got == ["runner stdout: invalid JSON"]
 
 
 def test_wrong_rows_and_checksum_are_both_reported():
     got = reasons(report={**GOOD, "rows": 4, "checksum": "0x00000000000000bb"})
     assert got == [
-        "liczba wierszy 4 ≠ wzorzec 3",
-        "suma kontrolna 0x00000000000000bb ≠ wzorzec 0x00000000000000aa",
+        "row count 4 ≠ reference 3",
+        "checksum 0x00000000000000bb ≠ reference 0x00000000000000aa",
     ]
 
 
@@ -87,7 +87,7 @@ def test_without_expected_value_only_execution_is_checked():
 
 def test_stderr_tail_is_shortened():
     assert stderr_tail("x" * 1000, limit=10) == "x" * 10
-    assert stderr_tail("") == "(pusty stderr)"
+    assert stderr_tail("") == "(empty stderr)"
 
 
 def test_drift_rule():

@@ -46,7 +46,7 @@ BALLISTA_START_ATTEMPTS = 3
 def node_cpus(k: int) -> tuple[int, int]:
     """Węzeł k (1..3) = rdzeń fizyczny k = wątki {2k, 2k+1} (lscpu -e)."""
     if k not in (1, 2, 3):
-        raise ValueError(f"węzeł {k!r}: dozwolone 1–3")
+        raise ValueError(f"node {k!r}: allowed 1–3")
     return (2 * k, 2 * k + 1)
 
 
@@ -122,7 +122,7 @@ def require_ballista_binaries(profile: str) -> None:
     if missing:
         flag = "--release " if profile == "release" else ""
         raise EngineError(
-            f"brak binarki {', '.join(missing)} — zbuduj: cd ballista_genomics && "
+            f"missing binary {', '.join(missing)} - build it: cd ballista_genomics && "
             f"CARGO_BUILD_JOBS=1 cargo build {flag}--bin ballista_node --bin bench_client"
         )
 
@@ -163,7 +163,7 @@ class BallistaEngine:
         try:
             self._spawn("scheduler", SYSTEM_CPUS, ["scheduler", "--port", str(self.port)])
             # Executor łączy się ze schedulerem tylko raz, przy starcie (P0) — najpierw scheduler.
-            self._wait(lambda: _registered_executors(self.port) >= 0, "scheduler nie odpowiada")
+            self._wait(lambda: _registered_executors(self.port) >= 0, "scheduler does not respond")
             for k in range(1, self.n + 1):
                 name = f"executor_{k}"
                 work = self._tmp / name
@@ -176,7 +176,7 @@ class BallistaEngine:
                 ])
             self._wait(
                 lambda: _registered_executors(self.port) == self.n,
-                f"scheduler nie widzi {self.n} executorów",
+                f"scheduler does not see {self.n} executors",
             )
         except BaseException:
             self.stop()
@@ -200,7 +200,7 @@ class BallistaEngine:
             except OSError:
                 pass
             time.sleep(0.3)
-        raise EngineError(f"{message} po {timeout:.0f} s; logi: {self.log_dir}")
+        raise EngineError(f"{message} after {timeout:.0f} s; logs: {self.log_dir}")
 
     def stop(self) -> None:
         for proc in self.procs.values():
@@ -306,4 +306,4 @@ def make_engine(variant: str, n_nodes: int, *, data_root: Path, log_dir: Path, p
         return BallistaEngine(n_nodes, profile=profile, data_root=data_root, log_dir=log_dir)
     if variant == "sail":
         return SailEngine(n_nodes, data_root=data_root, log_dir=log_dir)
-    raise ValueError(f"nieznany wariant {variant!r}")
+    raise ValueError(f"unknown variant {variant!r}")
