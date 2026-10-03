@@ -51,7 +51,7 @@ _NEEDED = {DATASETS[1], DATASETS[2]}
 _PROBLEMS = verify(data_dir(), {n: r for n, r in expected_rows().items() if n in _NEEDED})
 
 pytestmark = [
-    pytest.mark.dane,
+    pytest.mark.real_data,
     pytest.mark.skipif(
         bool(_PROBLEMS), reason=f"brak kompletnych danych pary {PAIR} w {data_dir()}: {_PROBLEMS}"
     ),
