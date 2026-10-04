@@ -196,8 +196,9 @@ etapami, po jednej zmianie. Punkty dopisywane po każdym etapie.
    - Pula workerów na sesję: obowiązuje — każda sesja (osobny proces runnera) dostaje własne
      workery numerowane od 1.
    - Dodatkowy worker przy N = 1 (zbiór testowy w 8 plikach na stronę, 16 zadań skanowania
-     > 8 slotów): 0 z 10 sesji; przy N = 2 zawsze 2 workery. W planie 3a dodatkowy worker
-     pojawiał się sporadycznie na danych rzeczywistych — do potwierdzenia w smoke (Zadanie 11).
+     > 8 slotów): 0 z 10 sesji; przy N = 2 zawsze 2 workery. Na danych rzeczywistych (smoke
+     04.10.2026) również dokładnie N workerów w każdej sesji (N = 1: 10 z 10, N = 2: 5 z 5,
+     N = 3: 10 z 10); w planie 3a przy N = 1 zdarzał się dodatkowy worker.
    - Sesje po kolei w jednym procesie klienta: wszystkie 5 zakończone (0,1–0,3 s) —
      zawieszanie czwartej sesji z 0.5.3 zniknęło.
    - Serwer drivera jest w 0.7.2 wspólny dla sesji („driver server is ready” raz, przy starcie
@@ -221,3 +222,13 @@ etapami, po jednej zmianie. Punkty dopisywane po każdym etapie.
      z polars-bio.
    - Do sprawdzenia w planie 3b-2 przy przejściu na UDTF ze strzałką (Arrow), gdzie PySpark
      konwertuje partie przez pandas.
+5. **Weryfikacja końcowa (04.10.2026).**
+   - Testy na danych rzeczywistych: 13 passed, 2 xfailed (standalone przy broadcaście — bez
+     zmian).
+   - Smoke na parze 1-2 (Ballista debug): 103 przebiegi, żaden z błędnym wynikiem; 56 nieważnych
+     wyłącznie z powodu dryfu przebiegu kontrolnego (11–23%; sprawa planu 3b-2). `subtract`
+     polars-bio A/B poprawny przy 2, 4 i 6 partycjach. Swap: zero.
+   - CI na GitHub Actions zielone (pierwsze przebiegi odsłoniły brak `protoc` na runnerze —
+     potrzebuje go skrypt budowania zależności `substrait`; CI instaluje go teraz sam).
+   - Lokalne 22 GB w `ballista_genomics/target` to głównie nagromadzone stare artefakty
+     (`target/debug/deps`), nie debuginfo — `Cargo.toml` od dawna ma `debug = false`.

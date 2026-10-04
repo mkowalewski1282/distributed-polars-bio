@@ -150,7 +150,8 @@ darmowe i bez limitu minut.
   2. Rust według `rust-toolchain.toml` (1.95.0);
   3. cache budowania Rusta (`Swatinem/rust-cache`, katalog `ballista_genomics`);
   4. `cargo build --bins` bez informacji do debugowania (`CARGO_PROFILE_DEV_DEBUG=0`) — lokalnie
-     `target/debug` zajmuje 22 GB, głównie przez debuginfo; na zachowanie binarek nie wpływa;
+     `target/debug` zajmuje 22 GB, głównie przez nagromadzone stare artefakty; `Cargo.toml` już wyłącza
+     debuginfo (`debug = false`), zmienna chroni przed zmianą profilu; na zachowanie binarek nie wpływa;
   5. uv (`astral-sh/setup-uv` z cache), `uv sync --locked` — niezgodność `uv.lock`
      z `pyproject.toml` zatrzymuje CI;
   6. `uv run pytest -m "not real_data"`.

@@ -83,3 +83,7 @@ Po migracji na Pythona 3.12 i polars-bio 0.36.0 (`uv.lock`) błąd nie występuj
 Wynik wzorcowy nadal liczy polars-bio na 1 partycji (wariant `polars_bio_ref`), ale osobny wariant
 „polars-bio na 1 partycji” jako punkt odniesienia w P1 (decyzja z 01.10.2026) przestaje być
 potrzebny.
+
+Smoke na danych 1-2 (04.10.2026): `subtract` polars-bio A/B ma 209 940 wierszy przy 2, 4 i 6
+partycjach — tyle co wzorzec; w planie 3a było 205 673, 202 854 i 201 506. Żaden przebieg smoke nie
+ma błędnego wyniku.

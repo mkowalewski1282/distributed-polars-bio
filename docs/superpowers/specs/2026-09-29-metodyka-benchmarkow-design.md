@@ -48,6 +48,16 @@ jednej maszynie, a nie wyłącznie z samym sobą przy mniejszej liczbie węzłó
 3,5 GB. Na czas pomiarów WSL podniesiony do 5 GB i 4 GB swapu (`.wslconfig`), przy czym każdy
 przebieg z użyciem swapu jest nieważny (sekcja 6).
 
+**Oprogramowanie (od planu 3b-1):**
+- Python 3.12 w środowisku uv (`pyproject.toml`, `uv.lock`);
+- polars-bio 0.36, pysail 0.7.2, PySpark 4.2.0 (klient Spark Connect);
+- Ballista 53.0.0 z DataFusion 53.0.0;
+- `datafusion-bio-function-ranges` v0.22.2 — ta sama wersja algorytmów w polars-bio i w integracji
+  z Ballistą (`tests/test_algorithm_versions.py`);
+- Rust 1.95.0 (`ballista_genomics/rust-toolchain.toml`).
+
+Dokładne wersje każdego przebiegu orkiestrator zapisuje w kolumnie `engine_versions`.
+
 **Definicja węzła:** 1 rdzeń fizyczny = 2 wątki (para SMT). Topologia (`lscpu -e`): rdzeń *k*
 to wątki {2k, 2k+1}. Przydział:
 
@@ -70,7 +80,7 @@ wątków polars-bio), bez polegania na autodetekcji.
 | **polars-bio A** (węzeł tej samej wielkości) | jeden proces na wątkach węzła 1 (2 wątki: `target_partitions = 2`, `POLARS_MAX_THREADS = 2`); niezależny od N |
 | **polars-bio B** (maszyna = cały klaster) | jeden proces na wątkach węzłów 1..N (2N wątków, `target_partitions = 2N`); dla N = 1 tożsamy z A |
 | **Ballista** | scheduler (CPU 0–1) + N executorów, executor *i* na wątkach węzła *i*, 2 sloty zadań na executor; `BIO_TARGET_PARTITIONS = 2N` w każdym procesie klastra i w kliencie |
-| **Sail** | jeden proces serwera (`local-cluster`, N workerów, równoległość 2N) na wątkach węzłów 1..N — te same zasoby co klaster, ale bez rozproszenia i z blokadą `sail_pb_guard` (asymetria opisana jawnie); 8 slotów na workera, bo przy 2 Sail sam dokłada workery ponad N, a z limitem `worker_max_count` zapytanie wisi (sonda 01.10.2026); przy N = 1 Sail sporadycznie i tak dokłada drugiego workera (16 zadań skanowania > 8 slotów; smoke 02.10.2026); driver i workery Sail tworzy osobno dla każdej sesji Spark Connect, czyli dla każdego przebiegu, przy pierwszym RPC sesji — przed pomiarem czasu (sonda 02.10.2026) |
+| **Sail** | jeden proces serwera (`local-cluster`, N workerów, równoległość 2N) na wątkach węzłów 1..N — te same zasoby co klaster, ale bez rozproszenia i z blokadą `sail_pb_guard` (asymetria opisana jawnie); 8 slotów na workera, bo przy 2 Sail sam dokłada workery ponad N, a z limitem `worker_max_count` zapytanie wisi (sonda 01.10.2026); przy N = 1 Sail 0.5.3 sporadycznie i tak dokładał drugiego workera (16 zadań skanowania > 8 slotów; smoke 02.10.2026), w Sailu 0.7.2 każda sesja ma dokładnie N workerów (smoke 04.10.2026); driver i workery Sail tworzy osobno dla każdej sesji Spark Connect, czyli dla każdego przebiegu, przy pierwszym RPC sesji — przed pomiarem czasu (sonda 02.10.2026) |
 
 Który z wariantów A/B jest punktem odniesienia głównym — do ustalenia na dalszym etapie; mierzone
 są oba.
@@ -330,9 +340,8 @@ twarda awaria (np. wywrócenie WSL) traci co najwyżej bieżący blok.
   reguły nieważności przebiegu;
 - integracyjny: orkiestrator na zbiorze testowym w układzie databio-8p, wszystkie warianty,
   N = 1 i 2 (`tests/test_orchestrator_integration.py`, kilka minut); smoke na danych 1-2 —
-  `python -m bench.orchestrator bench/conf/smoke.yaml` (smoke 02.10.2026: poza dryfem przebiegu
-  kontrolnego nieważne wyłącznie przebiegi polars-bio A/B `subtract` — błąd #372; `merge`
-  zbioru 1 nie ma czego scalać);
+  `python -m bench.orchestrator bench/conf/smoke.yaml` (smoke po planie 3b-1, 04.10.2026: poza dryfem przebiegu
+  kontrolnego wszystkie przebiegi ważne);
 - istniejące 42 testy bez zmian.
 
 ## 9. Zmiany w istniejącym kodzie (warunki wstępne)
@@ -429,6 +438,3 @@ pomiarowym.
 - dostęp do chmury i jej finansowanie;
 - konkretna architektura lakehouse i sposób podłączenia źródła danych;
 - zakres operacji `complement` i `cluster` (poza obecnym etapem);
-- nowe środowisko z Pythonem ≥ 3.11 i aktualnym polars-bio (0.36.0: poprawka #372, DataFusion 53
-  jak w Ballistcie) — przed planem 3b; wariant: uv (projektowe `.venv`, `uv.lock`) albo globalny
-  drugi Python — do wyboru.
