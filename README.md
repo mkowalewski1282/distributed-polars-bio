@@ -11,7 +11,8 @@ i w Sailu (`sail_bio.py`) oraz narzędzie pomiarowe (`bench/`).
 ## Środowisko
 
 Wymagania: Linux x86_64 (narzędzie używa `taskset` i `/proc`), [uv](https://docs.astral.sh/uv/)
-0.12.22 i [rustup](https://rustup.rs/).
+0.12.22, [rustup](https://rustup.rs/) i `protoc` (kompilator Protocol Buffers; potrzebuje go
+skrypt budowania zależności `substrait` — lokalnie i w CI wersja 28.3).
 
 ```bash
 curl -LsSf https://astral.sh/uv/0.12.22/install.sh | sh   # uv w ~/.local/bin
