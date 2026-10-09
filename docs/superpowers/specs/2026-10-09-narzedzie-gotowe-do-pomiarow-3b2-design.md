@@ -1,7 +1,7 @@
 # Etap 3b-2: narzędzie gotowe do pomiarów — projekt
 
 - **Data:** 9 października 2026
-- **Status:** projekt po brainstormingu (08–09.10.2026); czeka na przegląd użytkownika
+- **Status:** zatwierdzony przez użytkownika (09.10.2026); plan: `docs/superpowers/plans/2026-10-09-narzedzie-gotowe-do-pomiarow-3b2.md`
 - **Zakres:** protokół pomiaru (czas bez sumy kontrolnej, przebieg kontrolny, swap), nowa ścieżka
   Saila (`applyInArrow` z osobnym kontekstem polars-bio na wątek), Ballista gotowa do pomiarów
   (build release, limity gRPC, `broadcast_bytes`, `EXPLAIN ANALYZE`), fazy, drobne poprawki
