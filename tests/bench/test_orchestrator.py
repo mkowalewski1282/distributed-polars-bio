@@ -531,6 +531,30 @@ def test_failed_explain_is_reported_as_series_failure(tmp_path):
     assert not summary.ok
 
 
+def test_engine_death_during_explain_stops_runner_at_once(tmp_path):
+    """Śmierć procesu silnika w przebiegu EXPLAIN ANALYZE przerywa runner od razu, a nie po
+    timeoucie; każdy scenariusz EXPLAIN dostaje własną porażkę (runner za każdym razem tworzy
+    znacznik od nowa, więc `dead_once` zgłasza śmierć przy każdym), wyniki pomiarów bez zmian."""
+    marker = tmp_path / "executor_died"
+
+    def customize(engine):
+        if engine.variant == "ballista":
+            engine.explain_args = ["--touch", str(marker), "--sleep", "60"]
+            engine.dead_once = marker
+
+    t0 = time.monotonic()
+    summary = run(tmp_path, cfg=config(explain=True, timeout_s=120),
+                  factory=make_factory(customize=customize))
+    assert time.monotonic() - t0 < 60
+    died = "process executor_1 exited during the run"
+    assert summary.failures == [
+        f"ballista N=1: EXPLAIN ANALYZE overlap/1-2: {died}",
+        f"ballista N=1: EXPLAIN ANALYZE merge/1: {died}",
+    ]
+    assert rows(summary).height == 2 + 2 * (2 + 2 + 4)
+    assert block(rows(summary), "ballista")["valid"].all()
+
+
 def test_no_explain_pass_by_default(tmp_path):
     assert not (run(tmp_path).directory / "explain").exists()
 

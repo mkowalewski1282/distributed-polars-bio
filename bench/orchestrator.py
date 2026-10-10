@@ -259,7 +259,7 @@ class _Series:
             self.out(f"{block.label}: EXPLAIN ANALYZE {scenario.id}")
             outcome = execute(
                 command, timeout_s=self.cfg.timeout_s, mem_floor=self.mem_floor, probe=self.probe,
-                scratch=self.scratch,
+                scratch=self.scratch, dead=engine.dead,
             )
             if outcome.killed or outcome.returncode != 0 or not target.exists() or not target.stat().st_size:
                 why = outcome.killed or stderr_tail(outcome.stderr)
