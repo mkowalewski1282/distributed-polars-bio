@@ -303,7 +303,7 @@ fn write_csv(batches: &[RecordBatch], path: &Path) -> Result<()> {
 /// Wyciąga surową treść tekstową z wyniku EXPLAIN (kolumny stringowe), zamiast
 /// formatować przez `pretty_format_batches` — plan jest wielolinijkowy i
 /// ramkowanie ASCII zniszczyłoby jego strukturę, a testy parsują go regexem.
-fn extract_text(batches: &[RecordBatch]) -> String {
+pub fn extract_text(batches: &[RecordBatch]) -> String {
     let mut out = String::new();
     for batch in batches {
         for col in batch.columns() {

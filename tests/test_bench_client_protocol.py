@@ -135,3 +135,25 @@ def test_ballista_node_rejects_invalid_grpc_limit():
     )
     assert r.returncode == 2, r.stderr
     assert "BALLISTA_GRPC_MAX_MESSAGE_BYTES" in r.stderr
+
+
+def test_explain_analyze_writes_the_distributed_plan(parquet_dirs, tmp_path):
+    target = tmp_path / "merge_1.txt"
+    r = run_client(["--op", "merge", "--left", str(parquet_dirs[0]), "--explain-analyze", str(target)])
+    assert r.returncode == 0, r.stderr[-3000:]
+    text = target.read_text()
+    assert "MergeExec" in text and "ShuffleWriterExec" in text
+    assert json.loads(r.stdout) == {"explain_bytes": len(text.encode())}
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--op", "merge", "--left", "x", "--explain-analyze", "a.txt", "--output", "b.parquet"],
+        ["--op", "merge", "--checksum", "x.parquet", "--explain-analyze", "a.txt"],
+    ],
+)
+def test_explain_analyze_rejects_conflicting_modes(args):
+    r = run_client(args, timeout=30)
+    assert r.returncode == 2, f"{args}: exit code {r.returncode}, stderr: {r.stderr}"
+    assert r.stdout == ""

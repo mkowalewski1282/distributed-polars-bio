@@ -12,6 +12,8 @@ raporty/img/*.png
 bench/results/**/runs.jsonl
 bench/results/**/logs/
 bench/results/**/tmp/
+# Plany EXPLAIN ANALYZE serii (plan 3b-2) — w repozytorium mimo reguły *.txt
+!bench/results/**/explain/**/*.txt
 
 # Środowisko Pythona projektu (uv sync; wersje w uv.lock)
 .venv/

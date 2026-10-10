@@ -37,7 +37,7 @@ from bench.engines import (
 )
 from bench.procutil import EngineError
 from bench.results import ResultsWriter, to_parquet
-from bench.validity import Expected, control_drift, invalid_reasons, parse_report
+from bench.validity import Expected, control_drift, invalid_reasons, parse_report, stderr_tail
 
 #: Co ile sekund orkiestrator sprawdza runner (limit czasu, strażnik pamięci).
 POLL_S = 0.2
@@ -189,9 +189,9 @@ def _progress(row: dict) -> str:
 class _Series:
     """Stan jednej serii: konfiguracja, silniki, źródła metryk, zapis i podsumowanie."""
 
-    def __init__(self, cfg, factory, probe, mem_floor, scratch, writer, out, summary, profile):
+    def __init__(self, cfg, factory, probe, mem_floor, directory, scratch, writer, out, summary, profile):
         self.cfg, self.factory, self.probe, self.mem_floor = cfg, factory, probe, mem_floor
-        self.scratch, self.writer, self.out, self.summary = scratch, writer, out, summary
+        self.directory, self.scratch, self.writer, self.out, self.summary = directory, scratch, writer, out, summary
         self.git_commit = git_commit()
         self.versions = json.dumps(engine_versions(profile))
 
@@ -224,6 +224,26 @@ class _Series:
             self.writer.write(row)
             self.summary.rows += 1
             self.summary.invalid += not row["valid"]
+
+    def explain_pass(self, engine, block: Block) -> None:
+        """Dodatkowy, niemierzony przebieg EXPLAIN ANALYZE każdego scenariusza (specyfikacja 3b-2,
+        6.4): plan z metrykami operatorów do pliku; nie trafia do wyników. Niepowodzenie →
+        podsumowanie serii (seria kończy się kodem 1)."""
+        for scenario in self.cfg.scenarios:
+            target = (self.directory / "explain" / f"{block.variant}-n{block.n_nodes}"
+                      / f"{scenario.id.replace('/', '_')}.txt")
+            command = engine.explain_command(scenario, target)
+            if command is None:
+                return
+            target.parent.mkdir(parents=True, exist_ok=True)
+            self.out(f"{block.label}: EXPLAIN ANALYZE {scenario.id}")
+            outcome = execute(
+                command, timeout_s=self.cfg.timeout_s, mem_floor=self.mem_floor, probe=self.probe,
+                scratch=self.scratch,
+            )
+            if outcome.killed or outcome.returncode != 0 or not target.exists() or not target.stat().st_size:
+                why = outcome.killed or stderr_tail(outcome.stderr)
+                self.summary.failures.append(f"{block.label}: EXPLAIN ANALYZE {scenario.id}: {why}")
 
     def measure(self, engine, scenario: Scenario, expected: Expected | None) -> tuple[dict, bool]:
         """Jeden przebieg z metrykami (specyfikacja 5). Drugi element: czy silnik trzeba
@@ -353,6 +373,8 @@ class _Series:
                 for scenario in round_order(self.cfg, block, str(r)):
                     run(scenario, r)
             end = controls("end")
+            if self.cfg.explain:
+                self.explain_pass(engine, block)
         finally:
             engine.stop()
         reason = control_drift(
@@ -418,7 +440,7 @@ def run_series(
             )
     summary = SeriesSummary(directory=directory, parquet=directory / "runs.parquet")
     writer = ResultsWriter(directory / "runs.jsonl")
-    series = _Series(cfg, factory, probe or Probe(), mem_floor, scratch, writer, out, summary, profile)
+    series = _Series(cfg, factory, probe or Probe(), mem_floor, directory, scratch, writer, out, summary, profile)
     out(f"series {cfg.series}: results in {directory}")
     try:
         expected = series.reference_pass()

@@ -5,7 +5,8 @@ Silnik ma interfejs: start(), stop(), restart(), command(scenariusz) → Command
 server_pids() → {nazwa: PID} (procesy długożyjące, których szczyt pamięci mierzy
 orkiestrator) i shuffle_dirs() → katalogi robocze executorów (wolumen shuffle).
 log_mark() i log_metrics(mark) → liczniki z logów procesów silnika z czasu przebiegu
-(specyfikacja 3b-2: workery Saila, broadcast Ballisty)."""
+(specyfikacja 3b-2: workery Saila, broadcast Ballisty).
+explain_command(scenariusz, plik) → Command albo None (EXPLAIN ANALYZE; tylko Ballista)."""
 
 from __future__ import annotations
 
@@ -110,6 +111,9 @@ class PolarsBioEngine:
             [*scenario_args(scenario, self.data_root), "--threads", str(self.threads)],
             {"POLARS_MAX_THREADS": str(self.threads)},
         )
+
+    def explain_command(self, scenario: Scenario, target: Path) -> Command | None:
+        return None
 
     def log_mark(self) -> dict[Path, int]:
         return {}
@@ -251,6 +255,11 @@ class BallistaEngine:
             BALLISTA_DIR,
         )
 
+    def explain_command(self, scenario: Scenario, target: Path) -> Command:
+        """Dodatkowy, niemierzony przebieg EXPLAIN ANALYZE (specyfikacja 3b-2, 6.4)."""
+        command = self.command(scenario)
+        return Command([*command.argv, "--explain-analyze", str(target)], command.env, command.cwd)
+
     def log_mark(self) -> dict[Path, int]:
         return logscan.mark(self.log_dir / f"executor_{k}.log" for k in range(1, self.n + 1))
 
@@ -315,6 +324,9 @@ class SailEngine:
             [*scenario_args(scenario, self.data_root), "--remote", f"sc://127.0.0.1:{self.port}", "--path", self.path],
             {},
         )
+
+    def explain_command(self, scenario: Scenario, target: Path) -> Command | None:
+        return None
 
     def log_mark(self) -> dict[Path, int]:
         return logscan.mark([self.log_dir / "sail_server.log"])

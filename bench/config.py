@@ -24,9 +24,10 @@ NODES = (1, 2, 3)
 #: Wartości domyślne ze specyfikacji 8.2 i 6.3 (tolerancja dryfu przebiegu kontrolnego: 10%)
 #: oraz 3b-2, 4.2: zadanie kontrolne overlap 7-0 (~1–2 s w polars-bio A; para 1-2 trwała ~0,13 s
 #: i szum przekraczał próg) wykonywane po 10 razy na początku i na końcu bloku.
+#: explain: dodatkowy przebieg EXPLAIN ANALYZE każdego scenariusza w blokach Ballisty (3b-2, 6.4).
 DEFAULTS = {
     "repeats": 5, "warmup": 1, "timeout_s": 1200, "control_tolerance": 0.10,
-    "control": {"op": "overlap", "pair": "7-0"}, "control_repeats": 10,
+    "control": {"op": "overlap", "pair": "7-0"}, "control_repeats": 10, "explain": False,
 }
 _REQUIRED = ("series", "scenarios", "variants", "nodes", "seed")
 _KEYS = set(_REQUIRED) | set(DEFAULTS)
@@ -73,6 +74,7 @@ class SeriesConfig:
     control_tolerance: float
     control: Scenario
     control_repeats: int
+    explain: bool
 
 
 def _int(raw: dict, key: str, minimum: int) -> int:
@@ -155,6 +157,9 @@ def parse(raw) -> SeriesConfig:
     seed = raw["seed"]
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise ConfigError(f"seed: expected an integer, got {seed!r}")
+    explain = raw["explain"]
+    if not isinstance(explain, bool):
+        raise ConfigError(f"explain: expected true or false, got {explain!r}")
     cfg = SeriesConfig(
         series=series,
         scenarios=scenarios,
@@ -167,6 +172,7 @@ def parse(raw) -> SeriesConfig:
         control_tolerance=_positive(raw, "control_tolerance"),
         control=_scenario(raw["control"], "control"),
         control_repeats=_int(raw, "control_repeats", 1),
+        explain=explain,
     )
     if not blocks(cfg):
         raise ConfigError("the configuration gives no blocks (polars_bio_b needs N ≥ 2)")

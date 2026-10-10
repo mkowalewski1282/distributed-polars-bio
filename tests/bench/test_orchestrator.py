@@ -34,6 +34,7 @@ class FakeEngine:
         self.variant, self.n, self.args_for, self.log = variant, n_nodes, args_for, log
         self.pids: dict[str, int] = {}
         self.logged: dict = {}
+        self.explain_args: list[str] | None = None
 
     def start(self):
         self.log.append(("start", self.variant, self.n))
@@ -46,6 +47,12 @@ class FakeEngine:
 
     def command(self, scenario):
         args = self.args_for(self.variant, self.n, scenario)
+        return Command([sys.executable, str(FAKE_RUNNER), *args], dict(os.environ), REPO)
+
+    def explain_command(self, scenario, target):
+        if self.variant != "ballista":
+            return None
+        args = self.explain_args or ["--write", str(target)]
         return Command([sys.executable, str(FAKE_RUNNER), *args], dict(os.environ), REPO)
 
     def log_mark(self):
@@ -490,3 +497,29 @@ def test_engine_log_metrics_reach_results(tmp_path):
     assert set(ballista["broadcast_bytes"]) == {10}
     assert all(json.loads(e)["sail_workers"] == 2 for e in ballista["extra"])
     assert block(df, "polars_bio_a")["broadcast_bytes"].is_null().all()
+
+
+def test_explain_pass_writes_plans_of_ballista_blocks(tmp_path):
+    summary = run(tmp_path, cfg=config(explain=True))
+    explain = summary.directory / "explain"
+    assert sorted(p.relative_to(explain).as_posix() for p in explain.rglob("*.txt")) == [
+        "ballista-n1/merge_1.txt", "ballista-n1/overlap_1-2.txt",
+    ]
+    assert rows(summary).height == 2 + 2 * (2 + 2 + 4)  # przebiegi explain nie trafiają do wyników
+    assert summary.ok
+
+
+def test_failed_explain_is_reported_as_series_failure(tmp_path):
+    def customize(engine):
+        engine.explain_args = ["--exit", "1"]
+
+    summary = run(tmp_path, cfg=config(explain=True), factory=make_factory(customize=customize))
+    assert summary.failures == [
+        "ballista N=1: EXPLAIN ANALYZE overlap/1-2: engine crashed: test error",
+        "ballista N=1: EXPLAIN ANALYZE merge/1: engine crashed: test error",
+    ]
+    assert not summary.ok
+
+
+def test_no_explain_pass_by_default(tmp_path):
+    assert not (run(tmp_path).directory / "explain").exists()

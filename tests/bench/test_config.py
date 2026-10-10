@@ -45,6 +45,7 @@ def test_minimal_config_gets_spec_defaults():
     assert (cfg.nodes, cfg.seed) == ((1, 3), 7)
     # Przebieg kontrolny (specyfikacja 3b-2, 4.2): overlap 7-0, 10 przebiegów na każdym końcu bloku.
     assert (cfg.control, cfg.control_repeats) == (Scenario("overlap", "7-0"), 10)
+    assert cfg.explain is False
 
 
 def test_smoke_config_is_the_full_matrix_on_pair_1_2():
@@ -54,6 +55,7 @@ def test_smoke_config_is_the_full_matrix_on_pair_1_2():
         "overlap/1-2", "nearest/1-2", "coverage/1-2", "merge/1", "subtract/1-2",
     }
     assert len(blocks(cfg)) == 9
+    assert cfg.explain is True
 
 
 @pytest.mark.parametrize(
@@ -95,6 +97,7 @@ def test_smoke_config_is_the_full_matrix_on_pair_1_2():
         ({"control": {"op": "overlap", "pair": "1-9"}}, "control: pair"),
         ({"control_repeats": 0}, "control_repeats"),
         ({"control_repeats": True}, "control_repeats"),
+        ({"explain": "yes"}, "explain: expected true or false"),
     ],
 )
 def test_invalid_config_is_rejected_before_any_run(overrides, message):

@@ -17,6 +17,7 @@ parser.add_argument("--touch", type=Path, help="file created on start (signal fo
 parser.add_argument("--exit", type=int, default=0)
 parser.add_argument("--garbage", action="store_true")
 parser.add_argument("--stderr-mb", type=int, default=0)
+parser.add_argument("--write", type=Path, help="file written instead of a report (EXPLAIN ANALYZE)")
 args = parser.parse_args()
 
 if args.touch:
@@ -29,6 +30,9 @@ time.sleep(args.sleep)
 if args.exit:
     print("engine crashed: test error", file=sys.stderr)
     sys.exit(args.exit)
+if args.write:
+    args.write.write_text("plan of the fake engine\n")
+    sys.exit(0)
 if args.garbage:
     print("this is not JSON")
     sys.exit(0)

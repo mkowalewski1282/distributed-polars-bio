@@ -12,4 +12,6 @@ variants: [polars_bio_a, polars_bio_b, ballista, sail]
 nodes: [1, 2, 3]
 repeats: 1
 warmup: 0
+# Smoke sprawdza też dodatkowy przebieg EXPLAIN ANALYZE w blokach Ballisty (plan 3b-2).
+explain: true
 seed: 20261001

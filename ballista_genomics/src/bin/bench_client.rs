@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 
 use ballista_genomics::checksum::Checksum;
 use ballista_genomics::cli::{optional, parse_flags, required};
-use ballista_genomics::runner::{connect_from_env, grpc_max_message_bytes, target_partitions};
+use ballista_genomics::runner::{connect_from_env, extract_text, grpc_max_message_bytes, target_partitions};
 use ballista_genomics::scenario::Scenario;
 use ballista_genomics::DistOp;
 use datafusion::error::Result;
@@ -39,9 +39,13 @@ const USAGE: &str = "usage:
   bench_client --op <overlap|nearest|coverage|merge|subtract> --left <PATH>
                [--right <PATH>] [--cols <contig,start,end>] [--output <FILE.parquet>]
   bench_client --op <OPERATION> --checksum <FILE.parquet>
+  bench_client --op <OPERATION> --left <PATH> [--right <PATH>] [--cols <contig,start,end>]
+               --explain-analyze <FILE.txt>
   PATH: a Parquet (or CSV) file or a directory of them; --right for operations other than merge.
   Default --cols: contig,pos_start,pos_end (databio-8p datasets).
   --checksum: checksum of a file in the normalized schema, without running an operation.
+  --explain-analyze: write the EXPLAIN ANALYZE plan (with operator metrics) to a file instead of
+  measuring; stdout: {\"explain_bytes\": N}.
   Environment: BALLISTA_SCHEDULER_URL (cluster), BIO_TARGET_PARTITIONS (≥ 2, default 4),
   BALLISTA_GRPC_MAX_MESSAGE_BYTES (16 MiB .. 4 GiB - 1, default 512 MiB).";
 
@@ -52,18 +56,20 @@ enum Mode {
     Run { scenario: Scenario, output: Option<String> },
     /// Sama suma kontrolna pliku w schemacie znormalizowanym.
     Checksum { op: DistOp, file: String },
+    /// Plan EXPLAIN ANALYZE scenariusza do pliku (dodatkowy, niemierzony przebieg; plan 3b-2).
+    Explain { scenario: Scenario, file: String },
 }
 
 fn parse(args: &[String]) -> std::result::Result<Mode, String> {
     let flags = parse_flags(
         args,
-        &["--op", "--left", "--right", "--cols", "--output", "--checksum"],
+        &["--op", "--left", "--right", "--cols", "--output", "--checksum", "--explain-analyze"],
         &[],
     )?;
     let op_name: String = required(&flags, "--op")?;
     let op = DistOp::from_cli(&op_name).ok_or_else(|| format!("unknown operation: {op_name}"))?;
     if let Some(file) = optional::<String>(&flags, "--checksum")? {
-        if let Some(other) = ["--left", "--right", "--cols", "--output"]
+        if let Some(other) = ["--left", "--right", "--cols", "--output", "--explain-analyze"]
             .into_iter()
             .find(|f| flags.contains_key(*f))
         {
@@ -92,10 +98,12 @@ fn parse(args: &[String]) -> std::result::Result<Mode, String> {
         cols,
     };
     scenario.validate()?;
-    Ok(Mode::Run {
-        scenario,
-        output: optional(&flags, "--output")?,
-    })
+    let output = optional(&flags, "--output")?;
+    match optional::<String>(&flags, "--explain-analyze")? {
+        Some(_) if output.is_some() => Err("--explain-analyze cannot be combined with --output".to_string()),
+        Some(file) => Ok(Mode::Explain { scenario, file }),
+        None => Ok(Mode::Run { scenario, output }),
+    }
 }
 
 /// Logi Ballisty na stderr — tylko gdy ustawiono `RUST_LOG` (diagnostyka; stdout
@@ -175,6 +183,20 @@ async fn run(scenario: &Scenario, output: Option<&str>) -> Result<Report> {
     })
 }
 
+/// Dodatkowy, niemierzony przebieg: plan EXPLAIN ANALYZE z metrykami operatorów do pliku
+/// (specyfikacja 3b-2, 6.4). Zwraca liczbę zapisanych bajtów.
+async fn explain(scenario: &Scenario, file: &str) -> Result<usize> {
+    let ctx = connect_from_env().await?;
+    let batches = ctx
+        .sql(&format!("EXPLAIN ANALYZE {}", scenario.sql()))
+        .await?
+        .collect()
+        .await?;
+    let text = extract_text(&batches);
+    std::fs::write(file, &text)?;
+    Ok(text.len())
+}
+
 async fn checksum_file(op: DistOp, file: &str) -> Result<Checksum> {
     let ctx = SessionContext::new();
     let mut stream = ctx
@@ -202,6 +224,9 @@ async fn main() {
         Mode::Checksum { op, file } => checksum_file(op, &file).await.map(|c| {
             format!("{{\"rows\": {}, \"checksum\": \"{}\"}}", c.rows(), c.hex())
         }),
+        Mode::Explain { scenario, file } => explain(&scenario, &file)
+            .await
+            .map(|bytes| format!("{{\"explain_bytes\": {bytes}}}")),
         Mode::Run { scenario, output } => run(&scenario, output.as_deref()).await.map(|r| {
             format!(
                 "{{\"rows\": {}, \"checksum\": \"{}\", \"t_total_s\": {:.6}, \
