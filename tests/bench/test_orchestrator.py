@@ -730,3 +730,48 @@ def test_unexpected_invalid_runs_fail_the_series_and_are_listed(tmp_path):
     assert lines[1] == (
         "  unexpected: ballista N=1 merge/1: checksum 0x00000000000000bb ≠ reference 0x00000000000000aa"
     )
+
+
+def _record_settle(monkeypatch, events: list) -> list:
+    """Podmienia pauzę na zapis zdarzenia; zwraca listę czasów pauz."""
+    pauses: list[float] = []
+
+    def settle(seconds):
+        pauses.append(seconds)
+        events.append("settle")
+
+    monkeypatch.setattr(orch, "_settle", settle)
+    return pauses
+
+
+def test_settle_pause_precedes_every_measured_run(tmp_path, monkeypatch):
+    events: list[str] = []
+    pauses = _record_settle(monkeypatch, events)
+
+    def customize(engine):
+        original = engine.server_pids
+
+        def server_pids():
+            events.append("run")
+            return original()
+
+        engine.server_pids = server_pids
+
+    summary = run(tmp_path, cfg=config(settle_s=3), factory=make_factory(customize=customize))
+    # Referencyjne, rozgrzewkowe, pomiarowe i kontrolne — każdy przebieg raz.
+    assert pauses == [3.0] * rows(summary).height
+    assert events == ["settle", "run"] * rows(summary).height
+
+
+def test_no_settle_call_without_settle_s(tmp_path, monkeypatch):
+    events: list[str] = []
+    pauses = _record_settle(monkeypatch, events)
+    run(tmp_path)
+    assert pauses == []
+
+
+def test_explain_pass_has_no_settle_pause(tmp_path, monkeypatch):
+    pauses = _record_settle(monkeypatch, [])
+    summary = run(tmp_path, cfg=config(explain=True, settle_s=1.5))
+    assert (summary.directory / "explain").exists()
+    assert len(pauses) == rows(summary).height  # explain (2 przebiegi) nie dolicza pauz

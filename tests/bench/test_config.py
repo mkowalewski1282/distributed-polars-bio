@@ -46,6 +46,7 @@ def test_minimal_config_gets_spec_defaults():
     # Przebieg kontrolny (specyfikacja 3b-2, 4.2): overlap 7-0, 10 przebiegów na każdym końcu bloku.
     assert (cfg.control, cfg.control_repeats) == (Scenario("overlap", "7-0"), 10)
     assert cfg.explain is False
+    assert cfg.settle_s == 0.0
     assert cfg.expected_invalid == ()
 
 
@@ -57,6 +58,7 @@ def test_smoke_config_is_the_full_matrix_on_pair_1_2():
     }
     assert len(blocks(cfg)) == 9
     assert cfg.explain is True
+    assert cfg.settle_s == 3.0
 
 
 @pytest.mark.parametrize(
@@ -192,6 +194,7 @@ def test_sail_paths_config_compares_the_three_sail_paths():
         "overlap/1-2", "nearest/1-2", "coverage/1-2", "merge/1", "subtract/1-2", "overlap/7-0",
     }
     assert (cfg.nodes, cfg.repeats, cfg.warmup, len(blocks(cfg))) == ((1, 3), 3, 1, 6)
+    assert cfg.settle_s == 3.0
 
 
 def test_expected_invalid_entries_match_rows():
@@ -213,3 +216,15 @@ def test_broadcast_check_config_covers_the_broadcast_cells():
     assert cfg.explain is True
     assert cfg.control_tolerance == 100.0 and cfg.timeout_s == 600
     assert cfg.repeats == 1 and cfg.warmup == 0
+    assert cfg.settle_s == 3.0
+
+
+@pytest.mark.parametrize("value", [3, 3.0, 0, 0.5])
+def test_settle_s_accepts_non_negative_numbers(value):
+    assert parse(raw(settle_s=value)).settle_s == float(value)
+
+
+@pytest.mark.parametrize("value", [-1, True, "3"])
+def test_settle_s_rejects_negative_boolean_and_text(value):
+    with pytest.raises(ConfigError, match="settle_s"):
+        parse(raw(settle_s=value))

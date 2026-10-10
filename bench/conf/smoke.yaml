@@ -15,3 +15,5 @@ warmup: 0
 # Smoke sprawdza też dodatkowy przebieg EXPLAIN ANALYZE w blokach Ballisty (plan 3b-2).
 explain: true
 seed: 20261001
+# Przerwa przed każdym przebiegiem: zwracanie pamięci WSL2 do Hyper-V (Zadanie 27, badanie szumu).
+settle_s: 3.0

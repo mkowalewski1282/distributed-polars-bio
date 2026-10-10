@@ -25,10 +25,11 @@ NODES = (1, 2, 3)
 #: oraz 3b-2, 4.2: zadanie kontrolne overlap 7-0 (~1–2 s w polars-bio A; para 1-2 trwała ~0,13 s
 #: i szum przekraczał próg) wykonywane po 10 razy na początku i na końcu bloku.
 #: explain: dodatkowy przebieg EXPLAIN ANALYZE każdego scenariusza w blokach Ballisty (3b-2, 6.4).
+#: settle_s: przerwa przed każdym przebiegiem w sekundach (0 = brak; powód w orchestrator.measure).
 DEFAULTS = {
     "repeats": 5, "warmup": 1, "timeout_s": 1200, "control_tolerance": 0.10,
     "control": {"op": "overlap", "pair": "7-0"}, "control_repeats": 10, "explain": False,
-    "expected_invalid": [],
+    "expected_invalid": [], "settle_s": 0.0,
 }
 _REQUIRED = ("series", "scenarios", "variants", "nodes", "seed")
 _KEYS = set(_REQUIRED) | set(DEFAULTS)
@@ -91,6 +92,7 @@ class SeriesConfig:
     repeats: int
     warmup: int
     timeout_s: float
+    settle_s: float
     seed: int
     control_tolerance: float
     control: Scenario
@@ -110,6 +112,13 @@ def _positive(raw: dict, key: str) -> float:
     value = raw[key]
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         raise ConfigError(f"{key}: expected a number > 0, got {value!r}")
+    return float(value)
+
+
+def _non_negative(raw: dict, key: str) -> float:
+    value = raw[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        raise ConfigError(f"{key}: expected a number ≥ 0, got {value!r}")
     return float(value)
 
 
@@ -223,6 +232,7 @@ def parse(raw) -> SeriesConfig:
         repeats=_int(raw, "repeats", 1),
         warmup=_int(raw, "warmup", 0),
         timeout_s=_positive(raw, "timeout_s"),
+        settle_s=_non_negative(raw, "settle_s"),
         seed=seed,
         control_tolerance=_positive(raw, "control_tolerance"),
         control=control,

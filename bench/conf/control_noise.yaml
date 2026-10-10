@@ -15,3 +15,5 @@ control_repeats: 1
 # (jak w testach integracyjnych).
 control_tolerance: 100.0
 seed: 20261009
+# Przerwa przed każdym przebiegiem: zwracanie pamięci WSL2 do Hyper-V (Zadanie 27, badanie szumu).
+settle_s: 3.0

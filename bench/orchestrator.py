@@ -102,6 +102,11 @@ class SeriesError(RuntimeError):
     """Seria przerwana: scenariusz bez wyniku wzorcowego."""
 
 
+def _settle(seconds: float) -> None:
+    """Pauza przed przebiegiem (osobna funkcja, żeby testy mogły ją podmienić)."""
+    time.sleep(seconds)
+
+
 def execute(command: Command, *, timeout_s: float, mem_floor: int, probe: Probe, scratch: Path,
             dead: Callable[[], list[str]] = lambda: []) -> Outcome:
     """Uruchamia runner z wyjściem do plików — potoki mogłyby zakleszczyć runner zalewający
@@ -307,6 +312,11 @@ class _Series:
                 label: str) -> tuple[dict, bool]:
         """Jeden przebieg z metrykami (specyfikacja 5). Drugi element: czy silnik trzeba
         uruchomić od nowa (runner zabity albo padł proces silnika)."""
+        # WSL2: pamięć zwolniona przez poprzedni przebieg wraca do Hyper-V po ok. 2 s, więc
+        # przebiegi startowane w różnych odstępach trafiają na przemian na strony ciepłe i zimne.
+        # Pauza daje każdemu przebiegowi ten sam stan startowy; poza WSL decyduje badanie szumu.
+        if self.cfg.settle_s > 0:
+            _settle(self.cfg.settle_s)
         pids = engine.server_pids()
         base = {}
         for name, pid in pids.items():

@@ -20,3 +20,5 @@ timeout_s: 600
 # Plany EXPLAIN ANALYZE z metrykami operatorów (spec 3b-2, 6.4) — czas budowy indeksu na zadanie.
 explain: true
 seed: 20261009
+# Przerwa przed każdym przebiegiem: zwracanie pamięci WSL2 do Hyper-V (Zadanie 27, badanie szumu).
+settle_s: 3.0
