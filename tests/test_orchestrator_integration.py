@@ -79,11 +79,13 @@ def test_threads_follow_variant_and_n(series):
 
 
 @pytest.mark.nodes(2)
-def test_every_runner_reports_checksum_time(series):
-    """Koszt sumy kontrolnej zależy od silnika (Python albo Rust) — każdy runner go podaje
-    (przegląd końcowy planu 3a); od planu 3b-2 nie jest częścią t_total_s."""
+def test_every_runner_reports_checksum_time_and_first_batch(series):
+    """Koszt sumy kontrolnej zależy od silnika (Python albo Rust) — każdy runner go podaje,
+    poza t_total_s (specyfikacja 3b-2, 4.1); faza do pierwszej partii mieści się w t_total_s."""
     _, df = series
     assert all(json.loads(e)["checksum_s"] > 0 for e in df["extra"])
+    first = [json.loads(p)["first_batch_s"] for p in df["phases"]]
+    assert all(0 <= f <= t for f, t in zip(first, df["t_total_s"]))
 
 
 @pytest.mark.nodes(2)

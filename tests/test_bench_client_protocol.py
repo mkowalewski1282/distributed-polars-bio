@@ -19,6 +19,7 @@ from bench import checksum as cs
 from bench.ops import OPS, UNARY_OPS
 from tests.bench import checksum_vectors as vec
 from tests.test_ballista_multiprocess import NODE_BINARY, _require
+from tests.parquet_fixture import write_parts
 from tests.test_ballista_parquet import BALLISTA_DIR, run_client
 
 PROTOCOL_KEYS = {"rows", "checksum", "t_total_s", "phases", "extra", "peak_rss_bytes"}
@@ -68,12 +69,21 @@ def test_report_follows_protocol_and_matches_oracle(op, parquet_dirs, parquet_ex
     assert set(got) == PROTOCOL_KEYS
     assert got["rows"] == sum(parquet_expected[op].values())
     assert got["checksum"] == expected_checksum(op, parquet_expected)
-    assert got["t_total_s"] > 0 and got["phases"] == {}
+    assert got["t_total_s"] > 0 and set(got["phases"]) == {"first_batch_s"}
     assert set(got["extra"]) == {"target_partitions", "checksum_s"}
     assert got["extra"]["target_partitions"] == 4
-    # Czas liczenia sumy kontrolnej — część t_total_s (przegląd końcowy planu 3a).
-    assert 0 < got["extra"]["checksum_s"] <= got["t_total_s"]
+    # Suma kontrolna liczona PO zatrzymaniu zegara (specyfikacja 3b-2, 4.1).
+    assert got["extra"]["checksum_s"] > 0
+    assert 0 < got["phases"]["first_batch_s"] <= got["t_total_s"]
     assert got["peak_rss_bytes"] > 10 * 2**20
+
+
+def test_empty_result_reports_zero_rows(tmp_path):
+    left = write_parts([("chrA", 10, 20), ("chrA", 30, 40)], tmp_path / "a")
+    right = write_parts([("chrB", 10, 20), ("chrB", 30, 40)], tmp_path / "b")
+    got = report(run_client(["--op", "overlap", "--left", str(left), "--right", str(right)]))
+    assert (got["rows"], got["checksum"]) == (0, "0x0000000000000000")
+    assert 0 <= got["phases"]["first_batch_s"] <= got["t_total_s"]
 
 
 def test_target_partitions_come_from_environment(parquet_dirs, parquet_expected):
