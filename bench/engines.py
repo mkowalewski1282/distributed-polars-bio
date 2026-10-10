@@ -132,31 +132,39 @@ def ballista_binary(name: str, profile: str) -> Path:
     return BALLISTA_DIR / "target" / profile / name
 
 
-def ballista_sources() -> list[Path]:
-    """Źródła binarek Ballisty: kod Rusta (src/, vendor/), manifesty i Cargo.lock — bez
-    dokumentacji, której zmiana nie wymaga przebudowy."""
+def ballista_sources(binary: str | None = None) -> list[Path]:
+    """Źródła wspólne binarek Ballisty: Cargo.toml, Cargo.lock, kod Rusta w src/ (poza src/bin/)
+    i w vendor/ (też manifesty) — bez dokumentacji, której zmiana nie wymaga przebudowy.
+    Z nazwą binarki dochodzi jej własny punkt wejścia src/bin/<nazwa>.rs: cargo przelinkowuje
+    tylko binarki, których wejścia się zmieniły, więc cudze punkty wejścia nie liczą się."""
     files = [BALLISTA_DIR / "Cargo.toml", BALLISTA_DIR / "Cargo.lock"]
-    for sub in ("src", "vendor"):
-        root = BALLISTA_DIR / sub
-        files.extend(p for p in root.rglob("*.rs") if p.is_file())
-        files.extend(p for p in root.rglob("Cargo.toml") if p.is_file())
+    src, bin_dir = BALLISTA_DIR / "src", BALLISTA_DIR / "src" / "bin"
+    files.extend(p for p in src.rglob("*.rs") if p.is_file() and bin_dir not in p.parents)
+    vendor = BALLISTA_DIR / "vendor"
+    files.extend(p for p in vendor.rglob("*.rs") if p.is_file())
+    files.extend(p for p in vendor.rglob("Cargo.toml") if p.is_file())
+    if binary is not None:
+        files.append(bin_dir / f"{binary}.rs")
     return [p for p in files if p.exists()]
 
 
 def require_ballista_binaries(profile: str) -> None:
-    """Binarki istnieją i są nowsze od źródeł — inaczej pomiar objąłby kod sprzed ostatniej
-    zmiany (przegląd 3a: pochodzenie binarek)."""
-    binaries = (ballista_binary("ballista_node", profile), ballista_binary("bench_client", profile))
+    """Binarki istnieją i każda jest nowsza od własnych źródeł (wspólnych i swojego punktu
+    wejścia) — inaczej pomiar objąłby kod sprzed ostatniej zmiany (przegląd 3a)."""
+    names = ("ballista_node", "bench_client")
+    binaries = {name: ballista_binary(name, profile) for name in names}
     flag = "--release " if profile == "release" else ""
-    build = f"cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build {flag}--bin ballista_node --bin bench_client"
-    missing = [str(b) for b in binaries if not b.exists()]
+    build = (
+        f"cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build {flag}--bin ballista_node --bin bench_client"
+        " (if cargo has nothing to rebuild, touch ballista_genomics/src/lib.rs first)"
+    )
+    missing = [str(b) for b in binaries.values() if not b.exists()]
     if missing:
         raise EngineError(f"missing binary {', '.join(missing)} - build it: {build}")
-    newest = max(ballista_sources(), key=lambda p: p.stat().st_mtime, default=None)
-    if newest is not None:
-        stale = [str(b) for b in binaries if b.stat().st_mtime < newest.stat().st_mtime]
-        if stale:
-            raise EngineError(f"binary {', '.join(stale)} is older than {newest} - rebuild it: {build}")
+    for name, binary in binaries.items():
+        newest = max(ballista_sources(name), key=lambda p: p.stat().st_mtime, default=None)
+        if newest is not None and binary.stat().st_mtime < newest.stat().st_mtime:
+            raise EngineError(f"binary {binary} is older than {newest} - rebuild it: {build}")
 
 
 def _registered_executors(port: int) -> int:

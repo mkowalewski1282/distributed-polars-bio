@@ -185,6 +185,9 @@ def _fake_ballista(tmp_path: Path) -> Path:
     root = tmp_path / "ballista_genomics"
     (root / "src").mkdir(parents=True)
     (root / "src" / "lib.rs").write_text("// source\n")
+    (root / "src" / "bin").mkdir()
+    for entry in ("ballista_node", "bench_client", "dist_ops"):
+        (root / "src" / "bin" / f"{entry}.rs").write_text("// entry point\n")
     (root / "Cargo.toml").write_text("[package]\n")
     (root / "Cargo.lock").write_text("")
     (root / "vendor" / "crate" / "src").mkdir(parents=True)
@@ -192,7 +195,7 @@ def _fake_ballista(tmp_path: Path) -> Path:
     (root / "target" / "debug").mkdir(parents=True)
     for name in ("ballista_node", "bench_client"):
         (root / "target" / "debug" / name).write_bytes(b"binary")
-    for source in (root / "Cargo.toml", root / "Cargo.lock"):
+    for source in (root / "Cargo.toml", root / "Cargo.lock", *(root / "src" / "bin").iterdir()):
         _set_mtime(source, 500_000)  # manifesty starsze od binarek — o wyniku decyduje lib.rs
     return root
 
@@ -207,7 +210,7 @@ def test_stale_ballista_binary_is_rejected(tmp_path, monkeypatch):
     for binary in (root / "target" / "debug").iterdir():
         _set_mtime(binary, 1_000_000)
     _set_mtime(root / "src" / "lib.rs", 2_000_000)
-    with pytest.raises(EngineError, match=r"bench_client.* is older than .*lib\.rs.*cargo build"):
+    with pytest.raises(EngineError, match=r"ballista_node is older than .*lib\.rs.*cargo build"):
         engines.require_ballista_binaries("debug")
     _set_mtime(root / "src" / "lib.rs", 500_000)
     engines.require_ballista_binaries("debug")  # binarki nowsze od źródeł
@@ -218,3 +221,17 @@ def test_documentation_in_vendor_does_not_make_binaries_stale(tmp_path, monkeypa
     monkeypatch.setattr(engines, "BALLISTA_DIR", root)
     _set_mtime(root / "vendor" / "crate" / "PATCH.md", 9_000_000_000)
     engines.require_ballista_binaries("debug")
+
+
+def test_other_binaries_entry_points_do_not_make_a_binary_stale(tmp_path, monkeypatch):
+    root = _fake_ballista(tmp_path)
+    monkeypatch.setattr(engines, "BALLISTA_DIR", root)
+    _set_mtime(root / "src" / "lib.rs", 500_000)
+    _set_mtime(root / "target" / "debug" / "ballista_node", 1_000_000)
+    _set_mtime(root / "target" / "debug" / "bench_client", 3_000_000)
+    for entry in ("dist_ops", "bench_client"):
+        _set_mtime(root / "src" / "bin" / f"{entry}.rs", 2_000_000)
+        engines.require_ballista_binaries("debug")  # ballista_node nie zależy od tych punktów wejścia
+    _set_mtime(root / "src" / "bin" / "bench_client.rs", 4_000_000)
+    with pytest.raises(EngineError, match=r"bench_client is older than .*bench_client\.rs"):
+        engines.require_ballista_binaries("debug")
