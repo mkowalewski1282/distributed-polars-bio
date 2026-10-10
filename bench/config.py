@@ -19,8 +19,13 @@ from bench.ops import OPS, UNARY_OPS
 
 VARIANTS = ("polars_bio_a", "polars_bio_b", "ballista", "sail")
 NODES = (1, 2, 3)
-#: Wartości domyślne ze specyfikacji 8.2 i 6.3 (tolerancja dryfu przebiegu kontrolnego: 10%).
-DEFAULTS = {"repeats": 5, "warmup": 1, "timeout_s": 1200, "control_tolerance": 0.10}
+#: Wartości domyślne ze specyfikacji 8.2 i 6.3 (tolerancja dryfu przebiegu kontrolnego: 10%)
+#: oraz 3b-2, 4.2: zadanie kontrolne overlap 7-0 (~1–2 s w polars-bio A; para 1-2 trwała ~0,13 s
+#: i szum przekraczał próg) wykonywane po 10 razy na początku i na końcu bloku.
+DEFAULTS = {
+    "repeats": 5, "warmup": 1, "timeout_s": 1200, "control_tolerance": 0.10,
+    "control": {"op": "overlap", "pair": "7-0"}, "control_repeats": 10,
+}
 _REQUIRED = ("series", "scenarios", "variants", "nodes", "seed")
 _KEYS = set(_REQUIRED) | set(DEFAULTS)
 _SCENARIO_KEYS = {"op", "pair", "dataset"}
@@ -41,10 +46,6 @@ class Scenario:
     @property
     def id(self) -> str:
         return f"{self.op}/{self.data}"
-
-
-#: Przebieg kontrolny (specyfikacja 6.3): overlap na parze 1-2, polars-bio A.
-CONTROL = Scenario("overlap", "1-2")
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,8 @@ class SeriesConfig:
     timeout_s: float
     seed: int
     control_tolerance: float
+    control: Scenario
+    control_repeats: int
 
 
 def _int(raw: dict, key: str, minimum: int) -> int:
@@ -93,8 +96,7 @@ def _list(raw: dict, key: str) -> list:
     return value
 
 
-def _scenario(item, i: int) -> Scenario:
-    where = f"scenarios[{i}]"
+def _scenario(item, where: str) -> Scenario:
     if not isinstance(item, dict):
         raise ConfigError(f"{where}: expected a mapping, got {item!r}")
     if "algorithm" in item:
@@ -136,7 +138,7 @@ def parse(raw) -> SeriesConfig:
     series = raw["series"]
     if not isinstance(series, str) or not _SERIES_NAME.fullmatch(series):
         raise ConfigError(f"series: a name of lowercase letters, digits, - and _, got {series!r}")
-    scenarios = tuple(_scenario(item, i) for i, item in enumerate(_list(raw, "scenarios")))
+    scenarios = tuple(_scenario(item, f"scenarios[{i}]") for i, item in enumerate(_list(raw, "scenarios")))
     ids = [s.id for s in scenarios]
     duplicated = sorted({i for i in ids if ids.count(i) > 1})
     if duplicated:
@@ -161,6 +163,8 @@ def parse(raw) -> SeriesConfig:
         timeout_s=_positive(raw, "timeout_s"),
         seed=seed,
         control_tolerance=_positive(raw, "control_tolerance"),
+        control=_scenario(raw["control"], "control"),
+        control_repeats=_int(raw, "control_repeats", 1),
     )
     if not blocks(cfg):
         raise ConfigError("the configuration gives no blocks (polars_bio_b needs N ≥ 2)")
@@ -200,9 +204,9 @@ def round_order(cfg: SeriesConfig, block: Block, label: str) -> list[Scenario]:
 
 
 def check_data(cfg: SeriesConfig, root: Path) -> None:
-    """Każdy zbiór serii — i pary kontrolnej — ma mieć pliki part-*.parquet."""
+    """Każdy zbiór serii — i zadania kontrolnego — ma mieć pliki part-*.parquet."""
     missing: set[str] = set()
-    for scenario in (*cfg.scenarios, CONTROL):
+    for scenario in (*cfg.scenarios, cfg.control):
         for path in resolve(scenario.data, root):
             if path is not None and not any(path.glob("part-*.parquet")):
                 missing.add(str(path))

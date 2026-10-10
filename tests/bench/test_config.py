@@ -43,6 +43,8 @@ def test_minimal_config_gets_spec_defaults():
     assert [s.id for s in cfg.scenarios] == ["overlap/1-2", "merge/1"]
     assert (cfg.repeats, cfg.warmup, cfg.timeout_s, cfg.control_tolerance) == (5, 1, 1200.0, 0.10)
     assert (cfg.nodes, cfg.seed) == ((1, 3), 7)
+    # Przebieg kontrolny (specyfikacja 3b-2, 4.2): overlap 7-0, 10 przebiegów na każdym końcu bloku.
+    assert (cfg.control, cfg.control_repeats) == (Scenario("overlap", "7-0"), 10)
 
 
 def test_smoke_config_is_the_full_matrix_on_pair_1_2():
@@ -88,6 +90,11 @@ def test_smoke_config_is_the_full_matrix_on_pair_1_2():
         ({"timeout_s": 0}, "timeout_s"),
         ({"control_tolerance": "10%"}, "control_tolerance"),
         ({"variants": ["polars_bio_b"], "nodes": [1]}, "no blocks"),
+        ({"control": "overlap"}, "control: expected a mapping"),
+        ({"control": {"op": "merge", "pair": "1-2"}}, "control: merge works on a single dataset"),
+        ({"control": {"op": "overlap", "pair": "1-9"}}, "control: pair"),
+        ({"control_repeats": 0}, "control_repeats"),
+        ({"control_repeats": True}, "control_repeats"),
     ],
 )
 def test_invalid_config_is_rejected_before_any_run(overrides, message):
@@ -126,11 +133,16 @@ def test_round_order_depends_on_seed_and_block():
     ]
 
 
+def test_control_can_be_overridden():
+    cfg = parse(raw(control={"op": "merge", "dataset": 1}, control_repeats=3))
+    assert (cfg.control, cfg.control_repeats) == (Scenario("merge", "1"), 3)
+
+
 def test_check_data_requires_parts_for_scenarios_and_control_pair(tmp_path):
     cfg = parse(raw(scenarios=[{"op": "merge", "dataset": 1}]))
-    with pytest.raises(ConfigError, match="exons"):  # zbiór 2 — z pary kontrolnej 1-2
+    with pytest.raises(ConfigError, match="chainRn4"):  # zbiór 0 — z pary kontrolnej 7-0
         check_data(cfg, tmp_path)
-    for idx in (1, 2):
+    for idx in (1, 7, 0):
         d = tmp_path / "databio-8p" / DATASETS[idx]
         d.mkdir(parents=True)
         (d / "part-00000.parquet").write_bytes(b"")

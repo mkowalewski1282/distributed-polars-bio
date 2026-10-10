@@ -41,6 +41,7 @@ def series(data_root, tmp_path_factory):
     cfg = parse({
         "series": "integration", "scenarios": SCENARIOS, "variants": list(VARIANTS),
         "nodes": [1, 2], "repeats": 1, "warmup": 0, "seed": 1, "control_tolerance": 100.0,
+        "control": {"op": "overlap", "pair": "1-2"}, "control_repeats": 1,
     })
     summary = orch.run_series(
         cfg, data_root=data_root, results_dir=tmp_path_factory.mktemp("results"),
@@ -121,6 +122,7 @@ def test_main_resolves_relative_data_root(data_root, tmp_path, monkeypatch):
         "series": "paths", "scenarios": [{"op": "overlap", "pair": "1-2"}],
         "variants": ["polars_bio_a"], "nodes": [1], "repeats": 1, "warmup": 0, "seed": 1,
         "control_tolerance": 100.0,
+        "control": {"op": "overlap", "pair": "1-2"}, "control_repeats": 1,
     }))
     affinity = os.sched_getaffinity(0)
     try:

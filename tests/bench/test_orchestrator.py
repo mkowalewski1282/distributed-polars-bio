@@ -91,6 +91,8 @@ def config(**overrides):
         "timeout_s": 30,
         "seed": 7,
         "control_tolerance": 0.5,
+        "control": {"op": "overlap", "pair": "1-2"},
+        "control_repeats": 1,
     }
     raw.update(overrides)
     return parse(raw)
@@ -402,6 +404,7 @@ def test_main_fails_fast_without_ballista_binaries(tmp_path, monkeypatch, capsys
     cfg.write_text(yaml.safe_dump({
         "series": "b", "scenarios": [{"op": "overlap", "pair": "1-2"}],
         "variants": ["ballista"], "nodes": [1], "seed": 1,
+        "control": {"op": "overlap", "pair": "1-2"},
     }))
     monkeypatch.setattr(engines, "BALLISTA_DIR", tmp_path / "missing")
     code = orch.main([str(cfg), "--data-root", str(root), "--results-dir", str(tmp_path / "results")])

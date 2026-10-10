@@ -28,7 +28,7 @@ from typing import Callable
 
 from bench import metrics
 from bench.config import (
-    CONTROL, Block, ConfigError, Scenario, SeriesConfig, blocks, check_data, load, round_order,
+    Block, ConfigError, Scenario, SeriesConfig, blocks, check_data, load, round_order,
 )
 from bench.data.datasets import data_dir
 from bench.engines import (
@@ -287,7 +287,7 @@ class _Series:
         expected: dict[str, Expected] = {}
         engine.start()
         try:
-            for scenario in dict.fromkeys([*self.cfg.scenarios, CONTROL]):
+            for scenario in dict.fromkeys([*self.cfg.scenarios, self.cfg.control]):
                 measured, _ = self.measure(engine, scenario, None)
                 row = self.row(scenario, REFERENCE_VARIANT, 1, 0, 1, measured, reference=True)
                 self.write([row])
@@ -328,14 +328,14 @@ class _Series:
 
         engine.start()
         try:
-            first = run(CONTROL, 0, is_control=True)
+            first = run(self.cfg.control, 0, is_control=True)
             for w in range(1, self.cfg.warmup + 1):
                 for scenario in round_order(self.cfg, block, f"warmup-{w}"):
                     run(scenario, 0, warmup=True)
             for r in range(1, self.cfg.repeats + 1):
                 for scenario in round_order(self.cfg, block, str(r)):
                     run(scenario, r)
-            last = run(CONTROL, 1, is_control=True)
+            last = run(self.cfg.control, 1, is_control=True)
         finally:
             engine.stop()
         t_start = first["t_total_s"] if first["valid"] else None
