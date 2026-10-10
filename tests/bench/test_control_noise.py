@@ -74,3 +74,4 @@ def test_noise_study_config():
     cfg = load(REPO / "bench" / "conf" / "control_noise.yaml")
     assert cfg.series == "control-noise" and cfg.scenarios == (Scenario("overlap", "7-0"),)
     assert (cfg.variants, cfg.nodes, cfg.repeats, cfg.warmup) == (("polars_bio_a",), (1,), 20, 1)
+    assert cfg.control_tolerance == 100.0

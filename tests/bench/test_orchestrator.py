@@ -589,6 +589,36 @@ def test_engine_death_during_explain_stops_runner_at_once(tmp_path):
     assert block(rows(summary), "ballista")["valid"].all()
 
 
+def test_explain_pass_skips_scenarios_skipped_in_measured_runs(tmp_path):
+    """Scenariusz pominięty w pomiarach (timeout) nie jest uruchamiany w EXPLAIN ANALYZE i nie
+    dodaje porażki serii; drugi scenariusz dostaje swój plan."""
+    def args_for(variant, n, scenario):
+        return ["--sleep", "60"] if (variant, scenario.op) == ("ballista", "overlap") else []
+
+    summary = run(tmp_path, cfg=config(explain=True, timeout_s=1), factory=make_factory(args_for))
+    explain = summary.directory / "explain"
+    assert sorted(p.relative_to(explain).as_posix() for p in explain.rglob("*.txt")) == [
+        "ballista-n1/merge_1.txt",
+    ]
+    assert summary.failures == []
+
+
+def test_killed_explain_run_restarts_the_engine(tmp_path):
+    """Zabity przebieg EXPLAIN ANALYZE (tu: śmierć executora) kończy się restartem silnika
+    z twardym zatrzymaniem, żeby kolejny scenariusz nie konkurował z osieroconym zadaniem."""
+    marker = tmp_path / "executor_died"
+    engines_by_variant = {}
+
+    def customize(engine):
+        engines_by_variant[engine.variant] = engine
+        if engine.variant == "ballista":
+            engine.explain_args = ["--touch", str(marker), "--sleep", "60"]
+            engine.dead_once = marker
+
+    run(tmp_path, cfg=config(explain=True, timeout_s=120), factory=make_factory(customize=customize))
+    assert engines_by_variant["ballista"].graces == [orch.HARD_STOP_GRACE_S] * 2
+
+
 def test_no_explain_pass_by_default(tmp_path):
     assert not (run(tmp_path).directory / "explain").exists()
 

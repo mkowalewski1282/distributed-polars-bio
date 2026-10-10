@@ -17,7 +17,7 @@ Wynik jest odbierany jako tabele Arrow przez `client.to_table_as_iterator` — t
 używa publiczne toLocalIterator, ale bez zamiany na obiekty Row — i trzymany w pamięci; zegar
 staje po ostatniej partii, a suma kontrolna jest liczona potem (specyfikacja 3b-2, 4.1; jej czas:
 `extra.checksum_s`). `phases.first_batch_s`: czas do pierwszej partii. Szczyt pamięci: proces
-klienta (z trzymanym wynikiem); szczyt serwera mierzy orkiestrator."""
+klienta (z trzymanym wynikiem), odczytany przed sumą kontrolną; szczyt serwera mierzy orkiestrator."""
 
 from __future__ import annotations
 
@@ -86,6 +86,7 @@ def run(op: str, left: Path, right: Path | None, cols: tuple[str, str, str], rem
                 if first_batch_s is None:
                     first_batch_s = time.perf_counter() - t0
             t_total_s = time.perf_counter() - t0
+            peak_rss_bytes = peak_rss()  # przed sumą kontrolną: jej bufory nie zawyżają szczytu
         finally:
             spark.stop()
         t = time.perf_counter()
@@ -104,7 +105,7 @@ def run(op: str, left: Path, right: Path | None, cols: tuple[str, str, str], rem
         if phase_log is not None:
             os.unlink(phase_log)
     return report_line(
-        rows=checksum.rows, checksum=checksum.hex(), t_total_s=t_total_s, peak_rss_bytes=peak_rss(),
+        rows=checksum.rows, checksum=checksum.hex(), t_total_s=t_total_s, peak_rss_bytes=peak_rss_bytes,
         phases=phases, extra=extra,
     )
 

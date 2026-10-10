@@ -13,6 +13,10 @@ nodes: [1, 2, 3]
 repeats: 1
 warmup: 0
 control_repeats: 3
+# Seria sprawdza ukończenie, broadcast_bytes i pamięć, nie czas; dryf tylko powtarzałby drogie bloki 7-0.
+control_tolerance: 100.0
+# Zawieszenie ma kosztować 10 minut, nie 20.
+timeout_s: 600
 # Plany EXPLAIN ANALYZE z metrykami operatorów (spec 3b-2, 6.4) — czas budowy indeksu na zadanie.
 explain: true
 seed: 20261009

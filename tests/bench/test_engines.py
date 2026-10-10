@@ -296,11 +296,12 @@ def test_polars_bio_engine_never_reports_dead_processes(tmp_path):
 
 def test_inherited_engine_variables_are_dropped(tmp_path, monkeypatch):
     for name, value in {"SAIL_MODE": "local", "POLARS_MAX_THREADS": "12", "RUST_LOG": "warn",
-                        "BIO_TARGET_PARTITIONS": "8", "BALLISTA_GRPC_MAX_MESSAGE_BYTES": "1"}.items():
+                        "BIO_TARGET_PARTITIONS": "8", "BALLISTA_GRPC_MAX_MESSAGE_BYTES": "1",
+                        "TOKIO_WORKER_THREADS": "3"}.items():
         monkeypatch.setenv(name, value)
     env = engines.base_env()
     assert not {"SAIL_MODE", "POLARS_MAX_THREADS", "RUST_LOG", "BIO_TARGET_PARTITIONS",
-                "BALLISTA_GRPC_MAX_MESSAGE_BYTES"} & set(env)
+                "BALLISTA_GRPC_MAX_MESSAGE_BYTES", "TOKIO_WORKER_THREADS"} & set(env)
     assert env["MPLBACKEND"] == "Agg" and env["PATH"] == os.environ["PATH"]
     pb_env = engines.make_engine("polars_bio_a", 1, data_root=tmp_path, log_dir=tmp_path, profile="debug").command(
         Scenario("overlap", "1-2")).env

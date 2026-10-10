@@ -13,6 +13,7 @@ env_record() → zmienne środowiska ustawione przez narzędzie (zapis w env.jso
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import shutil
@@ -37,9 +38,10 @@ PROFILES = ("release", "debug")
 SYSTEM_CPUS = (0, 1)
 #: Sloty zadań i wątki na węzeł: 1 rdzeń fizyczny = 2 wątki SMT.
 SLOTS_PER_NODE = 2
-#: Limit wiadomości gRPC Ballisty (specyfikacja 3b-2, 6.2): w nearest i coverage każde zadanie
-#: niesie całą tabelę rozsyłaną (~29 MiB dla 2-7, ~56 MiB dla 7-0), a wiadomość do executora —
-#: kilka zadań; domyślne 16 MiB Ballisty nie wystarcza.
+#: Limit wiadomości gRPC Ballisty (specyfikacja 3b-2, 6.2): w nearest i coverage plan etapu z całą
+#: tabelą rozsyłaną (~29 MiB dla 2-7, ~56 MiB dla 7-0) jest wysyłany raz na executor i etap
+#: (MultiTaskDefinition), więc tabela podróżuje raz na wiadomość startową; domyślne 16 MiB
+#: Ballisty nie wystarcza (strażnik stosuje jeszcze margines MESSAGE_SIZE_MARGIN = 2).
 GRPC_MAX_MESSAGE_BYTES = 512 * 2**20
 #: Wynik wzorcowy: polars-bio na 1 partycji — przy większej liczbie partycji polars-bio 0.28
 #: psuje merge i subtract (bench/runners/polars_bio_runner.py).
@@ -62,6 +64,7 @@ SAIL_START_ATTEMPTS = 3
 #: konfigurację przebiegu (przegląd 3a). Silnik ustawia potrzebne sam — lista w env_record().
 INHERITED_PREFIXES = (
     "SAIL_", "BALLISTA_", "POLARS_", "BIO_", "SPARK_", "PYSPARK_", "RUST_LOG", "DIST_OUTPUT_DIR",
+    "DATAFUSION_", "TOKIO_", "RAYON_", "OMP_",
 )
 
 
@@ -275,8 +278,8 @@ class BallistaEngine:
             try:
                 if ready():
                     return
-            except (OSError, ValueError):
-                pass  # scheduler jeszcze nie odpowiada albo odpowiada niepełnym JSON-em
+            except (OSError, ValueError, http.client.HTTPException):
+                pass  # scheduler jeszcze nie odpowiada albo odpowiada niepełnie (JSON, IncompleteRead, BadStatusLine)
             time.sleep(0.3)
         raise EngineError(f"{message} after {timeout:.0f} s; logs: {self.log_dir}")
 

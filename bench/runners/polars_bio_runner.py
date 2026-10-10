@@ -6,7 +6,8 @@ strumieniowo (`execute_stream`).
 
 Czas: od wywołania operacji do odebrania ostatniej partii; bez startu procesu, importów
 i ustawień. Partie są trzymane w pamięci, a suma kontrolna liczona PO zatrzymaniu zegara
-(specyfikacja 3b-2, 4.1) — jej czas podaje informacyjnie `extra.checksum_s`.
+(specyfikacja 3b-2, 4.1) — jej czas podaje informacyjnie `extra.checksum_s`. Szczyt pamięci jest odczytywany tuż po
+zatrzymaniu zegara, przed sumą kontrolną (zawiera trzymany wynik, bez buforów sumy).
 `phases.first_batch_s`: czas do pierwszej partii (brak partii → równy t_total_s).
 Wątki: `--threads T` → `target_partitions = T` (pb.POLARS_BIO_MAX_THREADS; domyślnie
 polars-bio liczy na 1 partycji). Orkiestrator ustawia też POLARS_MAX_THREADS = T
@@ -63,6 +64,7 @@ def run(op: str, left: Path, right: Path | None, cols: tuple[str, str, str], thr
         if first_batch_s is None:
             first_batch_s = time.perf_counter() - t0
     t_total_s = time.perf_counter() - t0
+    peak_rss_bytes = peak_rss()  # przed sumą kontrolną: jej bufory nie zawyżają szczytu
     t = time.perf_counter()
     checksum = Checksum(op)
     checksum.update_all(normalize_arrow(op, b, cols) for b in batches)
@@ -71,7 +73,7 @@ def run(op: str, left: Path, right: Path | None, cols: tuple[str, str, str], thr
         rows=checksum.rows,
         checksum=checksum.hex(),
         t_total_s=t_total_s,
-        peak_rss_bytes=peak_rss(),
+        peak_rss_bytes=peak_rss_bytes,
         phases={"first_batch_s": t_total_s if first_batch_s is None else first_batch_s},
         extra={
             "target_partitions": int(pb.get_option(pb.POLARS_BIO_MAX_THREADS)),

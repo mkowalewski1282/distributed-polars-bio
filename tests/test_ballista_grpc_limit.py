@@ -2,8 +2,9 @@
 nie mieszczą się w limicie wiadomości gRPC, zapytanie kończy się czytelnym błędem — zamiast
 wisieć do timeoutu, jak robi to Ballista 53 w trybie push (uznaje executor za utraconego i ponawia).
 
-Tabela rozsyłana w coverage to prawa strona (df2): 600 tys. przedziałów ≈ 10–15 MB w Arrow IPC,
-czyli × margines 2 > 16 MiB. Wymaga binarek debug (brak = BŁĄD, jak w P0)."""
+Tabela rozsyłana w coverage to prawa strona (df2): 1,2 mln przedziałów ≈ 23 MiB w Arrow IPC
+(string + int32; po odczycie w Ballisście Utf8View/Int64 ≈ 37 MiB), czyli ponad domyślne 16 MiB
+Ballisty także bez marginesu 2 — test dodatni dowodzi więc, że podniesiony limit 512 MiB dociera do transportu. Wymaga binarek debug (brak = BŁĄD, jak w P0)."""
 
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ import pytest
 from bench import engines
 from tests.parquet_fixture import FIXTURE_A, write_parts
 
-BIG_ROWS = 600_000
+BIG_ROWS = 1_200_000
 
 
 @pytest.fixture(scope="module")

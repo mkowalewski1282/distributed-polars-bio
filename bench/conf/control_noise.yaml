@@ -11,4 +11,7 @@ repeats: 20
 warmup: 1
 # Przebiegi kontrolne samego bloku mierzą to samo zadanie; jeden na koniec wystarczy.
 control_repeats: 1
+# Własny test dryfu bloku nie może odrzucić próbki szumu: badanie samo ocenia próg 10%
+# (jak w testach integracyjnych).
+control_tolerance: 100.0
 seed: 20261009

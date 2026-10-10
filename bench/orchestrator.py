@@ -276,11 +276,16 @@ class _Series:
                     f"{row['variant']} N={row['n_nodes']} {row['scenario_id']}: {row['invalid_reason']}"
                 )
 
-    def explain_pass(self, engine, block: Block) -> None:
+    def explain_pass(self, engine, block: Block, skipped: dict[str, str]) -> None:
         """Dodatkowy, niemierzony przebieg EXPLAIN ANALYZE każdego scenariusza (specyfikacja 3b-2,
         6.4): plan z metrykami operatorów do pliku; nie trafia do wyników. Niepowodzenie →
-        podsumowanie serii (seria kończy się kodem 1)."""
+        podsumowanie serii (seria kończy się kodem 1). Scenariusze pominięte w pomiarach bloku
+        (`skipped`: id → przyczyna) nie są uruchamiane i nie dodają porażki — wiersze pomiarowe
+        niosą już przyczynę. Po zabitym przebiegu silnik jest restartowany."""
         for scenario in self.cfg.scenarios:
+            if scenario.id in skipped:
+                self.out(f"{block.label}: EXPLAIN ANALYZE {scenario.id} skipped ({skipped[scenario.id]})")
+                continue
             target = (self.directory / "explain" / f"{block.variant}-n{block.n_nodes}"
                       / f"{scenario.id.replace('/', '_')}.txt")
             command = engine.explain_command(scenario, target)
@@ -295,6 +300,8 @@ class _Series:
             if outcome.killed or outcome.returncode != 0 or not target.exists() or not target.stat().st_size:
                 why = outcome.killed or stderr_tail(outcome.stderr)
                 self.summary.failures.append(f"{block.label}: EXPLAIN ANALYZE {scenario.id}: {why}")
+            if outcome.killed:
+                engine.restart(grace_s=HARD_STOP_GRACE_S)
 
     def measure(self, engine, scenario: Scenario, expected: Expected | None,
                 label: str) -> tuple[dict, bool]:
@@ -439,7 +446,7 @@ class _Series:
                     run(scenario, r)
             end = controls("end")
             if self.cfg.explain:
-                self.explain_pass(engine, block)
+                self.explain_pass(engine, block, skipped)
         finally:
             engine.stop()
         reason = control_drift(

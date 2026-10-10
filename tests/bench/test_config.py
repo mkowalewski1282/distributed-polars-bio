@@ -211,3 +211,5 @@ def test_broadcast_check_config_covers_the_broadcast_cells():
     assert cfg.variants == ("ballista",) and cfg.nodes == (1, 2, 3)
     assert {s.id for s in cfg.scenarios} == {"nearest/2-7", "coverage/2-7", "nearest/7-0", "coverage/7-0"}
     assert cfg.explain is True
+    assert cfg.control_tolerance == 100.0 and cfg.timeout_s == 600
+    assert cfg.repeats == 1 and cfg.warmup == 0
