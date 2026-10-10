@@ -9,7 +9,7 @@ from pathlib import Path
 import polars as pl
 
 #: Wiersz wyniku: pola specyfikacji 8.5 oraz is_reference, attempt, wall_s, extra i pswpin_delta
-#: (plan 3a); control_position (plan 3b-2).
+#: (plan 3a); control_position, base_rss (plan 3b-2).
 SCHEMA = {
     "timestamp": pl.Utf8,
     "git_commit": pl.Utf8,
@@ -38,6 +38,7 @@ SCHEMA = {
     "extra": pl.Utf8,  # JSON z runnera (np. target_partitions)
     "peak_rss": pl.Utf8,  # JSON: proces -> bajty
     "peak_rss_sum": pl.Int64,  # górne oszacowanie pamięci (specyfikacja 5)
+    "base_rss": pl.Utf8,  # JSON: proces długożyjący -> RSS tuż po wyzerowaniu szczytu (plan 3b-2)
     "shuffle_bytes": pl.Int64,
     "broadcast_bytes": pl.Int64,  # plan 3b
     "pswpout_delta": pl.Int64,

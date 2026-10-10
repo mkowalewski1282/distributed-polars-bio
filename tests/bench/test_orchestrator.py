@@ -100,6 +100,7 @@ def probe(**overrides) -> orch.Probe:
         pswpout=lambda: 0,
         pswpin=lambda: 0,
         peak_rss=lambda pid: 2048,
+        rss=lambda pid: 1000,
         reset_peak_rss=lambda pid: None,
         dir_size=lambda path: 0,
     )
@@ -128,10 +129,8 @@ def config(**overrides):
 def run(tmp_path, cfg=None, **kwargs):
     kwargs.setdefault("factory", make_factory())
     kwargs.setdefault("probe", probe())
-    return orch.run_series(
-        cfg or config(), data_root=tmp_path, results_dir=tmp_path / "results",
-        out=lambda line: None, **kwargs,
-    )
+    kwargs.setdefault("out", lambda line: None)
+    return orch.run_series(cfg or config(), data_root=tmp_path, results_dir=tmp_path / "results", **kwargs)
 
 
 def test_series_records_engine_environment(tmp_path):
@@ -615,3 +614,33 @@ def test_engine_death_during_run_kills_runner_at_once(tmp_path):
     assert overlap["wall_s"][0] < 30
     assert engines_by_variant["ballista"].graces == [orch.HARD_STOP_GRACE_S]
     assert block(rows(summary), "ballista").filter(pl.col("op") == "merge")["valid"].all()
+
+
+def test_every_run_is_announced_before_it_starts(tmp_path):
+    lines: list[str] = []
+    summary = run(tmp_path, out=lines.append)
+    starts = [line for line in lines if line.endswith(" start")]
+    assert len(starts) == rows(summary).height
+    assert lines[1].startswith("polars_bio_ref") and lines[1].endswith(" start")
+    assert lines[2].startswith("polars_bio_ref") and lines[2].endswith("OK")
+
+
+def test_stderr_of_failed_runs_is_kept(tmp_path):
+    def args_for(variant, n, scenario):
+        return ["--exit", "1"] if (variant, scenario.op) == ("ballista", "overlap") else []
+
+    summary = run(tmp_path, factory=make_factory(args_for))
+    kept = sorted((summary.directory / "logs" / "failed").iterdir())
+    assert len(kept) == 3  # rozgrzewka i dwie rundy
+    assert kept[0].name.endswith("-ballista-n1-overlap_1-2.stderr.txt")
+    assert "engine crashed: test error" in kept[0].read_text()
+
+
+def test_base_rss_of_long_lived_processes_is_recorded(tmp_path):
+    def customize(engine):
+        if engine.variant == "ballista":
+            engine.pids = {"executor_1": 4242}
+
+    df = rows(run(tmp_path, factory=make_factory(customize=customize)))
+    assert set(block(df, "ballista")["base_rss"]) == {json.dumps({"executor_1": 1000})}
+    assert block(df, "polars_bio_a")["base_rss"].is_null().all()

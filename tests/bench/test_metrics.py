@@ -50,6 +50,10 @@ def test_peak_rss_reads_vmhwm_in_bytes(fake_proc):
     assert metrics.peak_rss(4242, fake_proc) == 123456 * 1024
 
 
+def test_rss_reads_vmrss_in_bytes(fake_proc):
+    assert metrics.rss(4242, fake_proc) == 100000 * 1024
+
+
 def test_reset_peak_rss_writes_5_to_clear_refs(fake_proc):
     metrics.reset_peak_rss(4242, fake_proc)
     assert (fake_proc / "4242" / "clear_refs").read_text() == "5"

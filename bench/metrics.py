@@ -35,6 +35,11 @@ def peak_rss(pid: int | str = "self", proc: Path = PROC) -> int:
     return _kib_field(proc / str(pid) / "status", "VmHWM")
 
 
+def rss(pid: int | str = "self", proc: Path = PROC) -> int:
+    """Bieżąca pamięć rezydentna procesu (VmRSS) w bajtach."""
+    return _kib_field(proc / str(pid) / "status", "VmRSS")
+
+
 def reset_peak_rss(pid: int | str = "self", proc: Path = PROC) -> None:
     """Zeruje licznik szczytu: VmHWM := bieżący RSS (`echo 5 > clear_refs`)."""
     (proc / str(pid) / "clear_refs").write_text("5")

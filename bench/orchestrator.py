@@ -53,7 +53,7 @@ HARD_STOP_GRACE_S = 3.0
 
 _METRIC_KEYS = (
     "valid", "invalid_reason", "rows", "checksum", "t_total_s", "wall_s", "phases", "extra",
-    "peak_rss", "peak_rss_sum", "shuffle_bytes", "broadcast_bytes", "pswpout_delta", "pswpin_delta",
+    "peak_rss", "peak_rss_sum", "base_rss", "shuffle_bytes", "broadcast_bytes", "pswpout_delta", "pswpin_delta",
 )
 
 
@@ -66,6 +66,7 @@ class Probe:
     pswpin: Callable[[], int] = metrics.pswpin
     peak_rss: Callable[[int], int] = metrics.peak_rss
     reset_peak_rss: Callable[[int], None] = metrics.reset_peak_rss
+    rss: Callable[[int], int] = metrics.rss
     dir_size: Callable[[Path], int] = metrics.dir_size
 
 
@@ -192,15 +193,26 @@ def _invalidate(rows: list[dict], reason: str) -> list[dict]:
     return rows
 
 
+def _print(line: str) -> None:
+    """Postęp serii na bieżąco — także przy przekierowaniu do pliku (przegląd 3a)."""
+    print(line, flush=True)
+
+
+def _kind(*, reference: bool = False, position: str | None = None, warmup: bool = False, rep: int = 0) -> str:
+    if reference:
+        return "reference"
+    if position is not None:
+        return f"control {position} {rep}"
+    return "warmup" if warmup else f"round {rep}"
+
+
+def _start_line(variant: str, n_nodes: int, kind: str, scenario_id: str) -> str:
+    return f"{variant:<14} N={n_nodes} {kind:<16} {scenario_id:<14}   start"
+
+
 def _progress(row: dict) -> str:
-    if row["is_reference"]:
-        kind = "reference"
-    elif row["is_control"]:
-        kind = f"control {row['control_position']} {row['rep']}"
-    elif row["is_warmup"]:
-        kind = "warmup"
-    else:
-        kind = f"round {row['rep']}"
+    kind = _kind(reference=row["is_reference"], position=row["control_position"],
+                 warmup=row["is_warmup"], rep=row["rep"])
     t = f"{row['t_total_s']:9.3f} s" if row["t_total_s"] is not None else "        – s"
     status = "OK" if row["valid"] else f"INVALID: {row['invalid_reason']}"
     return f"{row['variant']:<14} N={row['n_nodes']} {kind:<16} {row['scenario_id']:<14} {t}  {status}"
@@ -213,6 +225,7 @@ class _Series:
         self.cfg, self.factory, self.probe, self.mem_floor = cfg, factory, probe, mem_floor
         self.directory, self.scratch, self.writer, self.out, self.summary = directory, scratch, writer, out, summary
         self.env_records: dict[str, dict[str, str]] = {}
+        self.failed_logs = 0
         self.git_commit = git_commit()
         self.versions = json.dumps(engine_versions(profile, ballista="ballista" in cfg.variants))
 
@@ -271,13 +284,16 @@ class _Series:
                 why = outcome.killed or stderr_tail(outcome.stderr)
                 self.summary.failures.append(f"{block.label}: EXPLAIN ANALYZE {scenario.id}: {why}")
 
-    def measure(self, engine, scenario: Scenario, expected: Expected | None) -> tuple[dict, bool]:
+    def measure(self, engine, scenario: Scenario, expected: Expected | None,
+                label: str) -> tuple[dict, bool]:
         """Jeden przebieg z metrykami (specyfikacja 5). Drugi element: czy silnik trzeba
         uruchomić od nowa (runner zabity albo padł proces silnika)."""
         pids = engine.server_pids()
-        for pid in pids.values():
+        base = {}
+        for name, pid in pids.items():
             try:
                 self.probe.reset_peak_rss(pid)
+                base[name] = self.probe.rss(pid)
             except OSError:
                 pass  # martwy proces wykryje odczyt szczytu po przebiegu
         dirs = engine.shuffle_dirs()
@@ -301,6 +317,12 @@ class _Series:
             report_error=report_error, expected=expected, pswpout_delta=swap_delta,
             pswpin_delta=swap_in_delta, stderr=outcome.stderr,
         )
+        if reasons and outcome.stderr.strip():
+            self.failed_logs += 1
+            path = (self.directory / "logs" / "failed"
+                    / f"{self.failed_logs:04d}-{label}-{scenario.id.replace('/', '_')}.stderr.txt")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(outcome.stderr)
         peak = {"runner": report["peak_rss_bytes"]} if report else {}
         dead = []
         for name, pid in pids.items():
@@ -324,6 +346,7 @@ class _Series:
             "extra": json.dumps(extra) if extra is not None else None,
             "peak_rss": json.dumps(peak) if peak else None,
             "peak_rss_sum": sum(peak.values()) if peak else None,
+            "base_rss": json.dumps(base) if base else None,
             "shuffle_bytes": sum(self.probe.dir_size(d) for d in dirs) - shuffle_before if dirs else None,
             "broadcast_bytes": broadcast,
             "pswpout_delta": swap_delta,
@@ -338,7 +361,8 @@ class _Series:
         engine.start()
         try:
             for scenario in dict.fromkeys([*self.cfg.scenarios, self.cfg.control]):
-                measured, _ = self.measure(engine, scenario, None)
+                self.out(_start_line(REFERENCE_VARIANT, 1, "reference", scenario.id))
+                measured, _ = self.measure(engine, scenario, None, f"{REFERENCE_VARIANT}-n1")
                 row = self.row(scenario, REFERENCE_VARIANT, 1, 0, 1, measured, reference=True)
                 self.write([row])
                 self.out(_progress(row))
@@ -371,7 +395,8 @@ class _Series:
             if not is_control and scenario.id in skipped:
                 measured = _skipped(f"skipped: {skipped[scenario.id]}")
             else:
-                measured, restart = self.measure(eng, scenario, expected[scenario.id])
+                self.out(_start_line(variant, n, _kind(position=position, warmup=warmup, rep=rep), scenario.id))
+                measured, restart = self.measure(eng, scenario, expected[scenario.id], f"{variant}-n{n}")
                 if restart:
                     if not is_control:
                         skipped[scenario.id] = measured["invalid_reason"]
@@ -453,7 +478,7 @@ def run_series(
     factory=None,
     probe: Probe | None = None,
     mem_floor: int = MEM_FLOOR_BYTES,
-    out: Callable[[str], None] = print,
+    out: Callable[[str], None] = _print,
 ) -> SeriesSummary:
     """Seria: przebieg wzorcowy, potem bloki (blok z dryfem powtarzany raz). Wiersze trafiają
     do runs.jsonl po każdym bloku, a na końcu — także po przerwaniu — do runs.parquet."""
