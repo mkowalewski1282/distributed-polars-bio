@@ -276,5 +276,5 @@ def check_data(cfg: SeriesConfig, root: Path) -> None:
                 missing.add(str(path))
     if missing:
         raise ConfigError(
-            "missing data (python -m bench.data.download): " + ", ".join(sorted(missing))
+            "missing data (uv run python -m bench.data.download): " + ", ".join(sorted(missing))
         )

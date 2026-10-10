@@ -10,7 +10,9 @@ dependencies = [
     "polars-bio==0.36.*",
     "pysail==0.7.*",
     "pyspark[connect]==4.2.*",
-    "polars>=1.44",
+    # polars 2.0 (06.10.2026) psuje polars-bio 0.36 (nazwy kolumn CSV bez nagłówka); polars-bio
+    # 0.36.1 przypina polars<2, obsługa polars 2 zapowiedziana w 0.37 (plan 3b-2).
+    "polars>=1.44,<2",
     "pyarrow>=24",
     "pandas>=3.0",
     "numpy>=2.5",

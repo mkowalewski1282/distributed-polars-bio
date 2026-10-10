@@ -3,7 +3,7 @@
 przebiegi kontrolne — z walidacją każdego przebiegu i zapisem wiersza na przebieg.
 
 Uruchomienie (seria pomiarowa: z Windows Terminal, VS Code zamknięty — checklista RAM):
-    python -m bench.orchestrator bench/conf/smoke.yaml [--ballista-profile debug]
+    uv run python -m bench.orchestrator bench/conf/smoke.yaml [--ballista-profile debug]
 Kody wyjścia: 0 — seria zaliczona (każdy nieważny przebieg jest na liście expected_invalid);
 1 — nieoczekiwane nieważne przebiegi albo przerwane bloki; 2 — błąd konfiguracji, brak danych albo binarek (przed pierwszym pomiarem)."""
 

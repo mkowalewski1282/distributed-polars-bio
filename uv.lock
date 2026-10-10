@@ -89,7 +89,7 @@ dev = [
 requires-dist = [
     { name = "numpy", specifier = ">=2.5" },
     { name = "pandas", specifier = ">=3.0" },
-    { name = "polars", specifier = ">=1.44" },
+    { name = "polars", specifier = ">=1.44,<2" },
     { name = "polars-bio", specifier = "==0.36.*" },
     { name = "pyarrow", specifier = ">=24" },
     { name = "pysail", specifier = "==0.7.*" },

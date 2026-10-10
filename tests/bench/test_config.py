@@ -204,3 +204,10 @@ def test_expected_invalid_entries_match_rows():
     assert not entry.matches({**row, "n_nodes": 1})
     assert not entry.matches({**row, "invalid_reason": "skipped: timeout"})
     assert not entry.matches({**row, "variant": "sail"})
+
+
+def test_broadcast_check_config_covers_the_broadcast_cells():
+    cfg = load(REPO / "bench" / "conf" / "broadcast_check.yaml")
+    assert cfg.variants == ("ballista",) and cfg.nodes == (1, 2, 3)
+    assert {s.id for s in cfg.scenarios} == {"nearest/2-7", "coverage/2-7", "nearest/7-0", "coverage/7-0"}
+    assert cfg.explain is True

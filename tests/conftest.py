@@ -49,7 +49,7 @@ def parquet_expected(parquet_dirs):
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
-        "real_data: needs the downloaded databio-8p dataset (python -m bench.data.download)",
+        "real_data: needs the downloaded databio-8p dataset (uv run python -m bench.data.download)",
     )
     config.addinivalue_line(
         "markers",

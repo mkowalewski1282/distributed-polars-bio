@@ -158,7 +158,7 @@ muszą być jednoczesne) — oraz maksimum per węzeł.
    lub sumy kontrolnej; przekroczenie limitu 20 minut. Timeout zapisywany jako wynik („timeout”),
    bez ponawiania. Ponadto: zabicie przez strażnika pamięci (`MemAvailable` < 300 MiB) i śmierć
    procesu silnika w trakcie przebiegu. Po timeoucie, strażniku albo śmierci procesu silnik jest
-   restartowany, a scenariusz pomijany do końca bloku („pominięty: …”). Przyrost `pswpin`
+   restartowany, a scenariusz pomijany do końca bloku (`"skipped: …"`). Przyrost `pswpin`
    (wczytania ze swapu) jest zapisywany (`pswpin_delta`), ale nie unieważnia przebiegu: przy
    niepustym swapie na starcie serii wczytują go także inne procesy. Reguła — plan 3b (np.
    unieważnianie, gdy seria startuje od pustego swapu po `wsl --shutdown`).
@@ -330,7 +330,7 @@ dryfie), `wall_s` (czas procesu runnera ze startem, do szacowania długości ser
 (JSON z runnera, m.in. `target_partitions`) i `pswpin_delta` (wczytania ze swapu, sekcja 6).
 Zapis: `bench/results/<seria>/<znacznik czasu>/runs.jsonl` po każdym bloku i `runs.parquet` na
 końcu. Przerwanie serii (Ctrl-C, SIGTERM, SIGHUP — np. zamknięcie terminala) zapisuje też
-przebiegi przerwanego bloku (przyczyna „seria przerwana”) i zatrzymuje runner oraz silnik;
+przebiegi przerwanego bloku (przyczyna `"series interrupted"`) i zatrzymuje runner oraz silnik;
 twarda awaria (np. wywrócenie WSL) traci co najwyżej bieżący blok.
 
 ### 8.6 Testy narzędzia (TDD)
