@@ -6,7 +6,9 @@ server_pids() → {nazwa: PID} (procesy długożyjące, których szczyt pamięci
 orkiestrator) i shuffle_dirs() → katalogi robocze executorów (wolumen shuffle).
 log_mark() i log_metrics(mark) → liczniki z logów procesów silnika z czasu przebiegu
 (specyfikacja 3b-2: workery Saila, broadcast Ballisty).
-explain_command(scenariusz, plik) → Command albo None (EXPLAIN ANALYZE; tylko Ballista)."""
+explain_command(scenariusz, plik) → Command albo None (EXPLAIN ANALYZE; tylko Ballista).
+dead() → nazwy procesów silnika, które padły; stop(grace_s) i restart(grace_s) — SIGKILL po
+grace_s sekundach od SIGTERM."""
 
 from __future__ import annotations
 
@@ -49,6 +51,11 @@ CONTROL_VARIANT = "polars_bio_a"
 #: w trybie push od razu łączy się z executorem. Przy obciążonym CPU rejestracja bywa
 #: odrzucona („Connection refused”) i executor kończy się kodem 1 (smoke 02.10.2026).
 BALLISTA_START_ATTEMPTS = 3
+#: Czas na zakończenie po SIGTERM przy zwykłym zatrzymaniu silnika (potem SIGKILL).
+BALLISTA_STOP_GRACE_S = 10.0
+SAIL_STOP_GRACE_S = 30.0
+#: Próby startu serwera Saila (jak BALLISTA_START_ATTEMPTS; przegląd 3a: Sail nie ponawiał startu).
+SAIL_START_ATTEMPTS = 3
 #: Wariant Saila → ścieżka runnera (bench/runners/sail_runner.py, specyfikacja 3b-2, 5.3).
 SAIL_PATHS = {"sail": "arrow", "sail_lock": "arrow-lock", "sail_udtf": "udtf"}
 
@@ -98,11 +105,14 @@ class PolarsBioEngine:
     def start(self) -> None:
         pass
 
-    def stop(self) -> None:
+    def stop(self, grace_s: float = 0.0) -> None:
         pass
 
-    def restart(self) -> None:
+    def restart(self, grace_s: float = 0.0) -> None:
         pass
+
+    def dead(self) -> list[str]:
+        return []
 
     def command(self, scenario: Scenario) -> Command:
         return _python(
@@ -243,18 +253,19 @@ class BallistaEngine:
             try:
                 if ready():
                     return
-            except OSError:
-                pass
+            except (OSError, ValueError):
+                pass  # scheduler jeszcze nie odpowiada albo odpowiada niepełnym JSON-em
             time.sleep(0.3)
         raise EngineError(f"{message} after {timeout:.0f} s; logs: {self.log_dir}")
 
-    def stop(self) -> None:
+    def stop(self, grace_s: float = BALLISTA_STOP_GRACE_S) -> None:
         for proc in self.procs.values():
             if proc.poll() is None:
                 proc.terminate()
+        deadline = time.monotonic() + grace_s
         for proc in self.procs.values():
             try:
-                proc.wait(timeout=10)
+                proc.wait(timeout=max(0.0, deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
@@ -264,9 +275,12 @@ class BallistaEngine:
             shutil.rmtree(self._tmp, ignore_errors=True)
             self._tmp = None
 
-    def restart(self) -> None:
-        self.stop()
+    def restart(self, grace_s: float = BALLISTA_STOP_GRACE_S) -> None:
+        self.stop(grace_s)
         self.start()
+
+    def dead(self) -> list[str]:
+        return [name for name, proc in self.procs.items() if proc.poll() is not None]
 
     def command(self, scenario: Scenario) -> Command:
         return Command(
@@ -306,6 +320,17 @@ class SailEngine:
         self.port: int | None = None
 
     def start(self) -> None:
+        """Start serwera; po porażce (np. zajęty port) — od nowa, na nowym porcie, do
+        SAIL_START_ATTEMPTS razy. Log kolejnych prób jest dopisywany."""
+        for attempt in range(1, SAIL_START_ATTEMPTS + 1):
+            try:
+                self._start_once()
+                return
+            except EngineError:
+                if attempt == SAIL_START_ATTEMPTS:
+                    raise
+
+    def _start_once(self) -> None:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.port = free_port()
         log = self.log_dir / "sail_server.log"
@@ -322,21 +347,24 @@ class SailEngine:
             self.stop()
             raise
 
-    def stop(self) -> None:
+    def stop(self, grace_s: float = SAIL_STOP_GRACE_S) -> None:
         if self.proc is None:
             return
         if self.proc.poll() is None:
             self.proc.terminate()
         try:
-            self.proc.wait(timeout=30)
+            self.proc.wait(timeout=grace_s)
         except subprocess.TimeoutExpired:
             self.proc.kill()
             self.proc.wait()
         self.proc = None
 
-    def restart(self) -> None:
-        self.stop()
+    def restart(self, grace_s: float = SAIL_STOP_GRACE_S) -> None:
+        self.stop(grace_s)
         self.start()
+
+    def dead(self) -> list[str]:
+        return ["sail_server"] if self.proc is not None and self.proc.poll() is not None else []
 
     def command(self, scenario: Scenario) -> Command:
         return _python(

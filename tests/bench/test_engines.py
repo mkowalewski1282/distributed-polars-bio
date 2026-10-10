@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import itertools
 import os
+import signal
 import socket
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -235,3 +238,56 @@ def test_other_binaries_entry_points_do_not_make_a_binary_stale(tmp_path, monkey
     _set_mtime(root / "src" / "bin" / "bench_client.rs", 4_000_000)
     with pytest.raises(EngineError, match=r"bench_client is older than .*bench_client\.rs"):
         engines.require_ballista_binaries("debug")
+
+
+def test_stop_kills_a_process_that_ignores_sigterm(tmp_path):
+    engine = engines.make_engine("ballista", 1, data_root=tmp_path, log_dir=tmp_path, profile="debug")
+    proc = subprocess.Popen(
+        [sys.executable, "-c",
+         "import signal, sys, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+         "print('ready', flush=True); time.sleep(60)"],
+        stdout=subprocess.PIPE, text=True,
+    )
+    assert proc.stdout.readline().strip() == "ready"
+    engine.procs = {"scheduler": proc}
+    t0 = time.monotonic()
+    engine.stop(grace_s=1)
+    assert time.monotonic() - t0 < 10 and proc.poll() is not None
+
+
+@pytest.mark.nodes(1)
+def test_ballista_reports_a_dead_process(tmp_path):
+    engine = engines.make_engine("ballista", 1, data_root=tmp_path, log_dir=tmp_path / "logs", profile="debug")
+    engine.start()
+    try:
+        assert engine.dead() == []
+        os.kill(engine.server_pids()["executor_1"], signal.SIGKILL)
+        deadline = time.monotonic() + 10
+        while not engine.dead() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert engine.dead() == ["executor_1"]
+    finally:
+        engine.stop()
+
+
+@pytest.mark.nodes(1)
+def test_sail_start_retries_on_a_taken_port(tmp_path, monkeypatch):
+    blocker = socket.socket()
+    blocker.bind(("127.0.0.1", 0))  # zajęty bez listen(): serwer nie zbinduje portu i zakończy się
+    taken = blocker.getsockname()[1]
+    real_free_port = engines.free_port
+    calls = itertools.count(1)
+    monkeypatch.setattr(engines, "free_port", lambda: taken if next(calls) == 1 else real_free_port())
+    engine = engines.make_engine("sail", 1, data_root=tmp_path, log_dir=tmp_path / "logs", profile="debug")
+    try:
+        engine.start()
+        assert engine.port != taken and engine.dead() == []
+    finally:
+        engine.stop()
+        blocker.close()
+
+
+def test_polars_bio_engine_never_reports_dead_processes(tmp_path):
+    engine = engines.make_engine("polars_bio_a", 1, data_root=tmp_path, log_dir=tmp_path, profile="debug")
+    assert engine.dead() == []
+    engine.restart(grace_s=1)

@@ -35,6 +35,8 @@ class FakeEngine:
         self.pids: dict[str, int] = {}
         self.logged: dict = {}
         self.explain_args: list[str] | None = None
+        self.dead_once: Path | None = None
+        self.graces: list = []
 
     def start(self):
         self.log.append(("start", self.variant, self.n))
@@ -42,8 +44,16 @@ class FakeEngine:
     def stop(self):
         self.log.append(("stop", self.variant, self.n))
 
-    def restart(self):
+    def restart(self, grace_s=None):
         self.log.append(("restart", self.variant, self.n))
+        self.graces.append(grace_s)
+
+    def dead(self):
+        """Martwy proces silnika — raz, gdy runner utworzy plik `dead_once` (sygnał z testu)."""
+        if self.dead_once is not None and self.dead_once.exists():
+            self.dead_once.unlink()
+            return ["executor_1"]
+        return []
 
     def command(self, scenario):
         args = self.args_for(self.variant, self.n, scenario)
@@ -542,3 +552,28 @@ def test_engine_versions_record_algorithm_crate_and_binary_hashes(tmp_path, monk
     assert versions["ballista_node_sha256"] == hashlib.sha256(b"node").hexdigest()
     assert versions["bench_client_sha256"] == "missing"
     assert "ballista_node_sha256" not in orch.engine_versions("release", ballista=False)
+
+
+def test_engine_death_during_run_kills_runner_at_once(tmp_path):
+    """Śmierć procesu silnika w trakcie przebiegu: runner przerwany od razu (nie po timeoucie),
+    scenariusz pominięty do końca bloku, silnik zatrzymany twardo i uruchomiony od nowa."""
+    marker = tmp_path / "executor_died"
+    engines_by_variant = {}
+
+    def args_for(variant, n, scenario):
+        if (variant, scenario.op) == ("ballista", "overlap"):
+            return ["--touch", str(marker), "--sleep", "60"]
+        return []
+
+    def customize(engine):
+        engines_by_variant[engine.variant] = engine
+        if engine.variant == "ballista":
+            engine.dead_once = marker
+
+    summary = run(tmp_path, cfg=config(timeout_s=120), factory=make_factory(args_for, customize))
+    overlap = block(rows(summary), "ballista").filter(pl.col("op") == "overlap").sort("rep")
+    died = "process executor_1 exited during the run"
+    assert overlap["invalid_reason"].to_list() == [died, f"skipped: {died}", f"skipped: {died}"]
+    assert overlap["wall_s"][0] < 30
+    assert engines_by_variant["ballista"].graces == [orch.HARD_STOP_GRACE_S]
+    assert block(rows(summary), "ballista").filter(pl.col("op") == "merge")["valid"].all()

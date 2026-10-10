@@ -47,6 +47,9 @@ POLL_S = 0.2
 MEM_FLOOR_BYTES = 300 * 2**20
 #: Blok z dryfem przebiegu kontrolnego powtarzany jest raz (specyfikacja 6.3).
 MAX_BLOCK_ATTEMPTS = 2
+#: Po timeoucie, strażniku pamięci albo śmierci procesu silnik jest restartowany; proces, który
+#: nie zakończy się w tym czasie po SIGTERM, dostaje SIGKILL (przegląd 3a).
+HARD_STOP_GRACE_S = 3.0
 
 _METRIC_KEYS = (
     "valid", "invalid_reason", "rows", "checksum", "t_total_s", "wall_s", "phases", "extra",
@@ -94,9 +97,11 @@ class SeriesError(RuntimeError):
     """Seria przerwana: scenariusz bez wyniku wzorcowego."""
 
 
-def execute(command: Command, *, timeout_s: float, mem_floor: int, probe: Probe, scratch: Path) -> Outcome:
+def execute(command: Command, *, timeout_s: float, mem_floor: int, probe: Probe, scratch: Path,
+            dead: Callable[[], list[str]] = lambda: []) -> Outcome:
     """Uruchamia runner z wyjściem do plików — potoki mogłyby zakleszczyć runner zalewający
-    stderr — pilnując limitu czasu i strażnika pamięci; zabija całą grupę procesów runnera."""
+    stderr — pilnując limitu czasu, strażnika pamięci i procesów silnika (`dead`: nazwy procesów,
+    które padły); zabija całą grupę procesów runnera."""
     out_path, err_path = scratch / "stdout.txt", scratch / "stderr.txt"
     killed: str | None = None
     t0 = time.monotonic()
@@ -116,6 +121,10 @@ def execute(command: Command, *, timeout_s: float, mem_floor: int, probe: Probe,
                             f"memory guard: MemAvailable {available // 2**20} MiB "
                             f"< {mem_floor // 2**20} MiB"
                         )
+                    else:
+                        gone = dead()
+                        if gone:
+                            killed = f"process {', '.join(gone)} exited during the run"
                 if killed:
                     break
                 time.sleep(POLL_S)
@@ -271,7 +280,7 @@ class _Series:
         mark = engine.log_mark()
         outcome = execute(
             engine.command(scenario), timeout_s=self.cfg.timeout_s, mem_floor=self.mem_floor,
-            probe=self.probe, scratch=self.scratch,
+            probe=self.probe, scratch=self.scratch, dead=engine.dead,
         )
         swap_delta = self.probe.pswpout() - swap_before
         swap_in_delta = self.probe.pswpin() - swap_in_before
@@ -293,7 +302,7 @@ class _Series:
                 peak[name] = self.probe.peak_rss(pid)
             except (OSError, KeyError):
                 dead.append(name)
-        if dead:
+        if dead and outcome.killed is None:
             reasons.append(f"process {', '.join(dead)} exited during the run")
         logged = engine.log_metrics(mark)
         broadcast = logged.pop("broadcast_bytes", None)
@@ -358,7 +367,7 @@ class _Series:
                 if restart:
                     if not is_control:
                         skipped[scenario.id] = measured["invalid_reason"]
-                    eng.restart()
+                    eng.restart(grace_s=HARD_STOP_GRACE_S)
             row = self.row(scenario, variant, n, rep, attempt, measured, warmup=warmup,
                            control_position=position)
             rows.append(row)
