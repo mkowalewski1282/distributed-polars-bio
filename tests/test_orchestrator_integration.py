@@ -149,3 +149,13 @@ def test_sail_reports_workers_and_phases(series):
         else:
             assert phases["pb_s"] > 0 and extra["udf_groups"] == 4
         assert ("lock_wait_s" in phases) == (row["variant"] == "sail_lock")
+
+
+@pytest.mark.nodes(2)
+def test_ballista_broadcast_volume_is_measured(series):
+    _, df = series
+    ballista = df.filter((pl.col("variant") == "ballista") & ~pl.col("is_reference"))
+    broadcast = ballista.filter(pl.col("op").is_in(["nearest", "coverage"]))
+    assert (broadcast["broadcast_bytes"] > 0).all()
+    assert (ballista.filter(~pl.col("op").is_in(["nearest", "coverage"]))["broadcast_bytes"] == 0).all()
+    assert df.filter(pl.col("variant") != "ballista")["broadcast_bytes"].is_null().all()

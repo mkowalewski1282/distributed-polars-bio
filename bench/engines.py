@@ -252,10 +252,12 @@ class BallistaEngine:
         )
 
     def log_mark(self) -> dict[Path, int]:
-        return {}
+        return logscan.mark(self.log_dir / f"executor_{k}.log" for k in range(1, self.n + 1))
 
     def log_metrics(self, mark: dict[Path, int]) -> dict:
-        return {}
+        """Bajty ładunków broadcastu odebranych przez executory w czasie przebiegu
+        (bio_phys_codec.rs loguje każde dekodowanie węzła z broadcastem)."""
+        return {"broadcast_bytes": logscan.broadcast_bytes(logscan.text_since(mark))}
 
     def server_pids(self) -> dict[str, int]:
         return {name: proc.pid for name, proc in self.procs.items()}

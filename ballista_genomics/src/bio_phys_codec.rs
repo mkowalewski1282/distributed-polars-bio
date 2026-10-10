@@ -223,6 +223,12 @@ fn build_nearest_exec(
     Arc::new(exec).with_new_children(vec![right])
 }
 
+/// Rozmiar odebranego ładunku broadcastu: orkiestrator sumuje te linie z logów executorów
+/// w kolumnę `broadcast_bytes` (specyfikacja 3b-2, 6.3; wzorzec w `bench/logscan.py`).
+fn log_broadcast_decoded(bytes: usize) {
+    tracing::info!("broadcast payload decoded: {bytes} bytes");
+}
+
 fn encode_nearest(n: &NearestExec, buf: &mut Vec<u8>) -> Result<()> {
     write_magic(buf, BIO_PHYS_MAGIC);
     write_u8(buf, TAG_NEAREST);
@@ -249,7 +255,9 @@ fn decode_nearest(
     let include_overlaps = read_bool(buf, pos)?;
     let k = read_u32(buf, pos)? as usize;
     let compute_distance = read_bool(buf, pos)?;
+    let payload_start = *pos;
     let left_batch = read_batch_ipc(buf, pos)?;
+    log_broadcast_decoded(*pos - payload_start);
     let right = inputs
         .first()
         .ok_or_else(|| DataFusionError::Internal("NearestExec: missing input".into()))?
@@ -291,7 +299,9 @@ fn decode_coverage(
     let columns_1 = read_cols(buf, pos)?;
     let columns_2 = read_cols(buf, pos)?;
     let coverage = read_bool(buf, pos)?;
+    let payload_start = *pos;
     let left_batch = read_batch_ipc(buf, pos)?;
+    log_broadcast_decoded(*pos - payload_start);
     let right = inputs
         .first()
         .ok_or_else(|| DataFusionError::Internal("DistCoverageExec: missing input".into()))?

@@ -14,6 +14,8 @@ ballista-scheduler = "53.0.0"
 ballista-executor = "53.0.0"
 # Logi węzłów na stderr; wersja i cecha env-filter jak u ballista-scheduler.
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Linie logu węzłów z rozmiarem odebranego ładunku broadcastu (plan 3b-2); wersja z Cargo.lock.
+tracing = "0.1"
 datafusion = "=53.0.0"
 datafusion-proto = "53"
 # Lokalna kopia datafusion-bio-function-ranges v0.22.2 (ta sama wersja co w polars-bio 0.36)

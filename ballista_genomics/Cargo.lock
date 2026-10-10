@@ -1048,6 +1048,7 @@ dependencies = [
  "futures",
  "prost",
  "tokio",
+ "tracing",
  "tracing-subscriber",
 ]
 
