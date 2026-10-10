@@ -1,0 +1,17 @@
+# Porównanie ścieżek Saila (specyfikacja 3b-2, 5.3): UDTF z LATERAL, applyInArrow z blokadą
+# i applyInArrow z kontekstem polars-bio na wątek — ile kosztuje sam mechanizm integracji.
+# Seria pomiarowa — tylko po checkliście RAM (zamknięty VS Code, pusty swap):
+#   uv run python -m bench.orchestrator bench/conf/sail_paths.yaml
+series: sail-paths
+scenarios:
+  - {op: overlap, pair: "1-2"}
+  - {op: nearest, pair: "1-2"}
+  - {op: coverage, pair: "1-2"}
+  - {op: merge, dataset: 1}
+  - {op: subtract, pair: "1-2"}
+  - {op: overlap, pair: "7-0"}
+variants: [sail, sail_lock, sail_udtf]
+nodes: [1, 3]
+repeats: 3
+warmup: 1
+seed: 20261009

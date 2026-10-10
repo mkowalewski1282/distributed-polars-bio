@@ -3,7 +3,9 @@ węzłów), klaster Ballisty, serwer Saila i polecenia runnerów.
 
 Silnik ma interfejs: start(), stop(), restart(), command(scenariusz) → Command,
 server_pids() → {nazwa: PID} (procesy długożyjące, których szczyt pamięci mierzy
-orkiestrator) i shuffle_dirs() → katalogi robocze executorów (wolumen shuffle)."""
+orkiestrator) i shuffle_dirs() → katalogi robocze executorów (wolumen shuffle).
+log_mark() i log_metrics(mark) → liczniki z logów procesów silnika z czasu przebiegu
+(specyfikacja 3b-2: workery Saila, broadcast Ballisty)."""
 
 from __future__ import annotations
 
@@ -18,6 +20,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from bench import logscan
 from bench.config import Scenario
 from bench.data.datasets import resolve
 from bench.procutil import EngineError, check_alive, free_port, wait_for_port
@@ -41,6 +44,8 @@ CONTROL_VARIANT = "polars_bio_a"
 #: w trybie push od razu łączy się z executorem. Przy obciążonym CPU rejestracja bywa
 #: odrzucona („Connection refused”) i executor kończy się kodem 1 (smoke 02.10.2026).
 BALLISTA_START_ATTEMPTS = 3
+#: Wariant Saila → ścieżka runnera (bench/runners/sail_runner.py, specyfikacja 3b-2, 5.3).
+SAIL_PATHS = {"sail": "arrow", "sail_lock": "arrow-lock", "sail_udtf": "udtf"}
 
 
 def node_cpus(k: int) -> tuple[int, int]:
@@ -101,6 +106,12 @@ class PolarsBioEngine:
             [*scenario_args(scenario, self.data_root), "--threads", str(self.threads)],
             {"POLARS_MAX_THREADS": str(self.threads)},
         )
+
+    def log_mark(self) -> dict[Path, int]:
+        return {}
+
+    def log_metrics(self, mark: dict[Path, int]) -> dict:
+        return {}
 
     def server_pids(self) -> dict[str, int]:
         return {}
@@ -230,6 +241,12 @@ class BallistaEngine:
             BALLISTA_DIR,
         )
 
+    def log_mark(self) -> dict[Path, int]:
+        return {}
+
+    def log_metrics(self, mark: dict[Path, int]) -> dict:
+        return {}
+
     def server_pids(self) -> dict[str, int]:
         return {name: proc.pid for name, proc in self.procs.items()}
 
@@ -241,8 +258,8 @@ class SailEngine:
     """Jeden proces serwera Saila (local-cluster, N workerów) na rdzeniach węzłów 1..N;
     runner-klient na rdzeniu systemowym."""
 
-    def __init__(self, n_nodes: int, *, data_root: Path, log_dir: Path):
-        self.n, self.data_root, self.log_dir = n_nodes, data_root, log_dir
+    def __init__(self, n_nodes: int, *, data_root: Path, log_dir: Path, path: str = "arrow"):
+        self.n, self.data_root, self.log_dir, self.path = n_nodes, data_root, log_dir, path
         self.proc: subprocess.Popen | None = None
         self.port: int | None = None
 
@@ -283,9 +300,17 @@ class SailEngine:
         return _python(
             "bench.runners.sail_runner",
             SYSTEM_CPUS,
-            [*scenario_args(scenario, self.data_root), "--remote", f"sc://127.0.0.1:{self.port}"],
+            [*scenario_args(scenario, self.data_root), "--remote", f"sc://127.0.0.1:{self.port}", "--path", self.path],
             {},
         )
+
+    def log_mark(self) -> dict[Path, int]:
+        return logscan.mark([self.log_dir / "sail_server.log"])
+
+    def log_metrics(self, mark: dict[Path, int]) -> dict:
+        """Workery sesji przebiegu: Sail tworzy driver i N workerów dla każdej sesji Spark Connect
+        (przy pierwszym RPC sesji) — liczba z logu pokazuje, czy Sail nie dołożył workera."""
+        return {"sail_workers": logscan.sail_workers(logscan.text_since(mark))}
 
     def server_pids(self) -> dict[str, int]:
         return {"sail_server": self.proc.pid} if self.proc is not None else {}
@@ -304,6 +329,6 @@ def make_engine(variant: str, n_nodes: int, *, data_root: Path, log_dir: Path, p
         return PolarsBioEngine(SLOTS_PER_NODE * n_nodes, cluster_cpus(n_nodes), data_root)
     if variant == "ballista":
         return BallistaEngine(n_nodes, profile=profile, data_root=data_root, log_dir=log_dir)
-    if variant == "sail":
-        return SailEngine(n_nodes, data_root=data_root, log_dir=log_dir)
+    if variant in SAIL_PATHS:
+        return SailEngine(n_nodes, data_root=data_root, log_dir=log_dir, path=SAIL_PATHS[variant])
     raise ValueError(f"unknown variant {variant!r}")

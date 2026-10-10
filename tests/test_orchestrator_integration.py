@@ -54,9 +54,9 @@ def series(data_root, tmp_path_factory):
 @pytest.mark.nodes(2)
 def test_every_planned_run_is_recorded(series):
     summary, df = series
-    # wzorzec: 5 scenariuszy (kontrola overlap/1-2 jest wśród nich); bloki: A1, B2,
-    # Ballista 1 i 2, Sail 1 i 2 — każdy 2 przebiegi kontrolne + 5 scenariuszy
-    assert df.height == 5 + 6 * (2 + 5)
+    # wzorzec: 5 scenariuszy (kontrola overlap/1-2 jest wśród nich); bloki: A1, B2, Ballista 1 i 2,
+    # Sail, Sail z blokadą i Sail UDTF po 1 i 2 — każdy 2 przebiegi kontrolne + 5 scenariuszy
+    assert df.height == 5 + 10 * (2 + 5)
     assert summary.rows == df.height and not summary.failures
 
 
@@ -72,7 +72,7 @@ def test_threads_follow_variant_and_n(series):
     _, df = series
     partitions = {
         key: {json.loads(e)["target_partitions"] for e in group["extra"]}
-        for key, group in df.filter(pl.col("variant") != "sail").group_by(["variant", "n_nodes"])
+        for key, group in df.filter(~pl.col("variant").str.starts_with("sail")).group_by(["variant", "n_nodes"])
     }
     assert partitions == {
         ("polars_bio_ref", 1): {1}, ("polars_bio_a", 1): {2}, ("polars_bio_b", 2): {4},
@@ -132,3 +132,20 @@ def test_main_resolves_relative_data_root(data_root, tmp_path, monkeypatch):
     finally:
         os.sched_setaffinity(0, affinity)
     assert code == 0
+
+
+@pytest.mark.nodes(2)
+def test_sail_reports_workers_and_phases(series):
+    """Każda sesja Saila ma N workerów (Sail 0.7.2); ścieżki Arrow mierzą czas polars-bio
+    (4 chromosomy z niepustą lewą stroną), tylko sail_lock — czekanie na blokadę."""
+    _, df = series
+    sail = df.filter(pl.col("variant").str.starts_with("sail") & ~pl.col("is_control"))
+    assert set(sail["variant"]) == {"sail", "sail_lock", "sail_udtf"}
+    for row in sail.iter_rows(named=True):
+        extra, phases = json.loads(row["extra"]), json.loads(row["phases"])
+        assert extra["sail_workers"] == row["n_nodes"], row
+        if row["variant"] == "sail_udtf":
+            assert set(phases) == {"first_batch_s"}
+        else:
+            assert phases["pb_s"] > 0 and extra["udf_groups"] == 4
+        assert ("lock_wait_s" in phases) == (row["variant"] == "sail_lock")

@@ -33,6 +33,7 @@ class FakeEngine:
     def __init__(self, variant, n_nodes, args_for, log):
         self.variant, self.n, self.args_for, self.log = variant, n_nodes, args_for, log
         self.pids: dict[str, int] = {}
+        self.logged: dict = {}
 
     def start(self):
         self.log.append(("start", self.variant, self.n))
@@ -46,6 +47,12 @@ class FakeEngine:
     def command(self, scenario):
         args = self.args_for(self.variant, self.n, scenario)
         return Command([sys.executable, str(FAKE_RUNNER), *args], dict(os.environ), REPO)
+
+    def log_mark(self):
+        return {}
+
+    def log_metrics(self, mark):
+        return dict(self.logged)
 
     def server_pids(self):
         return dict(self.pids)
@@ -470,3 +477,16 @@ def test_main_refuses_to_start_with_used_swap(tmp_path, monkeypatch, capsys):
     assert code == 2
     assert "swap is not empty (300 MiB used)" in capsys.readouterr().err
     assert not (tmp_path / "results").exists()
+
+
+def test_engine_log_metrics_reach_results(tmp_path):
+    """Liczniki z logów silnika: broadcast_bytes → kolumna, pozostałe (np. sail_workers) → extra."""
+    def customize(engine):
+        if engine.variant == "ballista":
+            engine.logged = {"broadcast_bytes": 10, "sail_workers": 2}
+
+    df = rows(run(tmp_path, factory=make_factory(customize=customize)))
+    ballista = block(df, "ballista")
+    assert set(ballista["broadcast_bytes"]) == {10}
+    assert all(json.loads(e)["sail_workers"] == 2 for e in ballista["extra"])
+    assert block(df, "polars_bio_a")["broadcast_bytes"].is_null().all()

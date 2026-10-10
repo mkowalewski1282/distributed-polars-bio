@@ -105,10 +105,13 @@ def test_invalid_config_is_rejected_before_any_run(overrides, message):
 def test_blocks_follow_matrix_columns():
     """polars-bio A raz (N = 1, niezależny od N), B tylko dla N ≥ 2 (dla N = 1 tożsamy z A),
     Ballista i Sail dla każdego N; kolejność wariantów stała, N rosnąco."""
-    cfg = parse(raw(variants=["sail", "polars_bio_b", "ballista", "polars_bio_a"], nodes=[3, 1]))
+    cfg = parse(raw(
+        variants=["sail_udtf", "sail", "polars_bio_b", "ballista", "sail_lock", "polars_bio_a"], nodes=[3, 1],
+    ))
     assert blocks(cfg) == [
         Block("polars_bio_a", 1), Block("polars_bio_b", 3), Block("ballista", 1),
-        Block("ballista", 3), Block("sail", 1), Block("sail", 3),
+        Block("ballista", 3), Block("sail", 1), Block("sail", 3), Block("sail_lock", 1),
+        Block("sail_lock", 3), Block("sail_udtf", 1), Block("sail_udtf", 3),
     ]
     assert Block("ballista", 3).label == "ballista N=3"
 
@@ -170,3 +173,12 @@ def test_load_rejects_non_mapping(tmp_path):
     path.write_text("- 1\n- 2\n")
     with pytest.raises(ConfigError, match="expected a mapping"):
         load(path)
+
+
+def test_sail_paths_config_compares_the_three_sail_paths():
+    cfg = load(REPO / "bench" / "conf" / "sail_paths.yaml")
+    assert cfg.series == "sail-paths" and cfg.variants == ("sail", "sail_lock", "sail_udtf")
+    assert {s.id for s in cfg.scenarios} == {
+        "overlap/1-2", "nearest/1-2", "coverage/1-2", "merge/1", "subtract/1-2", "overlap/7-0",
+    }
+    assert (cfg.nodes, cfg.repeats, cfg.warmup, len(blocks(cfg))) == ((1, 3), 3, 1, 6)

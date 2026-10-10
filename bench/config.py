@@ -17,7 +17,9 @@ import yaml
 from bench.data.datasets import resolve
 from bench.ops import OPS, UNARY_OPS
 
-VARIANTS = ("polars_bio_a", "polars_bio_b", "ballista", "sail")
+#: Warianty (specyfikacja 3; 3b-2, 5.3): sail — applyInArrow z kontekstem polars-bio na wątek
+#: (główny), sail_lock — applyInArrow z blokadą, sail_udtf — UDTF z LATERAL (tylko porównanie).
+VARIANTS = ("polars_bio_a", "polars_bio_b", "ballista", "sail", "sail_lock", "sail_udtf")
 NODES = (1, 2, 3)
 #: Wartości domyślne ze specyfikacji 8.2 i 6.3 (tolerancja dryfu przebiegu kontrolnego: 10%)
 #: oraz 3b-2, 4.2: zadanie kontrolne overlap 7-0 (~1–2 s w polars-bio A; para 1-2 trwała ~0,13 s
@@ -181,7 +183,7 @@ def load(path: Path) -> SeriesConfig:
 
 def blocks(cfg: SeriesConfig) -> list[Block]:
     """Bloki (wariant × N) jak kolumny macierzy 7.1: polars-bio A raz (N = 1, niezależny
-    od N), polars-bio B dla N ≥ 2 (dla N = 1 tożsamy z A), Ballista i Sail dla każdego N."""
+    od N), polars-bio B dla N ≥ 2 (dla N = 1 tożsamy z A), Ballista i warianty Saila dla każdego N."""
     out: list[Block] = []
     for variant in VARIANTS:
         if variant not in cfg.variants:

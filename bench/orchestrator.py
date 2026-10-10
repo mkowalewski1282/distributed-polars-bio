@@ -237,6 +237,7 @@ class _Series:
         dirs = engine.shuffle_dirs()
         shuffle_before = sum(self.probe.dir_size(d) for d in dirs)
         swap_before, swap_in_before = self.probe.pswpout(), self.probe.pswpin()
+        mark = engine.log_mark()
         outcome = execute(
             engine.command(scenario), timeout_s=self.cfg.timeout_s, mem_floor=self.mem_floor,
             probe=self.probe, scratch=self.scratch,
@@ -263,6 +264,9 @@ class _Series:
                 dead.append(name)
         if dead:
             reasons.append(f"process {', '.join(dead)} exited during the run")
+        logged = engine.log_metrics(mark)
+        broadcast = logged.pop("broadcast_bytes", None)
+        extra = {**report["extra"], **logged} if report else None
         measured = {
             "valid": not reasons,
             "invalid_reason": "; ".join(reasons) or None,
@@ -271,11 +275,11 @@ class _Series:
             "t_total_s": float(report["t_total_s"]) if report else None,
             "wall_s": outcome.wall_s,
             "phases": json.dumps(report["phases"]) if report else None,
-            "extra": json.dumps(report["extra"]) if report else None,
+            "extra": json.dumps(extra) if extra is not None else None,
             "peak_rss": json.dumps(peak) if peak else None,
             "peak_rss_sum": sum(peak.values()) if peak else None,
             "shuffle_bytes": sum(self.probe.dir_size(d) for d in dirs) - shuffle_before if dirs else None,
-            "broadcast_bytes": None,
+            "broadcast_bytes": broadcast,
             "pswpout_delta": swap_delta,
             "pswpin_delta": swap_in_delta,
         }

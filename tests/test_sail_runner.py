@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -13,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from bench import checksum as cs
+from bench import checksum as cs, logscan
 from bench.ops import OPS, UNARY_OPS
 from bench.procutil import free_port, wait_for_port
 from bench.runners.sail_server import sail_env
@@ -114,8 +113,7 @@ def test_server_keeps_exactly_n_workers(server, parquet_dirs):
     report(run_runner([*scenario_args("overlap", *parquet_dirs), "--remote", server.url]))
     log = server.log.read_text()
     session = log[log.rindex("creating session"):]
-    workers = set(re.findall(r"worker (\d+) server is ready", session))
-    assert workers == {"1", "2"}
+    assert logscan.sail_workers(session) == 2
 
 
 @pytest.mark.parametrize(

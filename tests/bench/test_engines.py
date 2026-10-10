@@ -145,8 +145,31 @@ def test_sail_server_is_pinned_and_configured(tmp_path):
         } <= environ(pid)
         cmd = engine.command(Scenario("overlap", "1-2"))
         assert cmd.argv[:6] == ["taskset", "-c", "0,1", sys.executable, "-m", "bench.runners.sail_runner"]
-        assert cmd.argv[-2:] == ["--remote", f"sc://127.0.0.1:{engine.port}"]
+        assert cmd.argv[-4:] == ["--remote", f"sc://127.0.0.1:{engine.port}", "--path", "arrow"]
         assert cmd.cwd == engines.REPO
     finally:
         engine.stop()
     assert not Path(f"/proc/{pid}").exists()
+
+
+@pytest.mark.parametrize("variant, path", [("sail", "arrow"), ("sail_lock", "arrow-lock"), ("sail_udtf", "udtf")])
+def test_sail_variants_choose_runner_path(variant, path, tmp_path):
+    engine = engines.make_engine(variant, 2, data_root=tmp_path, log_dir=tmp_path / "logs", profile="debug")
+    argv = engine.command(Scenario("overlap", "1-2")).argv
+    assert argv[argv.index("--path") + 1] == path
+
+
+def test_sail_engine_counts_session_workers_from_its_log(tmp_path):
+    engine = engines.make_engine("sail", 2, data_root=tmp_path, log_dir=tmp_path / "logs", profile="debug")
+    log = tmp_path / "logs" / "sail_server.log"
+    log.parent.mkdir()
+    log.write_text("worker 1 server is ready\nworker 2 server is ready\nworker 3 server is ready\n")
+    mark = engine.log_mark()
+    with log.open("a") as f:
+        f.write("creating session\nworker 1 server is ready\nworker 2 server is ready\n")
+    assert engine.log_metrics(mark) == {"sail_workers": 2}
+
+
+def test_polars_bio_engine_has_no_log_metrics(tmp_path):
+    engine = engines.make_engine("polars_bio_a", 1, data_root=tmp_path, log_dir=tmp_path, profile="debug")
+    assert engine.log_metrics(engine.log_mark()) == {}
