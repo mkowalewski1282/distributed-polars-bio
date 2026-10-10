@@ -484,3 +484,14 @@ o typach prawdziwych danych, z przypadkami brzegowymi; `tests/test_real_data.py`
   Ballista dała 9, 59 i 99 zamiast 10, 60 i 100 (cztery testy porównujące z polars-bio).
   Poprawka: `'strict'` we wszystkich trzech wywołaniach.
 - Rust przypięty w `rust-toolchain.toml` (1.95.0) — ta sama wersja lokalnie i w CI.
+
+## Plan 3b-2 — build release (październik 2026)
+
+- Profil: domyślny `release` Cargo (opt-level 3, bez LTO, `codegen-units` domyślne) — ta sama
+  klasa optymalizacji co oficjalne paczki polars-bio 0.36.0 (ich `Cargo.toml` nie ma sekcji
+  `[profile]`); wersja kompilatora: Rust 1.95.0 (`rust-toolchain.toml`).
+- Polecenie: `CARGO_BUILD_JOBS=1 cargo build --release --bins --locked`.
+- Pierwszy build: 60 min 26 s (wall clock), szczyt pamięci ≈ 1,2 GB, `target/release` 3,1 GB.
+- Narzędzie pomiarowe używa domyślnie binarek release; przed serią sprawdza, czy są nowsze od
+  źródeł (`bench/engines.py`, `require_ballista_binaries`), a ich sumy SHA-256 zapisuje
+  w `engine_versions`.
