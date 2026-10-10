@@ -1,0 +1,14 @@
+# Badanie szumu przebiegu kontrolnego (specyfikacja 3b-2, 4.2): zadanie kontrolne (overlap 7-0,
+# polars-bio A) zmierzone 20 razy pod rząd. Wynik ocenia:
+#   uv run python -m bench.control_noise bench/results/control-noise/<znacznik czasu>
+# Seria pomiarowa — tylko po checkliście RAM (zamknięty VS Code, pusty swap).
+series: control-noise
+scenarios:
+  - {op: overlap, pair: "7-0"}
+variants: [polars_bio_a]
+nodes: [1]
+repeats: 20
+warmup: 1
+# Przebiegi kontrolne samego bloku mierzą to samo zadanie; jeden na koniec wystarczy.
+control_repeats: 1
+seed: 20261009
