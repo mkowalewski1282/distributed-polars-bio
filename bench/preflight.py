@@ -5,9 +5,10 @@ Ballisty istnieją i są świeże. Każdy błąd przerywa serię przed pierwszym
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from bench import metrics
@@ -51,10 +52,23 @@ def check_cpus(n_nodes: int, *, affinity: set[int] | None = None, sysfs: Path | 
             )
 
 
+def _importable(module: str) -> bool:
+    """Czy `import module` się udaje. Import idzie w osobnym procesie, żeby orkiestrator nie
+    ładował natywnej biblioteki pysail (pamięć na maszynie 5 GB), a uszkodzone rozszerzenie
+    i tak zostało wykryte (specyfikacja 3b-2, 7.4)."""
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", f"import {module}"], capture_output=True, timeout=120, env=os.environ.copy()
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    return done.returncode == 0
+
+
 def check_tools(variants) -> None:
     if shutil.which("taskset") is None:
         raise ConfigError("taskset not found (package util-linux) - it pins engines to emulated nodes")
-    if any(v.startswith("sail") for v in variants) and importlib.util.find_spec("pysail") is None:
+    if any(v.startswith("sail") for v in variants) and not _importable("pysail"):
         raise ConfigError("pysail is not importable - run 'uv sync'")
 
 

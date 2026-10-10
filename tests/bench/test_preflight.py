@@ -48,10 +48,15 @@ def test_missing_taskset_is_reported(monkeypatch):
 
 
 def test_pysail_is_required_only_for_sail_variants(monkeypatch):
-    monkeypatch.setattr(preflight.importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr(preflight, "_importable", lambda name: False)
     preflight.check_tools(["polars_bio_a", "ballista"])
     with pytest.raises(ConfigError, match="pysail"):
         preflight.check_tools(["sail_lock"])
+
+
+def test_importable_runs_a_real_import():
+    assert preflight._importable("json")
+    assert not preflight._importable("no_such_module_3b2")
 
 
 def test_used_swap_is_rejected():
