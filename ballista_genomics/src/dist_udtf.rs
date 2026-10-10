@@ -37,13 +37,22 @@ pub fn expect_string_literal(args: &[Expr], idx: usize, fname: &str) -> Result<S
     }
 }
 
-/// Opcjonalny argument `'strict'`/`'weak'`; brak = weak (zgodnie z zachowaniem
-/// Fazy A.4, gdzie nieobecność argumentu oznaczała `FilterOp::Weak`).
-pub fn optional_strict(args: &[Expr], idx: usize) -> bool {
-    matches!(
-        args.get(idx),
-        Some(Expr::Literal(ScalarValue::Utf8(Some(v)), _)) if v.to_lowercase() == "strict"
-    )
+/// Obowiązkowy argument konwencji współrzędnych: `'strict'` (0-based, półotwarte — dane
+/// databio-8p) albo `'weak'` (1-based, zamknięte). Dawniej brak argumentu oznaczał `'weak'`, co
+/// ukryło błąd w `nearest` aż do biblioteki v0.22.2 (plan 3b-1) — dlatego bez wartości domyślnej
+/// (plan 3b-2).
+pub fn expect_filter_mode(args: &[Expr], idx: usize, fname: &str) -> Result<bool> {
+    match args.get(idx) {
+        Some(Expr::Literal(ScalarValue::Utf8(Some(v)), _)) if v.eq_ignore_ascii_case("strict") => Ok(true),
+        Some(Expr::Literal(ScalarValue::Utf8(Some(v)), _)) if v.eq_ignore_ascii_case("weak") => Ok(false),
+        Some(other) => Err(DataFusionError::Plan(format!(
+            "{fname}(): argument {idx} must be 'strict' (0-based, half-open) or 'weak' (1-based, \
+             closed), got: {other}"
+        ))),
+        None => Err(DataFusionError::Plan(format!(
+            "{fname}(): missing argument {idx}: 'strict'|'weak'"
+        ))),
+    }
 }
 
 pub fn expect_i64_literal(args: &[Expr], idx: usize, fname: &str) -> Result<i64> {
@@ -61,10 +70,10 @@ pub fn expect_i64_literal(args: &[Expr], idx: usize, fname: &str) -> Result<i64>
 }
 
 fn parse_merge(args: &[Expr]) -> Result<DistPayload> {
-    if args.len() < 6 {
+    if args.len() < 7 {
         return Err(DataFusionError::Plan(
             "dist_merge() expects: table, csv_path, col_chrom, col_start, col_end, \
-             min_dist [, 'strict'|'weak']"
+             min_dist, 'strict'|'weak'"
                 .to_string(),
         ));
     }
@@ -79,15 +88,15 @@ fn parse_merge(args: &[Expr]) -> Result<DistPayload> {
             expect_string_literal(args, 4, "dist_merge")?,
         ),
         min_dist: expect_i64_literal(args, 5, "dist_merge")?,
-        strict: optional_strict(args, 6),
+        strict: expect_filter_mode(args, 6, "dist_merge")?,
     })
 }
 
 fn parse_subtract(args: &[Expr]) -> Result<DistPayload> {
-    if args.len() < 7 {
+    if args.len() < 8 {
         return Err(DataFusionError::Plan(
             "dist_subtract() expects: left_table, left_path, right_table, right_path, \
-             col_chrom, col_start, col_end [, 'strict'|'weak']"
+             col_chrom, col_start, col_end, 'strict'|'weak'"
                 .to_string(),
         ));
     }
@@ -107,7 +116,7 @@ fn parse_subtract(args: &[Expr]) -> Result<DistPayload> {
         ),
         lcols: cols.clone(),
         rcols: cols,
-        strict: optional_strict(args, 7),
+        strict: expect_filter_mode(args, 7, "dist_subtract")?,
     })
 }
 
@@ -124,11 +133,11 @@ fn expect_bool_literal(args: &[Expr], idx: usize, fname: &str) -> Result<bool> {
 }
 
 fn parse_nearest(args: &[Expr]) -> Result<DistPayload> {
-    if args.len() < 10 {
+    if args.len() < 11 {
         return Err(DataFusionError::Plan(
             "dist_nearest() expects: left_table, left_path, right_table, right_path, \
-             k, include_overlaps, compute_distance, col_chrom, col_start, col_end \
-             [, 'strict'|'weak']"
+             k, include_overlaps, compute_distance, col_chrom, col_start, col_end, \
+             'strict'|'weak'"
                 .to_string(),
         ));
     }
@@ -148,10 +157,9 @@ fn parse_nearest(args: &[Expr]) -> Result<DistPayload> {
         ),
         lcols: cols.clone(),
         rcols: cols,
-        // Domyslnie WEAK - `nearest_local.rs` nie przekazuje 'strict', wiec
-        // odwzorowujemy to 1:1, inaczej wynik rozproszony rozjechalby sie
-        // z juz zweryfikowanym lokalnym.
-        strict: optional_strict(args, 10),
+        // Konwencja obowiązkowa (plan 3b-2): dane 0-based wymagają 'strict' — bez niego od v0.22.2
+        // odległość wychodziła o 1 mniejsza niż w polars-bio (plan 3b-1).
+        strict: expect_filter_mode(args, 10, "dist_nearest")?,
         k: expect_i64_literal(args, 4, "dist_nearest")? as u32,
         include_overlaps: expect_bool_literal(args, 5, "dist_nearest")?,
         compute_distance: expect_bool_literal(args, 6, "dist_nearest")?,
@@ -159,10 +167,10 @@ fn parse_nearest(args: &[Expr]) -> Result<DistPayload> {
 }
 
 fn parse_coverage(args: &[Expr]) -> Result<DistPayload> {
-    if args.len() < 7 {
+    if args.len() < 8 {
         return Err(DataFusionError::Plan(
             "dist_coverage() expects: reads_table, reads_path, targets_table, targets_path, \
-             col_chrom, col_start, col_end [, 'strict'|'weak']"
+             col_chrom, col_start, col_end, 'strict'|'weak'"
                 .to_string(),
         ));
     }
@@ -182,16 +190,16 @@ fn parse_coverage(args: &[Expr]) -> Result<DistPayload> {
         ),
         lcols: cols.clone(),
         rcols: cols,
-        strict: optional_strict(args, 7),
+        strict: expect_filter_mode(args, 7, "dist_coverage")?,
         coverage: true,
     })
 }
 
 fn parse_overlap(args: &[Expr]) -> Result<DistPayload> {
-    if args.len() < 7 {
+    if args.len() < 8 {
         return Err(DataFusionError::Plan(
             "dist_overlap() expects: left_table, left_csv, right_table, right_csv, \
-             col_chrom, col_start, col_end [, 'strict'|'weak']"
+             col_chrom, col_start, col_end, 'strict'|'weak'"
                 .to_string(),
         ));
     }
@@ -209,7 +217,7 @@ fn parse_overlap(args: &[Expr]) -> Result<DistPayload> {
             expect_string_literal(args, 5, "dist_overlap")?,
             expect_string_literal(args, 6, "dist_overlap")?,
         ),
-        strict: optional_strict(args, 7),
+        strict: expect_filter_mode(args, 7, "dist_overlap")?,
     })
 }
 
@@ -230,5 +238,37 @@ impl TableFunctionImpl for DistTableFunction {
         })?;
 
         Ok(Arc::new(provider))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use datafusion::prelude::lit;
+
+    fn merge_args(mode: Option<&str>) -> Vec<Expr> {
+        let mut args = vec![lit("t"), lit("p.parquet"), lit("c"), lit("s"), lit("e"), lit(0i64)];
+        if let Some(m) = mode {
+            args.push(lit(m));
+        }
+        args
+    }
+
+    #[test]
+    fn coordinate_mode_is_required() {
+        let err = parse_merge(&merge_args(None)).unwrap_err().to_string();
+        assert!(err.contains("'strict'|'weak'"), "{err}");
+    }
+
+    #[test]
+    fn strict_and_weak_are_parsed() {
+        assert!(matches!(parse_merge(&merge_args(Some("strict"))).unwrap(), DistPayload::Merge { strict: true, .. }));
+        assert!(matches!(parse_merge(&merge_args(Some("weak"))).unwrap(), DistPayload::Merge { strict: false, .. }));
+    }
+
+    #[test]
+    fn unknown_mode_is_rejected() {
+        let err = parse_merge(&merge_args(Some("loose"))).unwrap_err().to_string();
+        assert!(err.contains("must be 'strict'"), "{err}");
     }
 }

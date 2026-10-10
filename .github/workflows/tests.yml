@@ -54,6 +54,11 @@ jobs:
         working-directory: ballista_genomics
         run: cargo build --bins --locked
 
+      # Testy jednostkowe Rusta (plan 3b-2: m.in. obowiązkowa konwencja współrzędnych w dist_*).
+      - name: Rust unit tests
+        working-directory: ballista_genomics
+        run: cargo test --lib --locked
+
       - name: Disk usage
         run: df -h / && du -sh ballista_genomics/target
 
