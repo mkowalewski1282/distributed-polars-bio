@@ -69,16 +69,29 @@ def test_sail_env_for_three_nodes():
     }
 
 
+#: Fazy i dodatki linii JSON według ścieżki runnera (specyfikacja 3b-2, 5.5).
+PATH_KEYS = {
+    "arrow": ({"first_batch_s", "pb_s"}, {"checksum_s", "udf_groups"}),
+    "arrow-lock": ({"first_batch_s", "pb_s", "lock_wait_s"}, {"checksum_s", "udf_groups"}),
+    "udtf": ({"first_batch_s"}, {"checksum_s"}),
+}
+
+
+@pytest.mark.parametrize("path", list(PATH_KEYS))
 @pytest.mark.parametrize("op", OPS)
-def test_runner_matches_polars_bio(op, server, parquet_dirs, parquet_expected):
-    got = report(run_runner([*scenario_args(op, *parquet_dirs), "--remote", server.url]))
+def test_runner_matches_polars_bio(op, path, server, parquet_dirs, parquet_expected):
+    got = report(run_runner([*scenario_args(op, *parquet_dirs), "--remote", server.url, "--path", path]))
     assert set(got) == PROTOCOL_KEYS
     expected = parquet_expected[op]
     assert got["rows"] == sum(expected.values())
     assert got["checksum"] == cs.format_checksum(cs.checksum_rows(op, expected.elements()))
-    assert got["t_total_s"] > 0 and set(got["phases"]) == {"first_batch_s"}
-    assert set(got["extra"]) == {"checksum_s"} and got["extra"]["checksum_s"] > 0
+    phases, extra = PATH_KEYS[path]
+    assert set(got["phases"]) == phases and set(got["extra"]) == extra
+    assert got["t_total_s"] > 0 and got["extra"]["checksum_s"] > 0
     assert 0 < got["phases"]["first_batch_s"] <= got["t_total_s"]
+    if path != "udtf":
+        # chr1, chr2, chr10, chrA — chromosomy z niepustą lewą stroną
+        assert got["extra"]["udf_groups"] == 4 and got["phases"]["pb_s"] > 0
     assert got["peak_rss_bytes"] > 10 * 2**20
 
 
@@ -94,8 +107,8 @@ def test_server_keeps_exactly_n_workers(server, parquet_dirs):
     """Przy 2 slotach Sail dokładałby workery ponad N (sonda 01.10.2026); tu N = 2.
 
     Sail tworzy driver i pulę workerów dla KAŻDEJ sesji Spark Connect (przy pierwszym RPC
-    sesji — w runnerze rejestracja UDTF) i zamyka je razem z sesją, więc numeracja workerów
-    zaczyna się w każdej sesji od 1. Sprawdzana jest sesja otwarta przez ten test: pierwsza
+    sesji — w runnerze rozgrzewka `warm_up` przed zegarem) i zamyka je razem z sesją, więc
+    numeracja workerów zaczyna się w każdej sesji od 1. Sprawdzana jest sesja otwarta przez ten test: pierwsza
     sesja na świeżym serwerze dostała raz jednego workera więcej (wyścig przy starcie puli,
     02.10.2026)."""
     report(run_runner([*scenario_args("overlap", *parquet_dirs), "--remote", server.url]))
@@ -112,6 +125,7 @@ def test_server_keeps_exactly_n_workers(server, parquet_dirs):
         ["--op", "merge", "--left", "x"],
         ["--op", "overlap", "--left", "x", "--remote", "sc://127.0.0.1:1"],
         ["--op", "merge", "--left", "x", "--right", "y", "--remote", "sc://127.0.0.1:1"],
+        ["--op", "merge", "--left", "x", "--remote", "sc://127.0.0.1:1", "--path", "fast"],
     ],
 )
 def test_runner_rejects_bad_arguments(args):
