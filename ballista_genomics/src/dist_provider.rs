@@ -28,9 +28,10 @@ use datafusion_bio_function_ranges::{
     BioSessionExt, FilterOp, MergeProvider, NearestProvider, OverlapProvider, SubtractProvider,
 };
 
+use crate::broadcast::check_broadcast_fits;
 use crate::coverage_node::DistCoverageProvider;
 use crate::dist_payload::{DistPayload, TableRef};
-use crate::runner::bio_session_config;
+use crate::runner::{bio_session_config, grpc_max_message_bytes};
 
 pub struct DistBioProvider {
     inner: Arc<dyn TableProvider>,
@@ -237,6 +238,12 @@ impl TableProvider for DistBioProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        self.inner.scan(state, projection, filters, limit).await
+        let plan = self.inner.scan(state, projection, filters, limit).await?;
+        // Strażnik broadcastu (specyfikacja 3b-2, 6.2): planowanie fizyczne odbywa się
+        // w schedulerze, więc błąd dociera do klienta jako błąd zapytania, zamiast zawiesić je
+        // przy wysyłce zadań do executorów.
+        let grpc_limit = grpc_max_message_bytes().map_err(DataFusionError::Configuration)?;
+        check_broadcast_fits(&plan, grpc_limit)?;
+        Ok(plan)
     }
 }

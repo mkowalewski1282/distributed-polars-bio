@@ -147,6 +147,8 @@ pub fn read_schema(buf: &[u8], pos: &mut usize) -> Result<SchemaRef> {
 // max_message_size = 16 MB (ballista-core/src/utils.rs). Przekroczenie tego
 // limitu wywali zapytanie na poziomie transportu. To jest wlasciwe ograniczenie
 // tego podejscia i nalezy je raportowac jako takie, a nie obchodzic.
+// Od planu 3b-2 limit podnosi `BALLISTA_GRPC_MAX_MESSAGE_BYTES` (512 MiB), a przekroczenie
+// wykrywa przy planowaniu `broadcast.rs`.
 
 use datafusion::arrow::compute::concat_batches;
 use datafusion::arrow::error::ArrowError;
@@ -167,6 +169,13 @@ pub fn write_batch_ipc(buf: &mut Vec<u8>, batch: &RecordBatch) -> Result<()> {
     let bytes = w.into_inner().map_err(arrow_err)?;
     write_bytes(buf, &bytes);
     Ok(())
+}
+
+/// Rozmiar partii zakodowanej tak jak w ładunku planu (`write_batch_ipc`), w bajtach.
+pub fn ipc_len(batch: &RecordBatch) -> Result<usize> {
+    let mut buf = Vec::new();
+    write_batch_ipc(&mut buf, batch)?;
+    Ok(buf.len())
 }
 
 pub fn read_batch_ipc(buf: &[u8], pos: &mut usize) -> Result<RecordBatch> {
