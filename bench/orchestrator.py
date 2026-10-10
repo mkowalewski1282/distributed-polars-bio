@@ -1,6 +1,6 @@
 """Orkiestrator serii pomiarowej (specyfikacja 6 i 8): przebieg wzorcowy, potem bloki
-(wariant × N) — przebieg kontrolny, rozgrzewka, rundy w losowej kolejności z ziarna,
-przebieg kontrolny — z walidacją każdego przebiegu i zapisem wiersza na przebieg.
+(wariant × N) — przebiegi kontrolne, rozgrzewka, rundy w losowej kolejności z ziarna,
+przebiegi kontrolne — z walidacją każdego przebiegu i zapisem wiersza na przebieg.
 
 Uruchomienie (seria pomiarowa: z Windows Terminal, VS Code zamknięty — checklista RAM):
     python -m bench.orchestrator bench/conf/smoke.yaml [--ballista-profile debug]
@@ -37,7 +37,7 @@ from bench.engines import (
 )
 from bench.procutil import EngineError
 from bench.results import ResultsWriter, to_parquet
-from bench.validity import Expected, block_drifted, drift, invalid_reasons, parse_report
+from bench.validity import Expected, control_drift, invalid_reasons, parse_report
 
 #: Co ile sekund orkiestrator sprawdza runner (limit czasu, strażnik pamięci).
 POLL_S = 0.2
@@ -176,14 +176,14 @@ def _progress(row: dict) -> str:
     if row["is_reference"]:
         kind = "reference"
     elif row["is_control"]:
-        kind = "control"
+        kind = f"control {row['control_position']} {row['rep']}"
     elif row["is_warmup"]:
         kind = "warmup"
     else:
         kind = f"round {row['rep']}"
     t = f"{row['t_total_s']:9.3f} s" if row["t_total_s"] is not None else "        – s"
     status = "OK" if row["valid"] else f"INVALID: {row['invalid_reason']}"
-    return f"{row['variant']:<14} N={row['n_nodes']} {kind:<10} {row['scenario_id']:<14} {t}  {status}"
+    return f"{row['variant']:<14} N={row['n_nodes']} {kind:<16} {row['scenario_id']:<14} {t}  {status}"
 
 
 class _Series:
@@ -196,7 +196,8 @@ class _Series:
         self.versions = json.dumps(engine_versions(profile))
 
     def row(self, scenario: Scenario, variant: str, n_nodes: int, rep: int, attempt: int,
-            measured: dict, *, warmup=False, control=False, reference=False) -> dict:
+            measured: dict, *, warmup=False, control_position: str | None = None,
+            reference=False) -> dict:
         return {
             "timestamp": dt.datetime.now().isoformat(timespec="seconds"),
             "git_commit": self.git_commit,
@@ -212,8 +213,9 @@ class _Series:
             "rep": rep,
             "attempt": attempt,
             "is_warmup": warmup,
-            "is_control": control,
+            "is_control": control_position is not None,
             "is_reference": reference,
+            "control_position": control_position,
             **measured,
         }
 
@@ -302,13 +304,16 @@ class _Series:
         return expected
 
     def run_block(self, block: Block, attempt: int, expected: dict[str, Expected], rows: list[dict]) -> bool:
-        """Blok (specyfikacja 6.2): kontrola → rozgrzewka → rundy → kontrola. Wiersze trafiają
-        do `rows` na bieżąco (wołający zapisuje je także po przerwaniu). True = dryf."""
+        """Blok (specyfikacja 6.2; 3b-2, 4.2): przebiegi kontrolne → rozgrzewka → rundy →
+        przebiegi kontrolne. Wiersze trafiają do `rows` na bieżąco (wołający zapisuje je także
+        po przerwaniu). True = dryf albo nieważne przebiegi kontrolne."""
         engine = self.factory(block.variant, block.n_nodes)
         control = self.factory(CONTROL_VARIANT, 1)
         skipped: dict[str, str] = {}
 
-        def run(scenario: Scenario, rep: int, *, warmup: bool = False, is_control: bool = False) -> dict:
+        def run(scenario: Scenario, rep: int, *, warmup: bool = False,
+                position: str | None = None) -> dict:
+            is_control = position is not None
             if is_control:
                 eng, variant, n = control, CONTROL_VARIANT, 1
             else:
@@ -321,31 +326,38 @@ class _Series:
                     if not is_control:
                         skipped[scenario.id] = measured["invalid_reason"]
                     eng.restart()
-            row = self.row(scenario, variant, n, rep, attempt, measured, warmup=warmup, control=is_control)
+            row = self.row(scenario, variant, n, rep, attempt, measured, warmup=warmup,
+                           control_position=position)
             rows.append(row)
             self.out(_progress(row))
             return row
 
+        def controls(position: str) -> list[float]:
+            """Czasy ważnych przebiegów kontrolnych z jednego końca bloku."""
+            times = []
+            for rep in range(1, self.cfg.control_repeats + 1):
+                row = run(self.cfg.control, rep, position=position)
+                if row["valid"]:
+                    times.append(row["t_total_s"])
+            return times
+
         engine.start()
         try:
-            first = run(self.cfg.control, 0, is_control=True)
+            start = controls("start")
             for w in range(1, self.cfg.warmup + 1):
                 for scenario in round_order(self.cfg, block, f"warmup-{w}"):
                     run(scenario, 0, warmup=True)
             for r in range(1, self.cfg.repeats + 1):
                 for scenario in round_order(self.cfg, block, str(r)):
                     run(scenario, r)
-            last = run(self.cfg.control, 1, is_control=True)
+            end = controls("end")
         finally:
             engine.stop()
-        t_start = first["t_total_s"] if first["valid"] else None
-        t_end = last["t_total_s"] if last["valid"] else None
-        if not block_drifted(t_start, t_end, self.cfg.control_tolerance):
+        reason = control_drift(
+            start, end, repeats=self.cfg.control_repeats, tolerance=self.cfg.control_tolerance
+        )
+        if reason is None:
             return False
-        if t_start is not None and t_end is not None:
-            reason = f"control drift {drift(t_start, t_end):.0%}"
-        else:
-            reason = "control run invalid"
         _invalidate(rows, reason)
         return True
 

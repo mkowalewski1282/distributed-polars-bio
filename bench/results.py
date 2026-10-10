@@ -9,7 +9,7 @@ from pathlib import Path
 import polars as pl
 
 #: Wiersz wyniku: pola specyfikacji 8.5 oraz is_reference, attempt, wall_s, extra i pswpin_delta
-#: (plan 3a).
+#: (plan 3a); control_position (plan 3b-2).
 SCHEMA = {
     "timestamp": pl.Utf8,
     "git_commit": pl.Utf8,
@@ -22,11 +22,12 @@ SCHEMA = {
     "algorithm": pl.Utf8,  # plan 3b
     "variant": pl.Utf8,
     "n_nodes": pl.Int64,
-    "rep": pl.Int64,  # runda 1..R; 0 — rozgrzewka, wzorzec, kontrola na początku bloku; 1 — kontrola na końcu
+    "rep": pl.Int64,  # runda 1..R; 0 — rozgrzewka i wzorzec; przebiegi kontrolne: 1..control_repeats
     "attempt": pl.Int64,  # 1; 2 — powtórzenie bloku po dryfie
     "is_warmup": pl.Boolean,
     "is_control": pl.Boolean,
     "is_reference": pl.Boolean,
+    "control_position": pl.Utf8,  # "start" / "end" — przebieg kontrolny na początku / końcu bloku (plan 3b-2)
     "valid": pl.Boolean,
     "invalid_reason": pl.Utf8,
     "rows": pl.Int64,

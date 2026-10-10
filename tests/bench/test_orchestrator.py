@@ -130,7 +130,9 @@ def test_series_runs_reference_then_blocks_with_control_warmup_and_rounds(tmp_pa
         assert b.filter(pl.col("is_warmup"))["rep"].to_list() == [0, 0]
         assert sorted(b.filter(~pl.col("is_warmup"))["rep"].to_list()) == [1, 1, 2, 2]
     control = df.filter(pl.col("is_control"))
-    assert control["rep"].to_list() == [0, 1, 0, 1]
+    assert control["rep"].to_list() == [1, 1, 1, 1]
+    assert control["control_position"].to_list() == ["start", "end", "start", "end"]
+    assert df.filter(~pl.col("is_control"))["control_position"].is_null().all()
     assert set(control["scenario_id"]) == {"overlap/1-2"} and set(control["variant"]) == {"polars_bio_a"}
     assert df.height == 2 + 2 * (2 + 2 + 4)
     assert df["valid"].all() and summary.ok and (summary.rows, summary.invalid) == (df.height, 0)
@@ -269,6 +271,39 @@ def test_drift_twice_leaves_block_invalid_without_third_attempt(tmp_path):
     summary = run(tmp_path, cfg=config(variants=["ballista"], control_tolerance=0.1), factory=factory)
     df = rows(summary).filter(~pl.col("is_reference"))
     assert set(df["attempt"]) == {1, 2} and not df["valid"].any()
+
+
+def test_control_medians_ignore_single_outliers(tmp_path):
+    factory = _control_times(tmp_path, [1.0, 5.0, 1.1, 1.05, 1.0, 9.0])
+    cfg = config(variants=["ballista"], control_repeats=3, control_tolerance=0.1)
+    summary = run(tmp_path, cfg=cfg, factory=factory)
+    df = rows(summary).filter(~pl.col("is_reference"))
+    assert set(df["attempt"]) == {1} and df["valid"].all()
+    control = df.filter(pl.col("is_control"))
+    assert control["rep"].to_list() == [1, 2, 3, 1, 2, 3]
+    assert control["control_position"].to_list() == ["start"] * 3 + ["end"] * 3
+
+
+def test_control_drift_of_medians_repeats_block(tmp_path):
+    factory = _control_times(tmp_path, [1.0, 1.0, 1.0, 1.3, 1.3, 1.0] + [1.0] * 6)
+    cfg = config(variants=["ballista"], control_repeats=3, control_tolerance=0.1)
+    df = rows(run(tmp_path, cfg=cfg, factory=factory)).filter(~pl.col("is_reference"))
+    first = df.filter(pl.col("attempt") == 1)
+    assert set(first["invalid_reason"]) == {"control drift 30%"}
+    assert df.filter(pl.col("attempt") == 2)["valid"].all()
+
+
+def test_invalid_control_runs_invalidate_the_block(tmp_path):
+    """Wszystkie przebiegi kontrolne nieważne (zła suma kontrolna polars-bio A) — blok dostaje
+    przyczynę „control run invalid” zamiast wyjątku z mediany pustej listy, także po powtórzeniu."""
+    def args_for(variant, n, scenario):
+        return ["--checksum", "0x00000000000000bb"] if variant == "polars_bio_a" else []
+
+    cfg = config(variants=["ballista"], control_repeats=2)
+    df = rows(run(tmp_path, cfg=cfg, factory=make_factory(args_for))).filter(~pl.col("is_reference"))
+    measured = df.filter(~pl.col("is_control"))
+    assert set(measured["attempt"]) == {1, 2}
+    assert set(measured["invalid_reason"]) == {"control run invalid"}
 
 
 def test_reference_failure_aborts_series_but_keeps_written_rows(tmp_path):

@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from bench.validity import Expected, block_drifted, drift, invalid_reasons, parse_report, stderr_tail
+from bench.validity import Expected, control_drift, drift, invalid_reasons, parse_report, stderr_tail
 
 GOOD = {
     "rows": 3, "checksum": "0x00000000000000aa", "t_total_s": 0.5, "phases": {},
@@ -92,7 +92,16 @@ def test_stderr_tail_is_shortened():
 
 def test_drift_rule():
     assert drift(1.0, 1.2) == pytest.approx(0.2)
-    assert not block_drifted(1.0, 1.05, 0.10)
-    assert block_drifted(1.0, 1.2, 0.10)
-    assert block_drifted(1.0, 0.8, 0.10)
-    assert block_drifted(None, 1.0, 0.10) and block_drifted(1.0, None, 0.10)
+
+
+def test_control_drift_compares_medians():
+    # pojedyncze wyskoki (5,0 i 9,0) nie przesuwają median 1,1 i 1,05 — dryf 4,5% < 10%
+    assert control_drift([1.0, 5.0, 1.1], [1.05, 1.0, 9.0], repeats=3, tolerance=0.10) is None
+    assert control_drift([1.0, 1.0, 1.0], [1.3, 1.3, 1.0], repeats=3, tolerance=0.10) == "control drift 30%"
+
+
+def test_control_drift_needs_half_of_the_control_runs_valid():
+    assert control_drift([1.0], [1.0, 1.0, 1.0], repeats=3, tolerance=0.10) == "control run invalid"
+    assert control_drift([1.0, 1.0], [], repeats=3, tolerance=0.10) == "control run invalid"
+    assert control_drift([1.0, 1.0], [1.0, 1.0], repeats=4, tolerance=0.10) is None
+    assert control_drift([1.0], [1.05], repeats=1, tolerance=0.10) is None

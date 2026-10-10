@@ -1,9 +1,10 @@
-"""Reguły ważności przebiegu (specyfikacja 6.4–6.5) i dryfu przebiegu kontrolnego (6.3)."""
+"""Reguły ważności przebiegu (specyfikacja 6.4–6.5) i dryfu przebiegów kontrolnych (6.3; 3b-2, 4.2)."""
 
 from __future__ import annotations
 
 import json
 import re
+import statistics
 from dataclasses import dataclass
 
 #: Pola linii JSON runnera (specyfikacja 8.3).
@@ -90,9 +91,13 @@ def drift(t_start: float, t_end: float) -> float:
     return abs(t_end - t_start) / max(t_start, 1e-9)
 
 
-def block_drifted(t_start: float | None, t_end: float | None, tolerance: float) -> bool:
-    """Blok do powtórzenia (specyfikacja 6.3): dryf ponad tolerancję albo nieważny przebieg
-    kontrolny (brak czasu)."""
-    if t_start is None or t_end is None:
-        return True
-    return drift(t_start, t_end) > tolerance
+def control_drift(start: list[float], end: list[float], *, repeats: int, tolerance: float) -> str | None:
+    """Przyczyna unieważnienia bloku po przebiegach kontrolnych albo None (specyfikacja 3b-2, 4.2).
+
+    `start`, `end` — czasy WAŻNYCH przebiegów kontrolnych z początku i z końca bloku. Mniej niż
+    połowa ważnych na którymś końcu → „control run invalid”; względna różnica median powyżej
+    tolerancji → „control drift N%”. Mediana z kilku przebiegów odcina pojedyncze wyskoki."""
+    if not start or not end or 2 * len(start) < repeats or 2 * len(end) < repeats:
+        return "control run invalid"
+    d = drift(statistics.median(start), statistics.median(end))
+    return f"control drift {d:.0%}" if d > tolerance else None

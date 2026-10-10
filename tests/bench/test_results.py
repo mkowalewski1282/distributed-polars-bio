@@ -19,6 +19,7 @@ def full_row(**overrides) -> dict:
         rows=3, checksum="0x00000000000000aa", t_total_s=0.5, wall_s=1.5, phases="{}",
         extra=json.dumps({"target_partitions": 4}), peak_rss=json.dumps({"runner": 10, "scheduler": 20}),
         peak_rss_sum=30, shuffle_bytes=100, pswpout_delta=0, pswpin_delta=0,
+        control_position=None,
     )
     row.update(overrides)
     return row
