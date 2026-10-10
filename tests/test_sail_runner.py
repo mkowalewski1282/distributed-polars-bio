@@ -17,6 +17,7 @@ from bench import checksum as cs
 from bench.ops import OPS, UNARY_OPS
 from bench.procutil import free_port, wait_for_port
 from bench.runners.sail_server import sail_env
+from tests.parquet_fixture import write_parts
 
 REPO = Path(__file__).resolve().parent.parent
 PROTOCOL_KEYS = {"rows", "checksum", "t_total_s", "phases", "extra", "peak_rss_bytes"}
@@ -75,10 +76,18 @@ def test_runner_matches_polars_bio(op, server, parquet_dirs, parquet_expected):
     expected = parquet_expected[op]
     assert got["rows"] == sum(expected.values())
     assert got["checksum"] == cs.format_checksum(cs.checksum_rows(op, expected.elements()))
-    assert got["t_total_s"] > 0 and got["phases"] == {} and set(got["extra"]) == {"checksum_s"}
-    # Czas liczenia sumy kontrolnej — część t_total_s (przegląd końcowy planu 3a).
-    assert 0 < got["extra"]["checksum_s"] <= got["t_total_s"]
+    assert got["t_total_s"] > 0 and set(got["phases"]) == {"first_batch_s"}
+    assert set(got["extra"]) == {"checksum_s"} and got["extra"]["checksum_s"] > 0
+    assert 0 < got["phases"]["first_batch_s"] <= got["t_total_s"]
     assert got["peak_rss_bytes"] > 10 * 2**20
+
+
+def test_empty_result_reports_zero_rows(server, tmp_path):
+    left = write_parts([("chrA", 10, 20), ("chrA", 30, 40)], tmp_path / "a")
+    right = write_parts([("chrB", 10, 20), ("chrB", 30, 40)], tmp_path / "b")
+    got = report(run_runner(["--op", "overlap", "--left", str(left), "--right", str(right), "--remote", server.url]))
+    assert (got["rows"], got["checksum"]) == (0, "0x0000000000000000")
+    assert 0 <= got["phases"]["first_batch_s"] <= got["t_total_s"]
 
 
 def test_server_keeps_exactly_n_workers(server, parquet_dirs):
