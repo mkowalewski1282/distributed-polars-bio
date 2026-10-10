@@ -25,6 +25,8 @@ MEMINFO = """MemTotal:        5000000 kB
 MemFree:         3000000 kB
 MemAvailable:    3900000 kB
 Buffers:           10000 kB
+SwapTotal:       4194300 kB
+SwapFree:        4194300 kB
 """
 
 VMSTAT = """nr_free_pages 750000
@@ -114,3 +116,13 @@ def test_dir_size_counts_regular_files_recursively(tmp_path):
     os.symlink(big, tmp_path / "symlink")
     assert metrics.dir_size(tmp_path) == 30
     assert metrics.dir_size(tmp_path / "missing") == 0
+
+
+def test_swap_used_is_total_minus_free(fake_proc):
+    assert metrics.swap_used(fake_proc) == 0
+    (fake_proc / "meminfo").write_text(MEMINFO.replace("SwapFree:        4194300", "SwapFree:        4194000"))
+    assert metrics.swap_used(fake_proc) == 300 * 1024
+
+
+def test_real_swap_usage_is_readable():
+    assert metrics.swap_used() >= 0

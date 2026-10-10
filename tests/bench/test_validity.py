@@ -18,7 +18,7 @@ EXPECTED = Expected(3, "0x00000000000000aa")
 def reasons(**overrides) -> list[str]:
     args = dict(
         returncode=0, killed=None, report=dict(GOOD), report_error=None, expected=EXPECTED,
-        pswpout_delta=0, stderr="",
+        pswpout_delta=0, pswpin_delta=0, stderr="",
     )
     args.update(overrides)
     return invalid_reasons(**args)
@@ -105,3 +105,8 @@ def test_control_drift_needs_half_of_the_control_runs_valid():
     assert control_drift([1.0, 1.0], [], repeats=3, tolerance=0.10) == "control run invalid"
     assert control_drift([1.0, 1.0], [1.0, 1.0], repeats=4, tolerance=0.10) is None
     assert control_drift([1.0], [1.05], repeats=1, tolerance=0.10) is None
+
+
+def test_swap_in_invalidates_otherwise_good_run():
+    assert reasons(pswpin_delta=3) == ["swap: pswpin +3"]
+    assert reasons(pswpout_delta=2, pswpin_delta=3) == ["swap: pswpout +2", "swap: pswpin +3"]

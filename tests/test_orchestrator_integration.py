@@ -6,7 +6,7 @@ mają być ważne — także polars-bio A i B, które w 0.28 liczyły merge i su
 partycji (błąd #372, naprawiony w 0.29.0).
 
 Wymaga binarek ballista_node i bench_client (debug). Swap jest wyłączony z kryteriów
-(pswpout zastąpiony stałą): jego wykrywanie sprawdzają testy jednostkowe, a tu przypadkowy
+(pswpout i pswpin zastąpione stałą): jego wykrywanie sprawdzają testy jednostkowe, a tu przypadkowy
 swap innej aplikacji nie może dawać fałszywych porażek."""
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import polars as pl
 import pytest
 import yaml
 
+from bench import metrics
 from bench import orchestrator as orch
 from bench.config import VARIANTS, parse
 from bench.data.datasets import DATASETS
@@ -45,7 +46,7 @@ def series(data_root, tmp_path_factory):
     })
     summary = orch.run_series(
         cfg, data_root=data_root, results_dir=tmp_path_factory.mktemp("results"),
-        profile="debug", probe=orch.Probe(pswpout=lambda: 0),
+        profile="debug", probe=orch.Probe(pswpout=lambda: 0, pswpin=lambda: 0),
     )
     return summary, pl.read_parquet(summary.parquet)
 
@@ -116,7 +117,8 @@ def test_main_resolves_relative_data_root(data_root, tmp_path, monkeypatch):
     """Runnery Pythona działają w katalogu repozytorium, a Ballisty w ballista_genomics/ —
     względna ścieżka danych musi zostać zamieniona na bezwzględną przed startem serii."""
     monkeypatch.chdir(data_root.parent)
-    monkeypatch.setattr(orch, "Probe", functools.partial(orch.Probe, pswpout=lambda: 0))
+    monkeypatch.setattr(orch, "Probe", functools.partial(orch.Probe, pswpout=lambda: 0, pswpin=lambda: 0))
+    monkeypatch.setattr(metrics, "swap_used", lambda: 0)
     cfg = tmp_path / "series.yaml"
     cfg.write_text(yaml.safe_dump({
         "series": "paths", "scenarios": [{"op": "overlap", "pair": "1-2"}],

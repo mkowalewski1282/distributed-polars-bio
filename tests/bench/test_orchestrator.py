@@ -225,10 +225,9 @@ def test_swap_during_run_invalidates_it(tmp_path):
     assert bad["invalid_reason"][0] == "swap: pswpout +10" and bad["pswpout_delta"][0] == 10
 
 
-def test_swap_in_is_recorded_without_invalidating(tmp_path):
-    """Wczytanie stron ze swapu (pswpin) zapisuje się w wynikach, ale — inaczej niż pswpout
-    (specyfikacja 6.5) — nie unieważnia przebiegu: przy niepustym swapie na starcie serii
-    wczytują go także inne procesy. Regułę ustala plan 3b."""
+def test_swap_in_invalidates_run(tmp_path):
+    """Seria startuje od pustego swapu (sprawdzenie przed serią), więc każde wczytanie ze swapu
+    w trakcie przebiegu pochodzi z pomiaru — przebieg jest nieważny (specyfikacja 3b-2, 4.3)."""
     marker = tmp_path / "swapin"
 
     def args_for(variant, n, scenario):
@@ -238,10 +237,9 @@ def test_swap_in_is_recorded_without_invalidating(tmp_path):
         tmp_path, factory=make_factory(args_for),
         probe=probe(pswpin=lambda: 7 if marker.exists() else 0),
     )
-    df = rows(summary)
-    hit = df.filter(pl.col("pswpin_delta") > 0)
-    assert hit["pswpin_delta"].to_list() == [7] and hit["valid"].all()
-    assert summary.ok
+    bad = rows(summary).filter(~pl.col("valid"))
+    assert bad.height == 1
+    assert bad["invalid_reason"][0] == "swap: pswpin +7" and bad["pswpin_delta"][0] == 7
 
 
 def _control_times(tmp_path, times: list[float]):
@@ -434,6 +432,7 @@ def _fixture_data(root: Path) -> Path:
 
 
 def test_main_fails_fast_without_ballista_binaries(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(metrics, "swap_used", lambda: 0)
     root = _fixture_data(tmp_path / "data")
     cfg = tmp_path / "series.yaml"
     cfg.write_text(yaml.safe_dump({
@@ -453,4 +452,21 @@ def test_main_reports_config_error_with_code_2(tmp_path, capsys):
     cfg.write_text("series: x\n")
     assert orch.main([str(cfg), "--results-dir", str(tmp_path / "results")]) == 2
     assert "missing required keys" in capsys.readouterr().err
+    assert not (tmp_path / "results").exists()
+
+
+def test_main_refuses_to_start_with_used_swap(tmp_path, monkeypatch, capsys):
+    """Niepusty swap na starcie: każdy przebieg mógłby wczytywać cudze strony — seria nie startuje
+    (kod 2), zanim powstanie katalog wyników."""
+    root = _fixture_data(tmp_path / "data")
+    cfg = tmp_path / "series.yaml"
+    cfg.write_text(yaml.safe_dump({
+        "series": "s", "scenarios": [{"op": "overlap", "pair": "1-2"}],
+        "control": {"op": "overlap", "pair": "1-2"},
+        "variants": ["polars_bio_a"], "nodes": [1], "seed": 1,
+    }))
+    monkeypatch.setattr(metrics, "swap_used", lambda: 300 * 2**20)
+    code = orch.main([str(cfg), "--data-root", str(root), "--results-dir", str(tmp_path / "results")])
+    assert code == 2
+    assert "swap is not empty (300 MiB used)" in capsys.readouterr().err
     assert not (tmp_path / "results").exists()

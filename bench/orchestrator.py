@@ -242,8 +242,6 @@ class _Series:
             probe=self.probe, scratch=self.scratch,
         )
         swap_delta = self.probe.pswpout() - swap_before
-        # Wczytania ze swapu tylko zapisywane: przy niepustym swapie na starcie serii robią to
-        # także inne procesy, więc reguła nieważności (specyfikacja 6.5) dotyczy pswpout.
         swap_in_delta = self.probe.pswpin() - swap_in_before
         report = report_error = None
         if outcome.killed is None and outcome.returncode == 0:
@@ -254,7 +252,7 @@ class _Series:
         reasons = invalid_reasons(
             returncode=outcome.returncode, killed=outcome.killed, report=report,
             report_error=report_error, expected=expected, pswpout_delta=swap_delta,
-            stderr=outcome.stderr,
+            pswpin_delta=swap_in_delta, stderr=outcome.stderr,
         )
         peak = {"runner": report["peak_rss_bytes"]} if report else {}
         dead = []
@@ -441,11 +439,18 @@ def handle_termination_signals() -> dict:
 
 
 def preflight(cfg: SeriesConfig, profile: str) -> None:
-    """Sprawdzenia przed pierwszym pomiarem: rdzenie emulowanych węzłów i binarki Ballisty."""
+    """Sprawdzenia przed pierwszym pomiarem: rdzenie emulowanych węzłów, pusty swap
+    (specyfikacja 3b-2, 4.3) i binarki Ballisty."""
     needed = max(cluster_cpus(max(cfg.nodes))) + 1
     if (os.cpu_count() or 0) < needed:
         raise ConfigError(
             f"not enough CPUs: N = {max(cfg.nodes)} needs {needed} threads, found {os.cpu_count()}"
+        )
+    used = metrics.swap_used()
+    if used > 0:
+        raise ConfigError(
+            f"swap is not empty ({used // 2**20} MiB used) - a run touching swap is invalid, so "
+            "a series starts from empty swap: run 'wsl --shutdown' in Windows and reopen the terminal"
         )
     if "ballista" in cfg.variants:
         require_ballista_binaries(profile)

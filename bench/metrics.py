@@ -1,5 +1,5 @@
 """Metryki systemowe z /proc (specyfikacja, sekcje 5 i 6): szczyt pamięci procesu (VmHWM)
-i jego zerowanie (clear_refs), przypięcie do rdzeni, dostępna pamięć (MemAvailable),
+i jego zerowanie (clear_refs), przypięcie do rdzeni, dostępna pamięć (MemAvailable), zajęty swap,
 wypchnięcia do swapu i wczytania z niego (pswpout, pswpin) oraz rozmiar katalogu (wolumen
 shuffle Ballisty).
 
@@ -47,6 +47,12 @@ def cpus_allowed(pid: int | str = "self", proc: Path = PROC) -> str:
 
 def mem_available(proc: Path = PROC) -> int:
     return _kib_field(proc / "meminfo", "MemAvailable")
+
+
+def swap_used(proc: Path = PROC) -> int:
+    """Zajęty swap w bajtach: SwapTotal − SwapFree z /proc/meminfo."""
+    meminfo = proc / "meminfo"
+    return _kib_field(meminfo, "SwapTotal") - _kib_field(meminfo, "SwapFree")
 
 
 def _vmstat(key: str, proc: Path) -> int:

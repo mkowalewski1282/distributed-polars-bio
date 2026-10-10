@@ -60,7 +60,7 @@ def stderr_tail(stderr: str, limit: int = 300) -> str:
 
 def invalid_reasons(
     *, returncode: int, killed: str | None, report: dict | None, report_error: str | None,
-    expected: Expected | None, pswpout_delta: int | None, stderr: str,
+    expected: Expected | None, pswpout_delta: int | None, pswpin_delta: int | None, stderr: str,
 ) -> list[str]:
     """Przyczyny nieważności przebiegu (pusta lista = ważny), w kolejności:
 
@@ -68,7 +68,8 @@ def invalid_reasons(
     - niezerowy kod wyjścia — z ostatnią linią stderr;
     - brak poprawnej linii JSON;
     - liczba wierszy albo suma kontrolna różna od wzorca;
-    - przyrost pswpout (specyfikacja 6.5: swap unieważnia czas i pamięć)."""
+    - przyrost pswpout albo pswpin (specyfikacja 6.5; 3b-2, 4.3: seria startuje od pustego swapu,
+      więc każde wczytanie pochodzi z pomiaru)."""
     reasons: list[str] = []
     if killed is not None:
         reasons.append(killed)
@@ -83,6 +84,8 @@ def invalid_reasons(
             reasons.append(f"checksum {report['checksum']} ≠ reference {expected.checksum}")
     if pswpout_delta:
         reasons.append(f"swap: pswpout +{pswpout_delta}")
+    if pswpin_delta:
+        reasons.append(f"swap: pswpin +{pswpin_delta}")
     return reasons
 
 
