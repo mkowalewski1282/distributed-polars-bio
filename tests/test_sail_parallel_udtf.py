@@ -238,3 +238,36 @@ def test_lateral_udtf_output_named_like_outer_column():
         except Exception:
             pass
         server.stop()
+
+
+def test_lateral_udtf_output_named_differently_from_outer_column():
+    """Kontrola pozytywna do testu xfail wyżej: ten sam kształt zapytania z inną nazwą kolumny
+    wyniku przechodzi — xfail przypina więc konkretną regresję Saila 0.7.2, a nie dowolny błąd
+    ścieżki LATERAL."""
+    from pyspark.sql import SparkSession
+    from pyspark.sql.functions import udtf
+    from pysail.spark import SparkConnectServer
+
+    server = SparkConnectServer()
+    server.start(background=True)
+    ip, port = server.listening_address
+    spark = SparkSession.builder.remote(f"sc://{ip}:{port}").create()
+    try:
+        @udtf(returnType="out_chrom: string, start: long, end: long")
+        class Echo:
+            def eval(self, chrom, rows):
+                for r in rows:
+                    yield (chrom, int(r["start"]), int(r["end"]))
+
+        spark.udtf.register("echo", Echo)
+        rows = spark.sql(
+            "SELECT o.* FROM (SELECT 'chr1' AS chrom, array(named_struct('start', 1L, 'end', 2L)) AS rows) g, "
+            "LATERAL echo(g.chrom, g.rows) o"
+        ).collect()
+        assert [tuple(r) for r in rows] == [("chr1", 1, 2)]
+    finally:
+        try:
+            spark.stop()
+        except Exception:
+            pass
+        server.stop()

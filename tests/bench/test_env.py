@@ -53,9 +53,15 @@ def test_polars_bio_import_does_not_wait_for_x_server():
 def test_bench_rejects_a_foreign_python():
     """Systemowy python3 (3.10) widzi starsze biblioteki z ~/.local — polars-bio 0.28 z błędem
     #372, Sail 0.5.3. Seria uruchomiona nim po cichu mieszałaby wersje silników w wynikach."""
-    with pytest.raises(ImportError, match=r"Python 3\.12.*found 3\.10\.12.*uv run"):
+    with pytest.raises(ImportError, match=r"Python 3\.12\.15.*found 3\.10\.12.*uv run"):
         bench.require_project_python((3, 10, 12, "final", 0))
 
 
+def test_bench_rejects_another_patch_release():
+    with pytest.raises(ImportError, match=r"found 3\.12\.7"):
+        bench.require_project_python((3, 12, 7, "final", 0))
+
+
 def test_bench_accepts_the_project_python():
-    bench.require_project_python((3, 12, 7, "final", 0))
+    assert bench.PROJECT_PYTHON == (3, 12, 15)
+    bench.require_project_python((3, 12, 15, "final", 0))

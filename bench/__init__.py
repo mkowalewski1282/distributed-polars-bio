@@ -2,21 +2,26 @@
 
 import os
 import sys
+from pathlib import Path
 
-#: Python środowiska projektu (pyproject.toml, .python-version; plan 3b-1). Systemowy python3
-#: (3.10) widzi starsze biblioteki z ~/.local — polars-bio 0.28 z błędem #372, Sail 0.5.3 —
-#: więc seria uruchomiona nim po cichu mieszałaby wersje silników w wynikach.
-PROJECT_PYTHON = (3, 12)
+#: Python środowiska projektu — pełna wersja z .python-version (plan 3b-2; uv pobiera dokładnie
+#: tę). Systemowy python3 (3.10) widzi starsze biblioteki z ~/.local — polars-bio 0.28 z błędem
+#: #372, Sail 0.5.3 — więc seria uruchomiona nim po cichu mieszałaby wersje silników w wynikach;
+#: inna wersja 3.12.x to inne środowisko niż to, w którym zmierzono pozostałe wyniki.
+PROJECT_PYTHON = tuple(
+    int(part)
+    for part in (Path(__file__).resolve().parent.parent / ".python-version").read_text().split()[0].split(".")
+)
 
 
 def require_project_python(version_info) -> None:
     """ImportError, gdy interpreter nie jest Pythonem środowiska projektu (uv)."""
-    if tuple(version_info[:2]) != PROJECT_PYTHON:
+    if tuple(version_info[: len(PROJECT_PYTHON)]) != PROJECT_PYTHON:
         found = ".".join(str(part) for part in version_info[:3])
+        wanted = ".".join(str(part) for part in PROJECT_PYTHON)
         raise ImportError(
-            f"bench needs Python {PROJECT_PYTHON[0]}.{PROJECT_PYTHON[1]} from the project "
-            f"environment, found {found}; run it through uv, e.g. "
-            f"'uv run python -m bench.orchestrator ...' or 'uv run pytest'"
+            f"bench needs Python {wanted} from the project environment, found {found}; run it "
+            f"through uv, e.g. 'uv run python -m bench.orchestrator ...' or 'uv run pytest'"
         )
 
 

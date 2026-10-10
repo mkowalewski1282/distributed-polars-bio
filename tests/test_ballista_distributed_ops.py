@@ -207,12 +207,13 @@ def test_distributed_nearest_agrees_with_local_nearest():
     a porównanie samych odległości z pb tego by nie wyłapało, bo pb liczy na
     pełnych danych po swojej stronie.
     """
+    # Wynik lokalny liczony tutaj, a nie brany z pliku innego testu — w CI kolejność testów
+    # pomijała ten test (przegląd 3b-1).
+    local_binary = BALLISTA_DIR / "target" / "debug" / "nearest_local"
+    assert local_binary.exists(), "build it: cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bins"
+    local = subprocess.run([str(local_binary)], cwd=BALLISTA_DIR, capture_output=True, text=True, timeout=60)
+    assert local.returncode == 0, local.stderr[-3000:]
     local_csv = OUTPUT_DIR / "nearest_local_result.csv"
-    if not local_csv.exists():
-        pytest.skip(
-            "no output/nearest_local_result.csv - run first "
-            "`cd ballista_genomics && ./target/debug/nearest_local`"
-        )
     _run_dist("nearest")
 
     def pairs(path: Path) -> set[tuple[str, str]]:

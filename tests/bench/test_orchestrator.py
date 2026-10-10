@@ -408,6 +408,27 @@ def _cmdline_contains(proc_dir: Path, text: str) -> bool:
         return False
 
 
+def test_interrupt_during_a_run_kills_the_running_runner(tmp_path):
+    """Ctrl-C (KeyboardInterrupt) w trakcie przebiegu: grupa procesów runnera jest zabijana —
+    żaden runner nie zostaje na rdzeniach węzłów (przegląd 3a)."""
+    started = tmp_path / "runner_started"
+
+    def args_for(variant, n, scenario):
+        return ["--touch", str(started), "--sleep", "60"] if variant == "ballista" else []
+
+    def mem_available():
+        if started.exists():
+            raise KeyboardInterrupt
+        return 4 << 30
+
+    with pytest.raises(KeyboardInterrupt):
+        run(tmp_path, factory=make_factory(args_for), probe=probe(mem_available=mem_available))
+    deadline = time.monotonic() + 10
+    while [p for p in Path("/proc").glob("[0-9]*") if _cmdline_contains(p, str(started))]:
+        assert time.monotonic() < deadline, "runner still alive after the interrupt"
+        time.sleep(0.1)
+
+
 @pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGHUP])
 def test_termination_signal_keeps_rows_and_stops_runner_and_engine(tmp_path, sig):
     """Zamknięcie terminala (SIGHUP) albo `kill` (SIGTERM) w trakcie przebiegu działa jak Ctrl-C:
