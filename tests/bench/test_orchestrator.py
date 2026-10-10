@@ -38,6 +38,9 @@ class FakeEngine:
         self.dead_once: Path | None = None
         self.graces: list = []
 
+    def env_record(self):
+        return {"ENGINE": f"{self.variant}-{self.n}"}
+
     def start(self):
         self.log.append(("start", self.variant, self.n))
 
@@ -129,6 +132,15 @@ def run(tmp_path, cfg=None, **kwargs):
         cfg or config(), data_root=tmp_path, results_dir=tmp_path / "results",
         out=lambda line: None, **kwargs,
     )
+
+
+def test_series_records_engine_environment(tmp_path):
+    summary = run(tmp_path)
+    assert json.loads((summary.directory / "env.json").read_text()) == {
+        "control": {"ENGINE": "polars_bio_a-1"},
+        "polars_bio_a N=1": {"ENGINE": "polars_bio_a-1"},
+        "ballista N=1": {"ENGINE": "ballista-1"},
+    }
 
 
 def rows(summary) -> pl.DataFrame:

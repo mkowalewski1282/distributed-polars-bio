@@ -212,8 +212,14 @@ class _Series:
     def __init__(self, cfg, factory, probe, mem_floor, directory, scratch, writer, out, summary, profile):
         self.cfg, self.factory, self.probe, self.mem_floor = cfg, factory, probe, mem_floor
         self.directory, self.scratch, self.writer, self.out, self.summary = directory, scratch, writer, out, summary
+        self.env_records: dict[str, dict[str, str]] = {}
         self.git_commit = git_commit()
         self.versions = json.dumps(engine_versions(profile, ballista="ballista" in cfg.variants))
+
+    def record_env(self, label: str, engine) -> None:
+        """Zmienne środowiska ustawione przez narzędzie dla bloku → env.json serii (przegląd 3a)."""
+        self.env_records[label] = engine.env_record()
+        (self.directory / "env.json").write_text(json.dumps(self.env_records, indent=2, sort_keys=True))
 
     def row(self, scenario: Scenario, variant: str, n_nodes: int, rep: int, attempt: int,
             measured: dict, *, warmup=False, control_position: str | None = None,
@@ -351,6 +357,8 @@ class _Series:
         po przerwaniu). True = dryf albo nieważne przebiegi kontrolne."""
         engine = self.factory(block.variant, block.n_nodes)
         control = self.factory(CONTROL_VARIANT, 1)
+        self.record_env("control", control)
+        self.record_env(block.label, engine)
         skipped: dict[str, str] = {}
 
         def run(scenario: Scenario, rep: int, *, warmup: bool = False,

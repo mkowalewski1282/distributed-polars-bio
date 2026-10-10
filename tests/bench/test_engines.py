@@ -150,6 +150,7 @@ def test_sail_server_is_pinned_and_configured(tmp_path):
             "SAIL_MODE=local-cluster",
             "SAIL_CLUSTER__WORKER_INITIAL_COUNT=2",
             "SAIL_EXECUTION__DEFAULT_PARALLELISM=4",
+            "POLARS_MAX_THREADS=4",
             "MPLBACKEND=Agg",
         } <= environ(pid)
         cmd = engine.command(Scenario("overlap", "1-2"))
@@ -291,3 +292,28 @@ def test_polars_bio_engine_never_reports_dead_processes(tmp_path):
     engine = engines.make_engine("polars_bio_a", 1, data_root=tmp_path, log_dir=tmp_path, profile="debug")
     assert engine.dead() == []
     engine.restart(grace_s=1)
+
+
+def test_inherited_engine_variables_are_dropped(tmp_path, monkeypatch):
+    for name, value in {"SAIL_MODE": "local", "POLARS_MAX_THREADS": "12", "RUST_LOG": "warn",
+                        "BIO_TARGET_PARTITIONS": "8", "BALLISTA_GRPC_MAX_MESSAGE_BYTES": "1"}.items():
+        monkeypatch.setenv(name, value)
+    env = engines.base_env()
+    assert not {"SAIL_MODE", "POLARS_MAX_THREADS", "RUST_LOG", "BIO_TARGET_PARTITIONS",
+                "BALLISTA_GRPC_MAX_MESSAGE_BYTES"} & set(env)
+    assert env["MPLBACKEND"] == "Agg" and env["PATH"] == os.environ["PATH"]
+    pb_env = engines.make_engine("polars_bio_a", 1, data_root=tmp_path, log_dir=tmp_path, profile="debug").command(
+        Scenario("overlap", "1-2")).env
+    assert pb_env["POLARS_MAX_THREADS"] == "2" and "SAIL_MODE" not in pb_env and "RUST_LOG" not in pb_env
+    ballista = engines.make_engine("ballista", 2, data_root=tmp_path, log_dir=tmp_path, profile="debug")
+    assert ballista.env["BIO_TARGET_PARTITIONS"] == "4" and "RUST_LOG" not in ballista.env
+
+
+def test_env_records_list_what_the_tool_sets(tmp_path):
+    make = lambda v, n: engines.make_engine(v, n, data_root=tmp_path, log_dir=tmp_path, profile="debug")
+    assert make("polars_bio_b", 3).env_record() == {"POLARS_MAX_THREADS": "6"}
+    assert make("ballista", 2).env_record() == {
+        "BIO_TARGET_PARTITIONS": "4", "BALLISTA_GRPC_MAX_MESSAGE_BYTES": "536870912",
+    }
+    sail = make("sail_lock", 3).env_record()
+    assert sail["SAIL_CLUSTER__WORKER_INITIAL_COUNT"] == "3" and sail["POLARS_MAX_THREADS"] == "6"

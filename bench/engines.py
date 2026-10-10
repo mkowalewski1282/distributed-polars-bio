@@ -8,7 +8,8 @@ log_mark() i log_metrics(mark) → liczniki z logów procesów silnika z czasu p
 (specyfikacja 3b-2: workery Saila, broadcast Ballisty).
 explain_command(scenariusz, plik) → Command albo None (EXPLAIN ANALYZE; tylko Ballista).
 dead() → nazwy procesów silnika, które padły; stop(grace_s) i restart(grace_s) — SIGKILL po
-grace_s sekundach od SIGTERM."""
+grace_s sekundach od SIGTERM.
+env_record() → zmienne środowiska ustawione przez narzędzie (zapis w env.json serii)."""
 
 from __future__ import annotations
 
@@ -56,6 +57,20 @@ BALLISTA_STOP_GRACE_S = 10.0
 SAIL_STOP_GRACE_S = 30.0
 #: Próby startu serwera Saila (jak BALLISTA_START_ATTEMPTS; przegląd 3a: Sail nie ponawiał startu).
 SAIL_START_ATTEMPTS = 3
+#: Zmienne sterujące silnikami, usuwane ze środowiska odziedziczonego po powłoce: wartość
+#: wyeksportowana np. w .bashrc (SAIL_MODE, POLARS_MAX_THREADS, RUST_LOG…) zmieniłaby cicho
+#: konfigurację przebiegu (przegląd 3a). Silnik ustawia potrzebne sam — lista w env_record().
+INHERITED_PREFIXES = (
+    "SAIL_", "BALLISTA_", "POLARS_", "BIO_", "SPARK_", "PYSPARK_", "RUST_LOG", "DIST_OUTPUT_DIR",
+)
+
+
+def base_env() -> dict[str, str]:
+    """Środowisko procesów silników i runnerów: odziedziczone bez zmiennych sterujących
+    silnikami, z backendem matplotlib bez okien (bench/__init__.py)."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(INHERITED_PREFIXES)}
+    env["MPLBACKEND"] = "Agg"
+    return env
 #: Wariant Saila → ścieżka runnera (bench/runners/sail_runner.py, specyfikacja 3b-2, 5.3).
 SAIL_PATHS = {"sail": "arrow", "sail_lock": "arrow-lock", "sail_udtf": "udtf"}
 
@@ -91,7 +106,7 @@ def scenario_args(scenario: Scenario, data_root: Path) -> list[str]:
 def _python(module: str, cpus, args: list[str], env: dict[str, str]) -> Command:
     return Command(
         [*taskset(cpus), sys.executable, "-m", module, *args],
-        {**os.environ, "MPLBACKEND": "Agg", **env},
+        {**base_env(), **env},
         REPO,
     )
 
@@ -101,6 +116,9 @@ class PolarsBioEngine:
 
     def __init__(self, threads: int, cpus, data_root: Path):
         self.threads, self.cpus, self.data_root = threads, tuple(cpus), data_root
+
+    def env_record(self) -> dict[str, str]:
+        return {"POLARS_MAX_THREADS": str(self.threads)}
 
     def start(self) -> None:
         pass
@@ -191,7 +209,7 @@ class BallistaEngine:
                  grpc_max_message_bytes: int = GRPC_MAX_MESSAGE_BYTES):
         self.n, self.profile, self.data_root, self.log_dir = n_nodes, profile, data_root, log_dir
         self.env = {
-            **os.environ,
+            **base_env(),
             "BIO_TARGET_PARTITIONS": str(SLOTS_PER_NODE * n_nodes),
             "BALLISTA_GRPC_MAX_MESSAGE_BYTES": str(grpc_max_message_bytes),
         }
@@ -199,6 +217,10 @@ class BallistaEngine:
         self.work_dirs: dict[str, Path] = {}
         self.port: int | None = None
         self._tmp: Path | None = None
+
+    def env_record(self) -> dict[str, str]:
+        keys = ("BIO_TARGET_PARTITIONS", "BALLISTA_GRPC_MAX_MESSAGE_BYTES")
+        return {k: self.env[k] for k in keys}
 
     def start(self) -> None:
         """Start klastra; po porażce (np. executor odrzucony przy rejestracji) — od nowa, na
@@ -319,6 +341,11 @@ class SailEngine:
         self.proc: subprocess.Popen | None = None
         self.port: int | None = None
 
+    def env_record(self) -> dict[str, str]:
+        """Zmienne SAIL_* (local-cluster, N workerów) i jawna liczba wątków polars-bio w procesie
+        serwera — 2N, jak rdzenie węzłów 1..N (przegląd 3a: serwer bez jawnego POLARS_MAX_THREADS)."""
+        return {**sail_env(self.n), "POLARS_MAX_THREADS": str(SLOTS_PER_NODE * self.n)}
+
     def start(self) -> None:
         """Start serwera; po porażce (np. zajęty port) — od nowa, na nowym porcie, do
         SAIL_START_ATTEMPTS razy. Log kolejnych prób jest dopisywany."""
@@ -338,7 +365,7 @@ class SailEngine:
             self.proc = subprocess.Popen(
                 [*taskset(cluster_cpus(self.n)), sys.executable, "-m", "bench.runners.sail_server",
                  "--port", str(self.port)],
-                cwd=REPO, env={**os.environ, "MPLBACKEND": "Agg", **sail_env(self.n)},
+                cwd=REPO, env={**base_env(), **self.env_record()},
                 stdout=f, stderr=subprocess.STDOUT,
             )
         try:
