@@ -46,6 +46,7 @@ def test_minimal_config_gets_spec_defaults():
     # Przebieg kontrolny (specyfikacja 3b-2, 4.2): overlap 7-0, 10 przebiegów na każdym końcu bloku.
     assert (cfg.control, cfg.control_repeats) == (Scenario("overlap", "7-0"), 10)
     assert cfg.explain is False
+    assert cfg.expected_invalid == ()
 
 
 def test_smoke_config_is_the_full_matrix_on_pair_1_2():
@@ -98,6 +99,12 @@ def test_smoke_config_is_the_full_matrix_on_pair_1_2():
         ({"control_repeats": 0}, "control_repeats"),
         ({"control_repeats": True}, "control_repeats"),
         ({"explain": "yes"}, "explain: expected true or false"),
+        ({"expected_invalid": "all"}, "expected_invalid: expected a list"),
+        ({"expected_invalid": [{"scenario": "overlap/1-2"}]}, r"expected_invalid\[0\]: missing keys"),
+        ({"expected_invalid": [{"scenario": "nearest/1-2", "variant": "sail"}]}, "not a scenario of this series"),
+        ({"expected_invalid": [{"scenario": "merge/1", "variant": "spark"}]}, "unknown variant"),
+        ({"expected_invalid": [{"scenario": "merge/1", "variant": "sail", "x": 1}]}, "unknown keys"),
+        ({"expected_invalid": [{"scenario": "merge/1", "variant": "sail", "nodes": 4}]}, "nodes"),
     ],
 )
 def test_invalid_config_is_rejected_before_any_run(overrides, message):
@@ -185,3 +192,15 @@ def test_sail_paths_config_compares_the_three_sail_paths():
         "overlap/1-2", "nearest/1-2", "coverage/1-2", "merge/1", "subtract/1-2", "overlap/7-0",
     }
     assert (cfg.nodes, cfg.repeats, cfg.warmup, len(blocks(cfg))) == ((1, 3), 3, 1, 6)
+
+
+def test_expected_invalid_entries_match_rows():
+    cfg = parse(raw(expected_invalid=[
+        {"scenario": "merge/1", "variant": "ballista", "nodes": 3, "reason": "timeout"},
+    ]))
+    (entry,) = cfg.expected_invalid
+    row = {"scenario_id": "merge/1", "variant": "ballista", "n_nodes": 3, "invalid_reason": "timeout"}
+    assert entry.matches(row)
+    assert not entry.matches({**row, "n_nodes": 1})
+    assert not entry.matches({**row, "invalid_reason": "skipped: timeout"})
+    assert not entry.matches({**row, "variant": "sail"})

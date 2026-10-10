@@ -658,3 +658,24 @@ def test_base_rss_of_zombie_process_does_not_abort_the_run(tmp_path):
     df = rows(summary)
     assert block(df, "ballista")["base_rss"].is_null().all()
     assert block(df, "ballista")["peak_rss"].is_not_null().all()
+
+
+def _wrong_ballista_merge(variant, n, scenario):
+    return ["--checksum", "0x00000000000000bb"] if (variant, scenario.op) == ("ballista", "merge") else []
+
+
+def test_expected_invalid_runs_do_not_fail_the_series(tmp_path):
+    cfg = config(expected_invalid=[{"scenario": "merge/1", "variant": "ballista", "reason": "checksum"}])
+    summary = run(tmp_path, cfg=cfg, factory=make_factory(_wrong_ballista_merge))
+    assert summary.ok and (summary.invalid, summary.expected, summary.unexpected) == (3, 3, [])
+    assert orch.summary_lines("test", summary)[0].startswith("test OK: runs 18, invalid 3 (expected 3)")
+
+
+def test_unexpected_invalid_runs_fail_the_series_and_are_listed(tmp_path):
+    summary = run(tmp_path, factory=make_factory(_wrong_ballista_merge))
+    assert not summary.ok and summary.expected == 0 and len(summary.unexpected) == 3
+    lines = orch.summary_lines("test", summary)
+    assert lines[0].startswith("test FAILED:")
+    assert lines[1] == (
+        "  unexpected: ballista N=1 merge/1: checksum 0x00000000000000bb ≠ reference 0x00000000000000aa"
+    )

@@ -4,8 +4,8 @@ przebiegi kontrolne — z walidacją każdego przebiegu i zapisem wiersza na prz
 
 Uruchomienie (seria pomiarowa: z Windows Terminal, VS Code zamknięty — checklista RAM):
     python -m bench.orchestrator bench/conf/smoke.yaml [--ballista-profile debug]
-Kody wyjścia: 0 — wszystkie przebiegi ważne; 1 — są przebiegi nieważne albo przerwane
-bloki; 2 — błąd konfiguracji, brak danych albo binarek (przed pierwszym pomiarem)."""
+Kody wyjścia: 0 — seria zaliczona (każdy nieważny przebieg jest na liście expected_invalid);
+1 — nieoczekiwane nieważne przebiegi albo przerwane bloki; 2 — błąd konfiguracji, brak danych albo binarek (przed pierwszym pomiarem)."""
 
 from __future__ import annotations
 
@@ -87,11 +87,15 @@ class SeriesSummary:
     parquet: Path
     rows: int = 0
     invalid: int = 0
+    #: Nieważne przebiegi z listy expected_invalid konfiguracji.
+    expected: int = 0
+    #: Pozostałe nieważne przebiegi: „wariant N=n scenariusz: przyczyna”.
+    unexpected: list[str] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
-        return self.invalid == 0 and not self.failures
+        return not self.unexpected and not self.failures
 
 
 class SeriesError(RuntimeError):
@@ -262,7 +266,15 @@ class _Series:
         for row in rows:
             self.writer.write(row)
             self.summary.rows += 1
-            self.summary.invalid += not row["valid"]
+            if row["valid"]:
+                continue
+            self.summary.invalid += 1
+            if any(e.matches(row) for e in self.cfg.expected_invalid):
+                self.summary.expected += 1
+            else:
+                self.summary.unexpected.append(
+                    f"{row['variant']} N={row['n_nodes']} {row['scenario_id']}: {row['invalid_reason']}"
+                )
 
     def explain_pass(self, engine, block: Block) -> None:
         """Dodatkowy, niemierzony przebieg EXPLAIN ANALYZE każdego scenariusza (specyfikacja 3b-2,
@@ -522,6 +534,25 @@ def preflight(cfg: SeriesConfig, profile: str) -> None:
     preflight_checks.run(cfg, profile)
 
 
+#: Ile nieoczekiwanych nieważnych przebiegów wypisać w podsumowaniu.
+SHOWN_UNEXPECTED = 20
+
+
+def summary_lines(series: str, summary: SeriesSummary) -> list[str]:
+    """Podsumowanie serii: zaliczona (OK) albo nie (FAILED) i lista przyczyn (specyfikacja 3b-2,
+    pozycja 17 — automatyczne zaliczenie smoke)."""
+    status = "OK" if summary.ok else "FAILED"
+    lines = [
+        f"{series} {status}: runs {summary.rows}, invalid {summary.invalid} (expected "
+        f"{summary.expected}), failures {len(summary.failures)}; results: {summary.parquet}"
+    ]
+    lines += [f"  unexpected: {u}" for u in summary.unexpected[:SHOWN_UNEXPECTED]]
+    if len(summary.unexpected) > SHOWN_UNEXPECTED:
+        lines.append(f"  ... and {len(summary.unexpected) - SHOWN_UNEXPECTED} more unexpected invalid runs")
+    lines += [f"  failure: {f}" for f in summary.failures]
+    return lines
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m bench.orchestrator",
@@ -557,10 +588,8 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
-    print(
-        f"runs: {summary.rows}, invalid: {summary.invalid}, "
-        f"interrupted blocks: {len(summary.failures)}; results: {summary.parquet}"
-    )
+    for line in summary_lines(cfg.series, summary):
+        print(line)
     return 0 if summary.ok else 1
 
 

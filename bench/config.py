@@ -28,6 +28,7 @@ NODES = (1, 2, 3)
 DEFAULTS = {
     "repeats": 5, "warmup": 1, "timeout_s": 1200, "control_tolerance": 0.10,
     "control": {"op": "overlap", "pair": "7-0"}, "control_repeats": 10, "explain": False,
+    "expected_invalid": [],
 }
 _REQUIRED = ("series", "scenarios", "variants", "nodes", "seed")
 _KEYS = set(_REQUIRED) | set(DEFAULTS)
@@ -62,6 +63,26 @@ class Block:
 
 
 @dataclass(frozen=True)
+class ExpectedInvalid:
+    """Oczekiwany nieważny przebieg (specyfikacja 3b-2, pozycja 17): seria z takim przebiegiem
+    nadal jest zaliczona (np. smoke z udokumentowanym ograniczeniem silnika)."""
+
+    scenario: str
+    variant: str
+    nodes: int | None = None
+    #: Początek przyczyny nieważności; None — dowolna.
+    reason: str | None = None
+
+    def matches(self, row: dict) -> bool:
+        return (
+            row["scenario_id"] == self.scenario
+            and row["variant"] == self.variant
+            and (self.nodes is None or row["n_nodes"] == self.nodes)
+            and (self.reason is None or (row["invalid_reason"] or "").startswith(self.reason))
+        )
+
+
+@dataclass(frozen=True)
 class SeriesConfig:
     series: str
     scenarios: tuple[Scenario, ...]
@@ -75,6 +96,7 @@ class SeriesConfig:
     control: Scenario
     control_repeats: int
     explain: bool
+    expected_invalid: tuple[ExpectedInvalid, ...]
 
 
 def _int(raw: dict, key: str, minimum: int) -> int:
@@ -128,6 +150,37 @@ def _scenario(item, where: str) -> Scenario:
     return Scenario(op, pair)
 
 
+_EXPECTED_KEYS = {"scenario", "variant", "nodes", "reason"}
+
+
+def _expected_invalid(raw_list, scenario_ids: set[str]) -> tuple[ExpectedInvalid, ...]:
+    if not isinstance(raw_list, list):
+        raise ConfigError(f"expected_invalid: expected a list, got {raw_list!r}")
+    out = []
+    for i, item in enumerate(raw_list):
+        where = f"expected_invalid[{i}]"
+        if not isinstance(item, dict):
+            raise ConfigError(f"{where}: expected a mapping, got {item!r}")
+        unknown = set(item) - _EXPECTED_KEYS
+        if unknown:
+            raise ConfigError(f"{where}: unknown keys {sorted(unknown)}")
+        missing = [k for k in ("scenario", "variant") if k not in item]
+        if missing:
+            raise ConfigError(f"{where}: missing keys {missing}")
+        if item["scenario"] not in scenario_ids:
+            raise ConfigError(f"{where}: {item['scenario']!r} is not a scenario of this series")
+        if item["variant"] not in VARIANTS:
+            raise ConfigError(f"{where}: unknown variant {item['variant']!r}")
+        nodes = item.get("nodes")
+        if nodes is not None and (isinstance(nodes, bool) or nodes not in NODES):
+            raise ConfigError(f"{where}: nodes from {NODES}, got {nodes!r}")
+        reason = item.get("reason")
+        if reason is not None and not isinstance(reason, str):
+            raise ConfigError(f"{where}: reason must be text, got {reason!r}")
+        out.append(ExpectedInvalid(item["scenario"], item["variant"], nodes, reason))
+    return tuple(out)
+
+
 def parse(raw) -> SeriesConfig:
     """Słownik z YAML → SeriesConfig; każdy błąd → ConfigError z miejscem i przyczyną."""
     if not isinstance(raw, dict):
@@ -160,6 +213,8 @@ def parse(raw) -> SeriesConfig:
     explain = raw["explain"]
     if not isinstance(explain, bool):
         raise ConfigError(f"explain: expected true or false, got {explain!r}")
+    control = _scenario(raw["control"], "control")
+    expected_invalid = _expected_invalid(raw["expected_invalid"], {*ids, control.id})
     cfg = SeriesConfig(
         series=series,
         scenarios=scenarios,
@@ -170,9 +225,10 @@ def parse(raw) -> SeriesConfig:
         timeout_s=_positive(raw, "timeout_s"),
         seed=seed,
         control_tolerance=_positive(raw, "control_tolerance"),
-        control=_scenario(raw["control"], "control"),
+        control=control,
         control_repeats=_int(raw, "control_repeats", 1),
         explain=explain,
+        expected_invalid=expected_invalid,
     )
     if not blocks(cfg):
         raise ConfigError("the configuration gives no blocks (polars_bio_b needs N ≥ 2)")
