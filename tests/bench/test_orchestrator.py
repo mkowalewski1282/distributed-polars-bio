@@ -644,3 +644,17 @@ def test_base_rss_of_long_lived_processes_is_recorded(tmp_path):
     df = rows(run(tmp_path, factory=make_factory(customize=customize)))
     assert set(block(df, "ballista")["base_rss"]) == {json.dumps({"executor_1": 1000})}
     assert block(df, "polars_bio_a")["base_rss"].is_null().all()
+
+
+def test_base_rss_of_zombie_process_does_not_abort_the_run(tmp_path):
+    def customize(engine):
+        if engine.variant == "ballista":
+            engine.pids = {"executor_1": 4242}
+
+    def rss(pid):
+        raise KeyError("VmRSS")
+
+    summary = run(tmp_path, factory=make_factory(customize=customize), probe=probe(rss=rss))
+    df = rows(summary)
+    assert block(df, "ballista")["base_rss"].is_null().all()
+    assert block(df, "ballista")["peak_rss"].is_not_null().all()

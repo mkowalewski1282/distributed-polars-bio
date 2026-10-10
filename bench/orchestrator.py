@@ -294,7 +294,7 @@ class _Series:
             try:
                 self.probe.reset_peak_rss(pid)
                 base[name] = self.probe.rss(pid)
-            except OSError:
+            except (OSError, KeyError):
                 pass  # martwy proces wykryje odczyt szczytu po przebiegu
         dirs = engine.shuffle_dirs()
         shuffle_before = sum(self.probe.dir_size(d) for d in dirs)
