@@ -132,18 +132,31 @@ def ballista_binary(name: str, profile: str) -> Path:
     return BALLISTA_DIR / "target" / profile / name
 
 
+def ballista_sources() -> list[Path]:
+    """Źródła binarek Ballisty: kod Rusta (src/, vendor/), manifesty i Cargo.lock — bez
+    dokumentacji, której zmiana nie wymaga przebudowy."""
+    files = [BALLISTA_DIR / "Cargo.toml", BALLISTA_DIR / "Cargo.lock"]
+    for sub in ("src", "vendor"):
+        root = BALLISTA_DIR / sub
+        files.extend(p for p in root.rglob("*.rs") if p.is_file())
+        files.extend(p for p in root.rglob("Cargo.toml") if p.is_file())
+    return [p for p in files if p.exists()]
+
+
 def require_ballista_binaries(profile: str) -> None:
-    missing = [
-        str(b)
-        for b in (ballista_binary("ballista_node", profile), ballista_binary("bench_client", profile))
-        if not b.exists()
-    ]
+    """Binarki istnieją i są nowsze od źródeł — inaczej pomiar objąłby kod sprzed ostatniej
+    zmiany (przegląd 3a: pochodzenie binarek)."""
+    binaries = (ballista_binary("ballista_node", profile), ballista_binary("bench_client", profile))
+    flag = "--release " if profile == "release" else ""
+    build = f"cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build {flag}--bin ballista_node --bin bench_client"
+    missing = [str(b) for b in binaries if not b.exists()]
     if missing:
-        flag = "--release " if profile == "release" else ""
-        raise EngineError(
-            f"missing binary {', '.join(missing)} - build it: cd ballista_genomics && "
-            f"CARGO_BUILD_JOBS=1 cargo build {flag}--bin ballista_node --bin bench_client"
-        )
+        raise EngineError(f"missing binary {', '.join(missing)} - build it: {build}")
+    newest = max(ballista_sources(), key=lambda p: p.stat().st_mtime, default=None)
+    if newest is not None:
+        stale = [str(b) for b in binaries if b.stat().st_mtime < newest.stat().st_mtime]
+        if stale:
+            raise EngineError(f"binary {', '.join(stale)} is older than {newest} - rebuild it: {build}")
 
 
 def _registered_executors(port: int) -> int:

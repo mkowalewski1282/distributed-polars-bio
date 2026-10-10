@@ -523,3 +523,22 @@ def test_failed_explain_is_reported_as_series_failure(tmp_path):
 
 def test_no_explain_pass_by_default(tmp_path):
     assert not (run(tmp_path).directory / "explain").exists()
+
+
+def test_engine_versions_record_algorithm_crate_and_binary_hashes(tmp_path, monkeypatch):
+    import hashlib
+
+    root = tmp_path / "ballista_genomics"
+    (root / "target" / "release").mkdir(parents=True)
+    (root / "Cargo.lock").write_text(
+        'name = "ballista"\nversion = "53.0.0"\n\nname = "datafusion"\nversion = "53.0.0"\n\n'
+        'name = "datafusion-bio-function-ranges"\nversion = "0.22.2"\n'
+    )
+    (root / "target" / "release" / "ballista_node").write_bytes(b"node")
+    monkeypatch.setattr(engines, "BALLISTA_DIR", root)
+    monkeypatch.setattr(orch, "BALLISTA_DIR", root)
+    versions = orch.engine_versions("release", ballista=True)
+    assert versions["datafusion_bio_function_ranges"] == "0.22.2"
+    assert versions["ballista_node_sha256"] == hashlib.sha256(b"node").hexdigest()
+    assert versions["bench_client_sha256"] == "missing"
+    assert "ballista_node_sha256" not in orch.engine_versions("release", ballista=False)

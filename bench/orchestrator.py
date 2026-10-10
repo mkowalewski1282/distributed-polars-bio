@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import itertools
 import json
 import os
@@ -33,7 +34,7 @@ from bench.config import (
 from bench.data.datasets import data_dir
 from bench.engines import (
     BALLISTA_DIR, CONTROL_VARIANT, PROFILES, REFERENCE_VARIANT, REPO, SYSTEM_CPUS, Command,
-    cluster_cpus, make_engine, require_ballista_binaries,
+    ballista_binary, cluster_cpus, make_engine, require_ballista_binaries,
 )
 from bench.procutil import EngineError
 from bench.results import ResultsWriter, to_parquet
@@ -144,21 +145,31 @@ def git_commit() -> str:
     return f"{head}-dirty" if git("status", "--porcelain", "--untracked-files=no") else head
 
 
-def engine_versions(profile: str) -> dict[str, str]:
+def engine_versions(profile: str, *, ballista: bool) -> dict[str, str]:
+    """Wersje silników i bibliotek przebiegu; dla serii z Ballistą — sumy SHA-256 binarek
+    (dokładnie wiadomo, czym mierzono; przegląd 3a)."""
     lock = (BALLISTA_DIR / "Cargo.lock").read_text()
 
     def locked(name: str) -> str:
         m = re.search(rf'name = "{re.escape(name)}"\nversion = "([^"]+)"', lock)
         return m.group(1) if m else "unknown"
 
-    return {
+    versions = {
         "polars_bio": version("polars-bio"),
         "pysail": version("pysail"),
         "pyspark": version("pyspark"),
         "ballista": f"{locked('ballista')} ({profile})",
         "datafusion_ballista": locked("datafusion"),
+        "datafusion_bio_function_ranges": locked("datafusion-bio-function-ranges"),
         "python": platform.python_version(),
     }
+    if ballista:
+        for name in ("ballista_node", "bench_client"):
+            path = ballista_binary(name, profile)
+            versions[f"{name}_sha256"] = (
+                hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else "missing"
+            )
+    return versions
 
 
 def _skipped(reason: str) -> dict:
@@ -193,7 +204,7 @@ class _Series:
         self.cfg, self.factory, self.probe, self.mem_floor = cfg, factory, probe, mem_floor
         self.directory, self.scratch, self.writer, self.out, self.summary = directory, scratch, writer, out, summary
         self.git_commit = git_commit()
-        self.versions = json.dumps(engine_versions(profile))
+        self.versions = json.dumps(engine_versions(profile, ballista="ballista" in cfg.variants))
 
     def row(self, scenario: Scenario, variant: str, n_nodes: int, rep: int, attempt: int,
             measured: dict, *, warmup=False, control_position: str | None = None,

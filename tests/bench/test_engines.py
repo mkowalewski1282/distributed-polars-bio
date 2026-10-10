@@ -7,6 +7,7 @@ cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bins"""
 from __future__ import annotations
 
 import itertools
+import os
 import socket
 import sys
 from pathlib import Path
@@ -178,3 +179,42 @@ def test_sail_engine_counts_session_workers_from_its_log(tmp_path):
 def test_polars_bio_engine_has_no_log_metrics(tmp_path):
     engine = engines.make_engine("polars_bio_a", 1, data_root=tmp_path, log_dir=tmp_path, profile="debug")
     assert engine.log_metrics(engine.log_mark()) == {}
+
+
+def _fake_ballista(tmp_path: Path) -> Path:
+    root = tmp_path / "ballista_genomics"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "lib.rs").write_text("// source\n")
+    (root / "Cargo.toml").write_text("[package]\n")
+    (root / "Cargo.lock").write_text("")
+    (root / "vendor" / "crate" / "src").mkdir(parents=True)
+    (root / "vendor" / "crate" / "PATCH.md").write_text("docs\n")
+    (root / "target" / "debug").mkdir(parents=True)
+    for name in ("ballista_node", "bench_client"):
+        (root / "target" / "debug" / name).write_bytes(b"binary")
+    for source in (root / "Cargo.toml", root / "Cargo.lock"):
+        _set_mtime(source, 500_000)  # manifesty starsze od binarek — o wyniku decyduje lib.rs
+    return root
+
+
+def _set_mtime(path: Path, t: float) -> None:
+    os.utime(path, (t, t))
+
+
+def test_stale_ballista_binary_is_rejected(tmp_path, monkeypatch):
+    root = _fake_ballista(tmp_path)
+    monkeypatch.setattr(engines, "BALLISTA_DIR", root)
+    for binary in (root / "target" / "debug").iterdir():
+        _set_mtime(binary, 1_000_000)
+    _set_mtime(root / "src" / "lib.rs", 2_000_000)
+    with pytest.raises(EngineError, match=r"bench_client.* is older than .*lib\.rs.*cargo build"):
+        engines.require_ballista_binaries("debug")
+    _set_mtime(root / "src" / "lib.rs", 500_000)
+    engines.require_ballista_binaries("debug")  # binarki nowsze od źródeł
+
+
+def test_documentation_in_vendor_does_not_make_binaries_stale(tmp_path, monkeypatch):
+    root = _fake_ballista(tmp_path)
+    monkeypatch.setattr(engines, "BALLISTA_DIR", root)
+    _set_mtime(root / "vendor" / "crate" / "PATCH.md", 9_000_000_000)
+    engines.require_ballista_binaries("debug")
