@@ -25,7 +25,7 @@ def sail_env(n_nodes: int) -> dict[str, str]:
     bezczynnych, równoległość 2N.
 
     Sail tworzy driver i N workerów dla KAŻDEJ sesji Spark Connect — przy pierwszym RPC
-    sesji (w runnerze: rejestracja UDTF, przed pomiarem czasu) — i zamyka je razem z sesją
+    sesji (w runnerze: rozgrzanie sesji, przed pomiarem czasu) — i zamyka je razem z sesją
     (sonda 02.10.2026). Każdy przebieg ma więc własną, świeżą pulę workerów."""
     return {
         "SAIL_MODE": "local-cluster",
@@ -33,6 +33,11 @@ def sail_env(n_nodes: int) -> dict[str, str]:
         "SAIL_CLUSTER__WORKER_TASK_SLOTS": str(WORKER_TASK_SLOTS),
         "SAIL_CLUSTER__WORKER_MAX_IDLE_TIME_SECS": "86400",
         "SAIL_EXECUTION__DEFAULT_PARALLELISM": str(2 * n_nodes),
+        # Rozmiar partii wykonania (sonda 3b-2, Zadanie 12): overlap 7-0, N = 3 — 273 partii
+        # wyniku zamiast 1877, odbiór wyniku przez klienta 1,59 s zamiast 2,79 s, ta sama suma
+        # kontrolna. Opcje Spark Connect (arrow.maxRecordsPerBatch, maxRecordsPerOutputBatch,
+        # connect.grpc.arrow.maxBatchSize) nie zmieniły liczby partii.
+        "SAIL_EXECUTION__BATCH_SIZE": "65536",
     }
 
 

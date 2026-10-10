@@ -65,6 +65,7 @@ def test_sail_env_for_three_nodes():
         "SAIL_CLUSTER__WORKER_TASK_SLOTS": "8",
         "SAIL_CLUSTER__WORKER_MAX_IDLE_TIME_SECS": "86400",
         "SAIL_EXECUTION__DEFAULT_PARALLELISM": "6",
+        "SAIL_EXECUTION__BATCH_SIZE": "65536",
     }
 
 

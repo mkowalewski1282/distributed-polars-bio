@@ -232,3 +232,28 @@ etapami, po jednej zmianie. Punkty dopisywane po każdym etapie.
      potrzebuje go skrypt budowania zależności `substrait`; CI instaluje go teraz sam).
    - Lokalne 22 GB w `ballista_genomics/target` to głównie nagromadzone stare artefakty
      (`target/debug/deps`), nie debuginfo — `Cargo.toml` od dawna ma `debug = false`.
+
+## Plan 3b-2 — narzędzie gotowe do pomiarów (od 09.10.2026)
+
+1. **Partie wyniku Saila (sonda 10.10.2026, plan 3b-2, Zadanie 12).**
+   - Ścieżka `applyInArrow` z kontekstem polars-bio na wątek, `overlap` 7-0 (2 761 621 wierszy),
+     N = 3, klient PySpark (`to_table_as_iterator`); najmniejsze czasy z 3 powtórzeń, VS Code
+     otwarty — liczby orientacyjne, nie pomiar do pracy.
+
+     | Ustawienie | Partie wyniku | Odbiór (`t_total_s − first_batch_s`) | `t_total_s` |
+     |---|---|---|---|
+     | domyślne | 1877 | 2,79 s | 3,75 s |
+     | `SAIL_EXECUTION__BATCH_SIZE=65536` (serwer) | 273 | 1,59 s | 2,70 s |
+     | `spark.sql.execution.arrow.maxRecordsPerBatch=65536` (sesja) | 1877 | 2,64 s | 3,38 s |
+     | `spark.sql.execution.arrow.maxRecordsPerOutputBatch=65536` (sesja) | 1877 | 2,64 s | 3,46 s |
+     | `spark.connect.grpc.arrow.maxBatchSize=64m` (sesja) | 1877 | 2,63 s | 3,40 s |
+
+   - We wszystkich wariantach ta sama liczba wierszy i suma kontrolna (`0x19f5668a8b28be3a`).
+   - Decyzja (reguła planu: ≥ 20% krótszy odbiór przy tej samej sumie): `SAIL_EXECUTION__BATCH_SIZE
+     = 65536` w `sail_env` (`bench/runners/sail_server.py`) — odbiór krótszy o 43%, cały przebieg
+     o 28%. Opcje sesji Spark Connect nie zmieniają liczby partii — o rozmiarze partii wyniku
+     decyduje rozmiar partii wykonania Saila.
+   - Do opisu w metodyce: to strojenie silnika (rozmiar partii wykonania dotyczy całego planu,
+     nie tylko odbioru), w granicach publicznej konfiguracji Saila; Ballista zostaje przy
+     domyślnym rozmiarze partii DataFusion. Odbiór wyniku przez klienta w Pythonie pozostaje
+     osobną fazą (asymetria klientów: Ballista — Rust, Sail — Python).
