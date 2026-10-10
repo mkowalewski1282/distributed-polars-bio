@@ -3,7 +3,7 @@ nie mieszczą się w limicie wiadomości gRPC, zapytanie kończy się czytelnym 
 wisieć do timeoutu, jak robi to Ballista 53 w trybie push (uznaje executor za utraconego i ponawia).
 
 Tabela rozsyłana w coverage to prawa strona (df2): 600 tys. przedziałów ≈ 10–15 MB w Arrow IPC,
-czyli × 2 zadania na wiadomość > 16 MiB. Wymaga binarek debug (brak = BŁĄD, jak w P0)."""
+czyli × margines 2 > 16 MiB. Wymaga binarek debug (brak = BŁĄD, jak w P0)."""
 
 from __future__ import annotations
 

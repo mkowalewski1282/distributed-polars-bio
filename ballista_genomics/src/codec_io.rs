@@ -145,7 +145,8 @@ pub fn read_schema(buf: &[u8], pos: &mut usize) -> Result<SchemaRef> {
 //
 // GRANICA SKALOWALNOSCI: ladunek planu idzie przez gRPC, a Ballista ustawia
 // max_message_size = 16 MB (ballista-core/src/utils.rs). Przekroczenie tego
-// limitu wywali zapytanie na poziomie transportu. To jest wlasciwe ograniczenie
+// limitu w trybie push nie konczy zapytania bledem: Ballista 53 uznaje executor
+// za utracony i ponawia, wiec zapytanie wisi. To jest wlasciwe ograniczenie
 // tego podejscia i nalezy je raportowac jako takie, a nie obchodzic.
 // Od planu 3b-2 limit podnosi `BALLISTA_GRPC_MAX_MESSAGE_BYTES` (512 MiB), a przekroczenie
 // wykrywa przy planowaniu `broadcast.rs`.
