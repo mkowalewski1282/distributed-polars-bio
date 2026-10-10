@@ -15,7 +15,7 @@ import polars as pl
 import pytest
 import yaml
 
-from bench import engines, metrics
+from bench import engines, metrics, preflight
 from bench import orchestrator as orch
 from bench.config import parse
 from bench.data.datasets import DATASETS
@@ -456,6 +456,7 @@ def _fixture_data(root: Path) -> Path:
 
 
 def test_main_fails_fast_without_ballista_binaries(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(preflight, "check_cpus", lambda *args, **kwargs: None)
     monkeypatch.setattr(metrics, "swap_used", lambda: 0)
     root = _fixture_data(tmp_path / "data")
     cfg = tmp_path / "series.yaml"
@@ -482,6 +483,7 @@ def test_main_reports_config_error_with_code_2(tmp_path, capsys):
 def test_main_refuses_to_start_with_used_swap(tmp_path, monkeypatch, capsys):
     """Niepusty swap na starcie: każdy przebieg mógłby wczytywać cudze strony — seria nie startuje
     (kod 2), zanim powstanie katalog wyników."""
+    monkeypatch.setattr(preflight, "check_cpus", lambda *args, **kwargs: None)
     root = _fixture_data(tmp_path / "data")
     cfg = tmp_path / "series.yaml"
     cfg.write_text(yaml.safe_dump({

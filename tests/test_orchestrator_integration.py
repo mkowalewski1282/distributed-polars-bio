@@ -19,7 +19,7 @@ import polars as pl
 import pytest
 import yaml
 
-from bench import metrics
+from bench import metrics, preflight
 from bench import orchestrator as orch
 from bench.config import VARIANTS, parse
 from bench.data.datasets import DATASETS
@@ -117,6 +117,7 @@ def test_main_resolves_relative_data_root(data_root, tmp_path, monkeypatch):
     """Runnery Pythona działają w katalogu repozytorium, a Ballisty w ballista_genomics/ —
     względna ścieżka danych musi zostać zamieniona na bezwzględną przed startem serii."""
     monkeypatch.chdir(data_root.parent)
+    monkeypatch.setattr(preflight, "check_cpus", lambda *args, **kwargs: None)
     monkeypatch.setattr(orch, "Probe", functools.partial(orch.Probe, pswpout=lambda: 0, pswpin=lambda: 0))
     monkeypatch.setattr(metrics, "swap_used", lambda: 0)
     cfg = tmp_path / "series.yaml"

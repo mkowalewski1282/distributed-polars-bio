@@ -27,14 +27,14 @@ from importlib.metadata import version
 from pathlib import Path
 from typing import Callable
 
-from bench import metrics
+from bench import metrics, preflight as preflight_checks
 from bench.config import (
     Block, ConfigError, Scenario, SeriesConfig, blocks, check_data, load, round_order,
 )
 from bench.data.datasets import data_dir
 from bench.engines import (
     BALLISTA_DIR, CONTROL_VARIANT, PROFILES, REFERENCE_VARIANT, REPO, SYSTEM_CPUS, Command,
-    ballista_binary, cluster_cpus, make_engine, require_ballista_binaries,
+    ballista_binary, make_engine,
 )
 from bench.procutil import EngineError
 from bench.results import ResultsWriter, to_parquet
@@ -485,21 +485,8 @@ def handle_termination_signals() -> dict:
 
 
 def preflight(cfg: SeriesConfig, profile: str) -> None:
-    """Sprawdzenia przed pierwszym pomiarem: rdzenie emulowanych węzłów, pusty swap
-    (specyfikacja 3b-2, 4.3) i binarki Ballisty."""
-    needed = max(cluster_cpus(max(cfg.nodes))) + 1
-    if (os.cpu_count() or 0) < needed:
-        raise ConfigError(
-            f"not enough CPUs: N = {max(cfg.nodes)} needs {needed} threads, found {os.cpu_count()}"
-        )
-    used = metrics.swap_used()
-    if used > 0:
-        raise ConfigError(
-            f"swap is not empty ({used // 2**20} MiB used) - a run touching swap is invalid, so "
-            "a series starts from empty swap: run 'wsl --shutdown' in Windows and reopen the terminal"
-        )
-    if "ballista" in cfg.variants:
-        require_ballista_binaries(profile)
+    """Sprawdzenia przed pierwszym pomiarem (bench/preflight.py)."""
+    preflight_checks.run(cfg, profile)
 
 
 def main(argv: list[str] | None = None) -> int:
