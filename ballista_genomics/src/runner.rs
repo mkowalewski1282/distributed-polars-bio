@@ -61,6 +61,35 @@ pub fn target_partitions() -> std::result::Result<usize, String> {
     }
 }
 
+/// Limit wiadomości gRPC (bajty) klienta, schedulera i executorów (specyfikacja 3b-2, 6.2).
+/// Ładunek planu z broadcastem (nearest, coverage) niesie całą tabelę rozsyłaną w każdym zadaniu,
+/// a domyślne 16 MiB Ballisty nie mieści par 2-7 i 7-0 (zapytanie wisiało). Orkiestrator
+/// przekazuje tę samą wartość wszystkim procesom klastra i klientowi.
+pub const GRPC_MAX_MESSAGE_ENV: &str = "BALLISTA_GRPC_MAX_MESSAGE_BYTES";
+pub const DEFAULT_GRPC_MAX_MESSAGE_BYTES: usize = 512 * 1024 * 1024;
+/// Najmniejsza dopuszczalna wartość — domyślny limit Ballisty; niżej psułby zwykłe wiadomości.
+pub const MIN_GRPC_MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+
+/// Wartość z `BALLISTA_GRPC_MAX_MESSAGE_BYTES`: liczba całkowita od 16 MiB do `u32::MAX` (pola
+/// konfiguracji serwerów gRPC Ballisty są typu u32); brak albo pusta → 512 MiB. Binarki
+/// sprawdzają ją przy starcie.
+pub fn grpc_max_message_bytes() -> std::result::Result<usize, String> {
+    match std::env::var(GRPC_MAX_MESSAGE_ENV) {
+        Ok(v) if !v.is_empty() => v
+            .parse::<usize>()
+            .ok()
+            .filter(|n| (MIN_GRPC_MAX_MESSAGE_BYTES..=u32::MAX as usize).contains(n))
+            .ok_or_else(|| {
+                format!(
+                    "{GRPC_MAX_MESSAGE_ENV}: expected an integer from {MIN_GRPC_MAX_MESSAGE_BYTES} \
+                     to {}, got {v:?}",
+                    u32::MAX
+                )
+            }),
+        _ => Ok(DEFAULT_GRPC_MAX_MESSAGE_BYTES),
+    }
+}
+
 /// Bio-owa sesja klienta Ballisty z zarejestrowanymi funkcjami `dist_*`:
 /// zewnętrzny scheduler, gdy podano adres, inaczej standalone in-proc.
 /// Nic nie wypisuje na stdout — stdout `bench_client` to protokół.

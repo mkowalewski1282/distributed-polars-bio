@@ -33,6 +33,10 @@ PROFILES = ("release", "debug")
 SYSTEM_CPUS = (0, 1)
 #: Sloty zadań i wątki na węzeł: 1 rdzeń fizyczny = 2 wątki SMT.
 SLOTS_PER_NODE = 2
+#: Limit wiadomości gRPC Ballisty (specyfikacja 3b-2, 6.2): w nearest i coverage każde zadanie
+#: niesie całą tabelę rozsyłaną (~29 MiB dla 2-7, ~56 MiB dla 7-0), a wiadomość do executora —
+#: kilka zadań; domyślne 16 MiB Ballisty nie wystarcza.
+GRPC_MAX_MESSAGE_BYTES = 512 * 2**20
 #: Wynik wzorcowy: polars-bio na 1 partycji — przy większej liczbie partycji polars-bio 0.28
 #: psuje merge i subtract (bench/runners/polars_bio_runner.py).
 REFERENCE_VARIANT = "polars_bio_ref"
@@ -145,11 +149,17 @@ def _registered_executors(port: int) -> int:
 
 class BallistaEngine:
     """Scheduler na rdzeniu systemowym + N executorów (executor k na rdzeniu węzła k,
-    po 2 sloty); BIO_TARGET_PARTITIONS = 2N we wszystkich procesach i w kliencie."""
+    po 2 sloty); BIO_TARGET_PARTITIONS = 2N i BALLISTA_GRPC_MAX_MESSAGE_BYTES we wszystkich
+    procesach i w kliencie."""
 
-    def __init__(self, n_nodes: int, *, profile: str, data_root: Path, log_dir: Path):
+    def __init__(self, n_nodes: int, *, profile: str, data_root: Path, log_dir: Path,
+                 grpc_max_message_bytes: int = GRPC_MAX_MESSAGE_BYTES):
         self.n, self.profile, self.data_root, self.log_dir = n_nodes, profile, data_root, log_dir
-        self.env = {**os.environ, "BIO_TARGET_PARTITIONS": str(SLOTS_PER_NODE * n_nodes)}
+        self.env = {
+            **os.environ,
+            "BIO_TARGET_PARTITIONS": str(SLOTS_PER_NODE * n_nodes),
+            "BALLISTA_GRPC_MAX_MESSAGE_BYTES": str(grpc_max_message_bytes),
+        }
         self.procs: dict[str, subprocess.Popen] = {}
         self.work_dirs: dict[str, Path] = {}
         self.port: int | None = None

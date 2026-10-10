@@ -81,6 +81,11 @@ def test_ballista_cluster_is_pinned_and_configured(tmp_path):
         }
         assert all("BIO_TARGET_PARTITIONS=4" in environ(pid) for pid in pids.values())
         cmd = engine.command(Scenario("merge", "1"))
+        # Limit gRPC 512 MiB w każdym procesie (specyfikacja 3b-2, 6.2) — i potwierdzenie z węzłów.
+        assert all("BALLISTA_GRPC_MAX_MESSAGE_BYTES=536870912" in environ(pid) for pid in pids.values())
+        assert cmd.env["BALLISTA_GRPC_MAX_MESSAGE_BYTES"] == "536870912"
+        for name in pids:
+            assert "grpc max message 536870912 B" in (tmp_path / "logs" / f"{name}.log").read_text()
         assert cmd.argv[:3] == ["taskset", "-c", "0,1"]
         assert cmd.argv[3] == str(engines.BALLISTA_DIR / "target" / "debug" / "bench_client")
         assert cmd.env["BALLISTA_SCHEDULER_URL"] == f"df://localhost:{engine.port}"

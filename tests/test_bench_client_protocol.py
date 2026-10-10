@@ -113,3 +113,25 @@ def test_ballista_node_rejects_invalid_target_partitions():
     )
     assert r.returncode == 2, r.stderr
     assert "BIO_TARGET_PARTITIONS" in r.stderr
+
+
+@pytest.mark.parametrize("value", ["1", "x", str(16 * 2**20 - 1), str(2**32)])
+def test_invalid_grpc_limit_is_a_usage_error(value, parquet_dirs):
+    env = {**os.environ, "BALLISTA_GRPC_MAX_MESSAGE_BYTES": value}
+    r = run_client(["--op", "merge", "--left", str(parquet_dirs[0])], env=env, timeout=30)
+    assert r.returncode == 2, r.stderr
+    assert "BALLISTA_GRPC_MAX_MESSAGE_BYTES" in r.stderr and r.stdout == ""
+
+
+def test_ballista_node_rejects_invalid_grpc_limit():
+    _require(NODE_BINARY)
+    r = subprocess.run(
+        [str(NODE_BINARY), "scheduler", "--port", "1"],
+        cwd=BALLISTA_DIR,
+        env={**os.environ, "BALLISTA_GRPC_MAX_MESSAGE_BYTES": "1024"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 2, r.stderr
+    assert "BALLISTA_GRPC_MAX_MESSAGE_BYTES" in r.stderr

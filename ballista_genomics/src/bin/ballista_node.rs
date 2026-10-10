@@ -19,7 +19,7 @@ use ballista_genomics::cli::{parse_flags, required};
 use ballista_genomics::cluster::{
     bio_ballista_config, bio_logical_codec, bio_physical_codec, bio_session_state,
 };
-use ballista_genomics::runner::{bio_session_config, target_partitions};
+use ballista_genomics::runner::{bio_session_config, grpc_max_message_bytes, target_partitions};
 use ballista_scheduler::cluster::BallistaCluster;
 use ballista_scheduler::config::{SchedulerConfig, TaskDistributionPolicy};
 use ballista_scheduler::scheduler_process::start_server;
@@ -55,7 +55,7 @@ fn parse_executor(args: &[String]) -> Result<ExecutorOpts, String> {
     })
 }
 
-async fn run_scheduler(port: u16) -> Result<(), Box<dyn Error>> {
+async fn run_scheduler(port: u16, grpc_limit: usize) -> Result<(), Box<dyn Error>> {
     let mut config = SchedulerConfig::default()
         .with_hostname("localhost")
         .with_port(port)
@@ -72,19 +72,22 @@ async fn run_scheduler(port: u16) -> Result<(), Box<dyn Error>> {
         // upgrade_for_ballista() dodaje przestrzeń nazw `ballista` — bez niej
         // scheduler cicho odrzuca wszystkie klucze `ballista.*` od klienta.
         .with_override_config_producer(Arc::new(|| bio_ballista_config().upgrade_for_ballista()))
-        .with_override_session_builder(Arc::new(bio_session_state));
+        .with_override_session_builder(Arc::new(bio_session_state))
+        // Limit wiadomości gRPC serwera schedulera (specyfikacja 3b-2, 6.2).
+        .with_grpc_server_max_decoding_message_size(grpc_limit as u32)
+        .with_grpc_server_max_encoding_message_size(grpc_limit as u32);
     config.bind_host = "127.0.0.1".into();
     config.override_logical_codec = Some(bio_logical_codec());
     config.override_physical_codec = Some(bio_physical_codec());
 
     let addr: SocketAddr = format!("127.0.0.1:{port}").parse()?;
     let cluster = BallistaCluster::new_from_config(&config).await?;
-    println!("ballista_node: scheduler listening on {addr}");
+    println!("ballista_node: scheduler listening on {addr}, grpc max message {grpc_limit} B");
     start_server(cluster, addr, Arc::new(config)).await?;
     Ok(())
 }
 
-async fn run_executor(o: ExecutorOpts) -> Result<(), Box<dyn Error>> {
+async fn run_executor(o: ExecutorOpts, grpc_limit: usize) -> Result<(), Box<dyn Error>> {
     // Kontrola negatywna usuwa kodery z OBU miejsc — nadpisań i konfiguracji
     // sesji — żeby executor nie miał skąd ich wziąć.
     let config_producer: ConfigProducer = if o.codecs {
@@ -105,15 +108,19 @@ async fn run_executor(o: ExecutorOpts) -> Result<(), Box<dyn Error>> {
         override_config_producer: Some(config_producer),
         override_logical_codec: o.codecs.then(bio_logical_codec),
         override_physical_codec: o.codecs.then(bio_physical_codec),
+        // Limit wiadomości gRPC serwera executora — tu przychodzą zadania z ładunkiem broadcastu.
+        grpc_max_decoding_message_size: grpc_limit as u32,
+        grpc_max_encoding_message_size: grpc_limit as u32,
         ..ExecutorProcessConfig::default()
     };
     println!(
-        "ballista_node: executor (flight {}, grpc {}, work dir {}, slots {}, codecs: {})",
+        "ballista_node: executor (flight {}, grpc {}, work dir {}, slots {}, codecs: {}), grpc max message {} B",
         o.port,
         o.grpc_port,
         o.work_dir,
         o.concurrent_tasks,
-        if o.codecs { "yes" } else { "NO (negative control)" }
+        if o.codecs { "yes" } else { "NO (negative control)" },
+        grpc_limit
     );
     start_executor_process(Arc::new(config)).await?;
     Ok(())
@@ -143,6 +150,7 @@ async fn main() {
     if let Err(e) = target_partitions() {
         usage_error(&e);
     }
+    let grpc_limit = grpc_max_message_bytes().unwrap_or_else(|e| usage_error(&e));
     let rest = args.get(1..).unwrap_or(&[]);
     // Najpierw WYŁĄCZNIE parsowanie (kod 2), potem działanie (kod 1).
     let outcome = match args.first().map(String::as_str) {
@@ -151,12 +159,12 @@ async fn main() {
                 .and_then(|f| required::<u16>(&f, "--port"))
                 .unwrap_or_else(|e| usage_error(&e));
             init_logging();
-            run_scheduler(port).await
+            run_scheduler(port, grpc_limit).await
         }
         Some("executor") => {
             let opts = parse_executor(rest).unwrap_or_else(|e| usage_error(&e));
             init_logging();
-            run_executor(opts).await
+            run_executor(opts, grpc_limit).await
         }
         _ => usage_error("role required: scheduler or executor"),
     };

@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 
 use ballista_genomics::checksum::Checksum;
 use ballista_genomics::cli::{optional, parse_flags, required};
-use ballista_genomics::runner::{connect_from_env, target_partitions};
+use ballista_genomics::runner::{connect_from_env, grpc_max_message_bytes, target_partitions};
 use ballista_genomics::scenario::Scenario;
 use ballista_genomics::DistOp;
 use datafusion::error::Result;
@@ -42,7 +42,8 @@ const USAGE: &str = "usage:
   PATH: a Parquet (or CSV) file or a directory of them; --right for operations other than merge.
   Default --cols: contig,pos_start,pos_end (databio-8p datasets).
   --checksum: checksum of a file in the normalized schema, without running an operation.
-  Environment: BALLISTA_SCHEDULER_URL (cluster), BIO_TARGET_PARTITIONS (≥ 2, default 4).";
+  Environment: BALLISTA_SCHEDULER_URL (cluster), BIO_TARGET_PARTITIONS (≥ 2, default 4),
+  BALLISTA_GRPC_MAX_MESSAGE_BYTES (16 MiB .. 4 GiB - 1, default 512 MiB).";
 
 const DEFAULT_COLS: &str = "contig,pos_start,pos_end";
 
@@ -72,6 +73,7 @@ fn parse(args: &[String]) -> std::result::Result<Mode, String> {
     }
     // Zmienna środowiskowa to też wejście: błąd = kod 2, zanim cokolwiek się uruchomi.
     target_partitions()?;
+    grpc_max_message_bytes()?;
     let cols_raw: String =
         optional(&flags, "--cols")?.unwrap_or_else(|| DEFAULT_COLS.to_string());
     let cols: [String; 3] = cols_raw

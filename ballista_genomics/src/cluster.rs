@@ -18,7 +18,7 @@ use datafusion_proto::physical_plan::PhysicalExtensionCodec;
 
 use crate::bio_phys_codec::BioRangesPhysicalCodec;
 use crate::logical_codec::BioDistLogicalCodec;
-use crate::runner::bio_session_config;
+use crate::runner::{bio_session_config, grpc_max_message_bytes};
 
 /// Koder planu logicznego (klient → scheduler).
 pub fn bio_logical_codec() -> Arc<dyn LogicalExtensionCodec> {
@@ -31,11 +31,17 @@ pub fn bio_physical_codec() -> Arc<dyn PhysicalExtensionCodec> {
     Arc::new(BioRangesPhysicalCodec::default())
 }
 
-/// `bio_session_config()` z zarejestrowanymi oboma koderami.
+/// `bio_session_config()` z zarejestrowanymi oboma koderami i limitem wiadomości gRPC klienta
+/// (`ballista.client.grpc_max_message_size`). Ta konfiguracja trafia do klienta, a przez
+/// `override_config_producer` — do schedulera (jego klient gRPC do executorów) i executorów.
 pub fn bio_ballista_config() -> SessionConfig {
+    // Binarki sprawdzają zmienną przy starcie (błąd użycia, kod 2), więc niepoprawna wartość
+    // w tym miejscu to błąd programisty.
+    let limit = grpc_max_message_bytes().unwrap_or_else(|e| panic!("{e}"));
     bio_session_config()
         .with_ballista_logical_extension_codec(bio_logical_codec())
         .with_ballista_physical_extension_codec(bio_physical_codec())
+        .with_ballista_grpc_client_max_message_size(limit)
 }
 
 /// Bio-owy stan sesji dla podanej konfiguracji. Scheduler MUSI planować na
