@@ -16,6 +16,7 @@ import pytest
 
 from bench import checksum as cs
 from bench.ops import OPS, UNARY_OPS
+from tests.parquet_fixture import write_parts
 
 REPO = Path(__file__).resolve().parent.parent
 PROTOCOL_KEYS = {"rows", "checksum", "t_total_s", "phases", "extra", "peak_rss_bytes"}
@@ -50,11 +51,14 @@ def test_single_partition_matches_polars_bio_oracle(op, parquet_dirs, parquet_ex
     assert set(got) == PROTOCOL_KEYS
     assert got["rows"] == sum(parquet_expected[op].values())
     assert got["checksum"] == expected_checksum(op, parquet_expected)
-    assert set(got["extra"]) == {"target_partitions", "checksum_s"} and got["phases"] == {}
+    assert set(got["extra"]) == {"target_partitions", "checksum_s"}
+    assert set(got["phases"]) == {"first_batch_s"}
     assert got["extra"]["target_partitions"] == 1
     assert got["t_total_s"] > 0 and got["peak_rss_bytes"] > 10 * 2**20
-    # Czas liczenia sumy kontrolnej — część t_total_s (przegląd końcowy planu 3a).
-    assert 0 < got["extra"]["checksum_s"] <= got["t_total_s"]
+    # Suma kontrolna liczona PO zatrzymaniu zegara (specyfikacja 3b-2, 4.1): jej czas jest
+    # osobno, a faza „do pierwszej partii” mieści się w czasie całkowitym.
+    assert got["extra"]["checksum_s"] > 0
+    assert 0 < got["phases"]["first_batch_s"] <= got["t_total_s"]
 
 
 @pytest.mark.parametrize("op", OPS)
@@ -88,3 +92,12 @@ def test_missing_data_path_is_reported(tmp_path):
     r = run_runner(["--op", "merge", "--left", str(missing), "--threads", "1"])
     assert r.returncode == 1, r.stderr
     assert str(missing) in r.stderr and r.stdout == ""
+
+
+def test_empty_result_reports_zero_rows(tmp_path):
+    """Rozłączne chromosomy: overlap bez wyniku — zero wierszy, suma zerowa, faza w granicach."""
+    left = write_parts([("chrA", 10, 20), ("chrA", 30, 40)], tmp_path / "a")
+    right = write_parts([("chrB", 10, 20), ("chrB", 30, 40)], tmp_path / "b")
+    got = report(run_runner(["--op", "overlap", "--left", str(left), "--right", str(right), "--threads", "1"]))
+    assert (got["rows"], got["checksum"]) == (0, "0x0000000000000000")
+    assert 0 <= got["phases"]["first_batch_s"] <= got["t_total_s"]

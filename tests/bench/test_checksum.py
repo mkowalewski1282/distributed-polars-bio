@@ -109,3 +109,38 @@ def test_missing_key_column_is_reported():
 def test_unknown_operation_is_rejected():
     with pytest.raises(ValueError, match="unknown operation"):
         cs.Checksum("join")
+
+
+def _coverage_rows_and_table(n: int = 5000):
+    rng = random.Random(11)
+    rows = [
+        (rng.choice(["chr1", "chr2", "chrX", None]), rng.randrange(2**31), rng.randrange(2**31),
+         rng.choice([None, rng.randrange(10**6)]))
+        for _ in range(n)
+    ]
+    table = pa.table({
+        "chrom": pa.array([r[0] for r in rows], pa.string_view()),
+        "start": pa.array([r[1] for r in rows], pa.int32()),
+        "end": pa.array([r[2] for r in rows], pa.int64()),
+        "coverage": pa.array([r[3] for r in rows], pa.int64()),
+    })
+    return rows, table
+
+
+def test_update_all_matches_definition_for_many_small_parts(monkeypatch):
+    """Sail oddaje wynik w partiach po ~1,5 tys. wierszy — update_all łączy je przed liczeniem
+    (mały GROUP_ROWS wymusza kilka grup i resztę); części to na przemian Table i RecordBatch."""
+    monkeypatch.setattr(cs, "GROUP_ROWS", 700)
+    rows, table = _coverage_rows_and_table()
+    parts = [table.slice(i, 100) for i in range(0, table.num_rows, 100)]
+    parts = [p.combine_chunks().to_batches()[0] if i % 2 else p for i, p in enumerate(parts)]
+    acc = cs.Checksum("coverage")
+    acc.update_all(parts)
+    assert acc.rows == len(rows)
+    assert acc.hex() == cs.format_checksum(cs.checksum_rows("coverage", rows))
+
+
+def test_update_all_of_nothing_is_zero():
+    acc = cs.Checksum("overlap")
+    acc.update_all([])
+    assert (acc.rows, acc.hex()) == (0, "0x0000000000000000")

@@ -80,11 +80,10 @@ def test_threads_follow_variant_and_n(series):
 
 @pytest.mark.nodes(2)
 def test_every_runner_reports_checksum_time(series):
-    """Koszt sumy kontrolnej zależy od silnika (Python albo Rust, rdzenie węzła albo systemowe)
-    i jest częścią t_total_s — każdy runner go podaje (przegląd końcowy planu 3a)."""
+    """Koszt sumy kontrolnej zależy od silnika (Python albo Rust) — każdy runner go podaje
+    (przegląd końcowy planu 3a); od planu 3b-2 nie jest częścią t_total_s."""
     _, df = series
-    times = [json.loads(e)["checksum_s"] for e in df["extra"]]
-    assert all(0 < t for t in times) and (df["t_total_s"] >= pl.Series(times)).all()
+    assert all(json.loads(e)["checksum_s"] > 0 for e in df["extra"])
 
 
 @pytest.mark.nodes(2)

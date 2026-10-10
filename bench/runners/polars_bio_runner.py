@@ -2,11 +2,12 @@
 
 polars-bio czyta pliki Parquet sam — ścieżka jako wzorzec `katalog/*.parquet` (gołego
 katalogu nie przyjmuje) — a wynik dostaje jako `datafusion.DataFrame` i konsumuje
-strumieniowo (`execute_stream`), licząc sumę kontrolną partia po partii.
+strumieniowo (`execute_stream`).
 
-Czas: od wywołania operacji do ostatniej partii; bez startu procesu, importów i ustawień.
-Liczenie sumy kontrolnej jest jego częścią (specyfikacja 6.4); jego koszt podaje
-`extra.checksum_s`.
+Czas: od wywołania operacji do odebrania ostatniej partii; bez startu procesu, importów
+i ustawień. Partie są trzymane w pamięci, a suma kontrolna liczona PO zatrzymaniu zegara
+(specyfikacja 3b-2, 4.1) — jej czas podaje informacyjnie `extra.checksum_s`.
+`phases.first_batch_s`: czas do pierwszej partii (brak partii → równy t_total_s).
 Wątki: `--threads T` → `target_partitions = T` (pb.POLARS_BIO_MAX_THREADS; domyślnie
 polars-bio liczy na 1 partycji). Orkiestrator ustawia też POLARS_MAX_THREADS = T
 i przypina proces do rdzeni węzłów (taskset).
@@ -46,7 +47,6 @@ def run(op: str, left: Path, right: Path | None, cols: tuple[str, str, str], thr
     warnings.filterwarnings("ignore", message="Coordinate system metadata is missing")
     pb.set_option("datafusion.bio.coordinate_system_zero_based", True)
     pb.set_option(pb.POLARS_BIO_MAX_THREADS, threads)
-    checksum = Checksum(op)
     reset_peak_rss()
     t0 = time.perf_counter()
     if op in UNARY_OPS:
@@ -56,18 +56,23 @@ def run(op: str, left: Path, right: Path | None, cols: tuple[str, str, str], thr
             source(left), source(right), cols1=list(cols), cols2=list(cols),
             output_type="datafusion.DataFrame",
         )
-    checksum_s = 0.0
+    batches = []
+    first_batch_s = None
     for batch in df.execute_stream():
-        data = normalize_arrow(op, batch.to_pyarrow(), cols)
-        t = time.perf_counter()
-        checksum.update(data)
-        checksum_s += time.perf_counter() - t
+        batches.append(batch.to_pyarrow())
+        if first_batch_s is None:
+            first_batch_s = time.perf_counter() - t0
     t_total_s = time.perf_counter() - t0
+    t = time.perf_counter()
+    checksum = Checksum(op)
+    checksum.update_all(normalize_arrow(op, b, cols) for b in batches)
+    checksum_s = time.perf_counter() - t
     return report_line(
         rows=checksum.rows,
         checksum=checksum.hex(),
         t_total_s=t_total_s,
         peak_rss_bytes=peak_rss(),
+        phases={"first_batch_s": t_total_s if first_batch_s is None else first_batch_s},
         extra={
             "target_partitions": int(pb.get_option(pb.POLARS_BIO_MAX_THREADS)),
             "checksum_s": checksum_s,

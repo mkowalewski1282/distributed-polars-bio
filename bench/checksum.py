@@ -16,8 +16,8 @@ Sama suma liniowa (bez mix64) zależałaby tylko od sum kolumn i nie wykryłaby 
 końców przedziałów między wierszami — dlatego skrót wiersza jest nieliniowy.
 
 `row_hash`/`checksum_rows` to definicja wzorcowa (czysty Python, wiersz po wierszu);
-`Checksum` liczy to samo wektorowo (numpy) na partiach Arrow — dla runnerów, które
-konsumują wynik strumieniowo (5 mln wierszy ≈ 0,5 s).
+`Checksum` liczy to samo wektorowo (numpy) na partiach Arrow; runnery wołają `update_all`
+po zatrzymaniu zegara, na partiach trzymanych w pamięci (specyfikacja 3b-2, 4.1).
 """
 
 from __future__ import annotations
@@ -45,6 +45,10 @@ MULTIPLIERS = (
 )
 _MIX1 = 0xBF58476D1CE4E5B9
 _MIX2 = 0x94D049BB133111EB
+#: Partie wyniku łączone przed liczeniem sumy kontrolnej (Checksum.update_all): koszt numpy jest
+#: stały na wywołanie, a Sail oddaje wynik w partiach po ~1,5 tys. wierszy — sonda 3b-2: 1877
+#: partii i 1,9 s sumy kontrolnej na overlap 7-0, gdy liczono ją osobno na każdej partii.
+GROUP_ROWS = 1 << 16
 
 
 def mix64(z: int) -> int:
@@ -137,6 +141,21 @@ class Checksum:
                 acc += _u64(m) * codes
             self._sum += _mix64_array(acc).sum(dtype=np.uint64)
         self.rows += data.num_rows
+
+    def update_all(self, parts: Iterable) -> None:
+        """Dokłada wiele porcji (pyarrow.Table / RecordBatch w schemacie znormalizowanym),
+        łącząc kolejne partie w tabele po co najmniej GROUP_ROWS wierszy."""
+        group: list[pa.RecordBatch] = []
+        size = 0
+        for part in parts:
+            for batch in part.to_batches() if isinstance(part, pa.Table) else [part]:
+                group.append(batch)
+                size += batch.num_rows
+                if size >= GROUP_ROWS:
+                    self.update(pa.Table.from_batches(group))
+                    group, size = [], 0
+        if group:
+            self.update(pa.Table.from_batches(group))
 
     @property
     def value(self) -> int:
