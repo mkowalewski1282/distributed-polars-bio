@@ -77,14 +77,16 @@ def _range_operation(*args, **kwargs):
         ctx = _pool.get_nowait()
     except queue.Empty:
         ctx = _new_context()
-    try:
-        if "ctx" in kwargs:
-            kwargs["ctx"] = ctx
-        else:
-            args = (*args[:4], ctx, *args[5:])
-        return _original(*args, **kwargs)
-    finally:
-        _pool.put(ctx)
+    if "ctx" in kwargs:
+        kwargs["ctx"] = ctx
+    else:
+        args = (*args[:4], ctx, *args[5:])
+    result = _original(*args, **kwargs)
+    # Kontekst wraca do puli tylko po udanym wywołaniu: nieudane mogło zostawić zarejestrowane
+    # s1/s2, a ponowne użycie takiego kontekstu psułoby kolejne wywołania („table s1 already
+    # exists”) aż do restartu serwera. Przy wyjątku kontekst jest porzucany.
+    _pool.put(ctx)
+    return result
 
 
 def install() -> None:

@@ -76,7 +76,7 @@ def test_threads_without_lock_match_plain_polars_bio(op, bridge):
         mismatched = sorted({chrom for chrom, got in results if not got.equals(expected[chrom])})
         assert not mismatched, f"{op}: results differ for {mismatched}"
     # Nigdy więcej kontekstów niż równoczesnych wywołań (6 wątków roboczych).
-    assert 0 <= bridge.contexts_created() - before <= 6
+    assert bridge.contexts_created() - before <= 6
 
 
 def test_install_is_idempotent_and_uninstall_restores_polars_bio(bridge):
@@ -102,6 +102,32 @@ def test_sequential_calls_from_new_threads_reuse_one_context(bridge):
         worker.join()
         assert out[0].equals(expected)
     assert bridge.contexts_created() - before <= 1
+
+
+def test_context_after_failed_call_does_not_return_to_pool(bridge, monkeypatch):
+    """Nieudane wywołanie może zostawić zarejestrowane s1/s2 — jego kontekst ma zostać wyrzucony."""
+    chrom = next(iter(LEFT))
+    expected = _call("overlap", chrom)
+    bridge.install()
+    while True:  # pusta pula: kontekst nieudanego wywołania jest wtedy jedynym kandydatem
+        try:
+            bridge._pool.get_nowait()
+        except Exception:
+            break
+
+    def failing(*args, **kwargs):
+        raise RuntimeError("simulated polars-bio failure")
+
+    good = bridge._original
+    monkeypatch.setattr(bridge, "_original", failing)
+    before = bridge.contexts_created()
+    with pytest.raises(RuntimeError):
+        _call("overlap", chrom)
+    assert bridge.contexts_created() - before == 1
+    assert bridge._pool.qsize() == 0
+    monkeypatch.setattr(bridge, "_original", good)
+    assert _call("overlap", chrom).equals(expected)
+    assert bridge.contexts_created() - before == 2
 
 
 def test_import_installs_the_bridge():
