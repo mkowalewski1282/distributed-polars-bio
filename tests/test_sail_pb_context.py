@@ -1,4 +1,4 @@
-"""Kontekst polars-bio na wątek — rozwiązanie pomostowe (plan 3b-2, Zadanie 8; specyfikacja 5.1).
+"""Pula kontekstów polars-bio — rozwiązanie pomostowe (plan 3b-2, Zadanie 8; specyfikacja 5.1).
 
 Podmiana polars_bio.range_op.range_operation (sail_pb_context) ma dawać wyniki identyczne
 z publicznym pb.*(), także przy równoczesnych wywołaniach w wątkach bez blokady. Test pilnuje też
@@ -69,11 +69,14 @@ def test_threads_without_lock_match_plain_polars_bio(op, bridge):
     expected = {chrom: _call(op, chrom) for chrom in LEFT}
     bridge.install()
     jobs = list(LEFT) * 6
+    before = bridge.contexts_created()
     for _ in range(3):
         with ThreadPoolExecutor(6) as pool:
             results = list(pool.map(lambda chrom: (chrom, _call(op, chrom)), jobs))
         mismatched = sorted({chrom for chrom, got in results if not got.equals(expected[chrom])})
         assert not mismatched, f"{op}: results differ for {mismatched}"
+    # Nigdy więcej kontekstów niż równoczesnych wywołań (6 wątków roboczych).
+    assert 0 <= bridge.contexts_created() - before <= 6
 
 
 def test_install_is_idempotent_and_uninstall_restores_polars_bio(bridge):
@@ -85,14 +88,20 @@ def test_install_is_idempotent_and_uninstall_restores_polars_bio(bridge):
     assert not bridge.installed() and range_op.range_operation is original is bridge._original
 
 
-def test_each_thread_gets_its_own_context(bridge):
-    main = bridge.thread_context()
-    assert bridge.thread_context() is main
-    other = []
-    worker = threading.Thread(target=lambda: other.append(bridge.thread_context()))
-    worker.start()
-    worker.join()
-    assert other[0] is not main
+def test_sequential_calls_from_new_threads_reuse_one_context(bridge):
+    """Jak w Sailu: kolejne wywołania, każde z nowego, krótkotrwałego wątku — pula ma utworzyć
+    najwyżej jeden kontekst (implementacja na wątek utworzyłaby 10)."""
+    chrom = next(iter(LEFT))
+    expected = _call("overlap", chrom)
+    bridge.install()
+    before = bridge.contexts_created()
+    for _ in range(10):
+        out = []
+        worker = threading.Thread(target=lambda: out.append(_call("overlap", chrom)))
+        worker.start()
+        worker.join()
+        assert out[0].equals(expected)
+    assert bridge.contexts_created() - before <= 1
 
 
 def test_import_installs_the_bridge():

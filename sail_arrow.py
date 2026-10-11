@@ -7,8 +7,8 @@ przechodzi przez Arrow bez zamiany na wiersze Pythona — sonda 3b-2: 10–20× 
 na parze 1-2, wynik zgodny z polars-bio dla pięciu operacji.
 
 Tryby dostępu do polars-bio w procesie serwera Saila:
-- "context" — osobny kontekst polars-bio na wątek (sail_pb_context), bez blokady: chromosomy
-  liczą się równolegle; wariant główny `sail`;
+- "context" — kontekst polars-bio z puli, jeden na równoczesne wywołanie (sail_pb_context), bez
+  blokady: chromosomy liczą się równolegle; wariant główny `sail`;
 - "lock" — globalny kontekst i blokada sail_pb_guard.PB_LOCK (jeden chromosom naraz); wariant
   porównawczy `sail_lock`.
 
@@ -78,7 +78,7 @@ def evaluate(op: str, left: pa.Table, right: pa.Table | None, mode: str, phase_l
     right_df = None if right is None else _frame(right)
     wait_s = 0.0
     if mode == "context":
-        import sail_pb_context  # noqa: F401 — import instaluje kontekst na wątek
+        import sail_pb_context  # noqa: F401 — import instaluje pulę kontekstów
 
         t = time.perf_counter()
         result = _call_polars_bio(op, left_df, right_df)
