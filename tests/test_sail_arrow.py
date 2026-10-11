@@ -1,5 +1,5 @@
 """Ścieżka Arrow w Sailu (plan 3b-2, Zadanie 9; specyfikacja 5.2): groupBy/cogroup(...).applyInArrow
-z polars-bio w trybie „kontekst na wątek” i „blokada” — wynik zgodny z polars-bio, plik faz."""
+z polars-bio w trybie „pula kontekstów” i „blokada” — wynik zgodny z polars-bio, plik faz."""
 
 from __future__ import annotations
 

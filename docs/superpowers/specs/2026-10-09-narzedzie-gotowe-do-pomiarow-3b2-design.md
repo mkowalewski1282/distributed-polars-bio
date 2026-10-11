@@ -183,6 +183,7 @@ czasu sesji Sail (sesje są usuwane zaraz po przebiegu), areny glibc (`MALLOC_AR
 ustawienia alokatora Arrow/jemalloc — bez efektu. Poprzednia próba serii (przerwana, nieprzechowana):
 przy wersji na wątek szczyt serwera `sail` N = 1 na 7-0 rósł w jednym bloku 1,32 → 1,91 → 2,08 →
 2,52 GB aż do swapu.
+
 ### 5.2 Zapytanie
 
 - `merge`: `tabela.groupBy("chrom").applyInArrow(f, schemat)`;
@@ -273,10 +274,10 @@ Orkiestrator czyta fragment logu serwera Saila z czasu przebiegu i liczy uruchom
 - **Szybki błąd zamiast wiszenia:** po przekroczeniu limitu Ballista 53 (tryb push) nie zgłasza
   błędu zapytania, tylko ponawia (zapytanie wisi do timeoutu 20 min). Tabela rozsyłana jest
   materializowana przy planowaniu fizycznym w schedulerze (`DistCoverageProvider::scan`,
-  odpowiednik w `nearest`) — tam sprawdzamy, czy wiadomość z ładunkami dla wszystkich slotów
-  executora zmieści się w limicie (tabela × `MESSAGE_SIZE_MARGIN` = 2; Ballista 53 wysyła plan
-  etapu raz na executor i etap — `MultiTaskDefinition`); jeśli nie, planowanie kończy się błędem z rozmiarem i limitem,
-  który dociera do klienta jako błąd zapytania. Dokładne miejsce sprawdzenia (planowanie albo
+  odpowiednik w `nearest`) — tam sprawdzamy, czy wiadomość startowa (jedna na executor i etap,
+  `MultiTaskDefinition`) zmieści się w limicie: rozmiar tabeli × `MESSAGE_SIZE_MARGIN` = 2
+  (margines bezpieczeństwa na resztę planu); jeśli nie, planowanie kończy się błędem z rozmiarem
+  i limitem, który dociera do klienta jako błąd zapytania. Dokładne miejsce sprawdzenia (planowanie albo
   kodowanie) ustala plan; warunek: zapytanie kończy się czytelnym błędem.
 - Plan zapasowy ze specyfikacji metodyki 9.2 (ładunek ze ścieżką do pliku zamiast danych) — tylko
   jeśli podniesienie limitu nie wystarczy, po decyzji użytkownika.

@@ -308,8 +308,9 @@ etapami, po jednej zmianie. Punkty dopisywane po każdym etapie.
    - 281 przebiegów, 0 błędów, 0 niezgodności sum, swap 0; 50 nieważnych = 2 bloki powtórzone
      przez dryf (Ballista N = 3: 17%, Sail N = 3: 20%; powtórzenia 2,4% i 2,5%) — przejściowe
      spowolnienia maszyny, seria uznana za zaliczoną.
-   - Ballista release vs debug (smoke 04.10.2026), mediana `t_total_s` przebiegów mierzonych
-     (po wszystkich przebiegach, bo debug nie ma ważnego przebiegu przy N = 3):
+   - Ballista release vs debug (smoke 04.10.2026), mediana `t_total_s` ze wszystkich
+     przebiegów mierzonych, także nieważnych (n = 1–2 na komórkę w release, n = 2 w debug; w debug
+     przy N = 3 tylko przebiegi nieważne):
 
      | Scenariusz | N | release [s] | debug [s] | debug / release |
      |---|---|---|---|---|
@@ -320,8 +321,8 @@ etapami, po jednej zmianie. Punkty dopisywane po każdym etapie.
      | subtract 1-2 | 1 / 2 / 3 | 0,159 / 0,091 / 0,110 | 1,10 / 0,79 / 0,81 | 6,9 / 8,6 / 7,3 |
 
      Debug jest 4,9–10,2× wolniejszy (mediana ilorazów ≈ 6,9×). Serie nie są w pełni
-     porównywalne: debug liczył sumę kontrolną w `t_total_s` (`checksum_s` ≈ 0,16 s wobec 0,005 s
-     w release, więc część różnicy to zmiana protokołu), nie miał pauzy `settle_s`, a przebiegi
+     porównywalne: debug liczył sumę kontrolną w `t_total_s` (`checksum_s` ≈ 0,1 s (0,08–0,16 s)
+     wobec ≈ 0,002–0,005 s w release, więc część różnicy to zmiana protokołu), nie miał pauzy `settle_s`, a przebiegi
      były pojedyncze (1–2 przebiegi na komórkę, bez rozgrzewki). Rząd wielkości jest jednak
      pewny: build debug nie nadaje się do pomiarów.
 6. **Broadcast Ballisty (`broadcast-check` 11.10.2026, strażnik gRPC).**

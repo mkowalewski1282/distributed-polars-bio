@@ -152,19 +152,16 @@ muszą być jednoczesne) — oraz maksimum per węzeł.
    = 10) → 1 przebieg rozgrzewkowy na scenariusz (odrzucany) → **5 rund mierzonych**; w każdej
    rundzie scenariusze w losowej kolejności (ziarno zapisywane) → przebiegi kontrolne →
    zatrzymanie klastra. Przed każdym przebiegiem (mierzonym, kontrolnym, rozgrzewkowym,
-   wzorcowym; nie przed `EXPLAIN ANALYZE`) pauza `settle_s` (3,0 s w konfiguracjach na laptopie):
-   WSL2 po ~2 s zwraca zwolnioną pamięć do Hyper-V, więc przebieg startujący później zaczyna od
-   „zimnej” pamięci (~+0,1 s na ~650 MB RSS, w całości w `first_batch_s`), a przebieg tuż po
-   poprzednim — od „ciepłej”; pauza ≥ 2 s czyni stan zimny deterministycznym (kosztem ~+0,1 s na
-   `overlap` 7-0 względem przebiegów bez przerwy). Opis i dowody: spec 3b-2, 9.1.
+   wzorcowym; nie przed `EXPLAIN ANALYZE`) pauza `settle_s` (3,0 s na laptopie): WSL2 zwraca
+   zwolnioną pamięć do Hyper-V po ~2 s, więc pauza czyni stan „zimnej” pamięci
+   deterministycznym (~+0,1 s na `overlap` 7-0). Mechanizm i dowody: spec 3b-2, 9.1.
 3. **Przebieg kontrolny:** `overlap` 7-0 w polars-bio A (zadanie `control` z konfiguracji),
    `control_repeats` = 10 przebiegów na każdym końcu bloku; porównanie **median** ważnych
    przebiegów. Dryf median > 10% (`control_tolerance`) ⇒ blok powtarzany raz; po drugim dryfie
    przebiegi bloku zostają nieważne. Mniej niż połowa ważnych przebiegów kontrolnych na którymś
-   końcu ⇒ jak dryf (`control run invalid`). Badanie szumu (20 przebiegów, losowe podziały na
-   dwie grupy po 10; kryterium: odsetek fałszywych dryfów ≤ 5%): bez pauzy 47,7% i 65,0%
-   (rozkład dwumodalny ~0,58 / ~0,72 s, różnica w `first_batch_s`), z `settle_s` = 3,0 s —
-   **1,8%** (spełnione); spec 3b-2, 9.1.
+   końcu ⇒ jak dryf (`control run invalid`). Badanie szumu (kryterium: odsetek fałszywych
+   dryfów ≤ 5%): bez pauzy 47,7% i 65,0%, z `settle_s` = 3,0 s **1,8%** (spełnione); szczegóły:
+   spec 3b-2, 9.1.
 4. **Konsumpcja wyniku:** partie wyniku trzymane w pamięci klienta, bez zapisu na dysk; zegar
    staje po ostatniej partii, a liczba wierszy i suma kontrolna niezależna od kolejności
    wierszy (sekcja 8.4) liczone są po zatrzymaniu zegara (`checksum_s` informacyjnie, poza
@@ -271,14 +268,16 @@ bench/
     polars_bio_runner.py
     sail_runner.py
     sail_server.py serwer Saila na czas bloku
-sail_arrow.py      ścieżka applyInArrow Saila (katalog główny repo, importowana po nazwie)
-sail_pb_context.py pula kontekstów polars-bio (pomost bez blokady; katalog główny repo)
   data/download.py pobranie databio-8p (poza gitem)
   analyze.py       wyniki -> tabele i wykresy (po pomiarach)
   results/         surowe wyniki (Parquet) + plany EXPLAIN ANALYZE (w repozytorium)
 ballista_genomics/src/bin/bench_client.rs   runner Ballisty (Rust)
 tests/bench/       testy narzędzia
 ```
+
+W katalogu głównym repozytorium (importowane po nazwie, bo funkcje dla Saila serializuje
+cloudpickle): `sail_arrow.py` — ścieżka `applyInArrow`; `sail_pb_context.py` — pula kontekstów
+polars-bio (pomost bez blokady); `sail_bio.py` i `sail_pb_guard.py` — UDTF i blokada.
 
 Ballista nie wymaga wrappera pythonowego: runnerem jest binarka Rust `bench_client`,
 uruchamiana przez orkiestrator jako proces. Istniejąca binarka `dist_ops` (używana przez testy)
@@ -292,14 +291,13 @@ zapis wyniku do Parquet, wynik w schemacie 8.4); w planie 3a doszły czas, suma 
 Każdy plik opisuje serię: listę scenariuszy (`op`, `pair` lub `dataset`, opcjonalnie
 `algorithm`), listę wariantów (`polars_bio_a`, `polars_bio_b`, `ballista`, `sail`), wartości N,
 liczbę powtórzeń (`repeats`, domyślnie 5), rozgrzewkę (`warmup`, domyślnie 1), limit czasu
-(`timeout_s`, domyślnie 1200), ziarno losowania kolejności (`seed`). Plan 3b-2 dodaje klucze: `control` (zadanie kontrolne,
-domyślnie `{op: overlap, pair: "7-0"}`), `control_repeats` (domyślnie 10), `explain` (dodatkowy
+(`timeout_s`, domyślnie 1200), ziarno losowania kolejności (`seed`). Plan 3b-2 dodaje klucze:
+`control` (zadanie kontrolne, domyślnie `{op: overlap, pair: "7-0"}`), `control_repeats`
+(domyślnie 10), `explain` (dodatkowy
 przebieg `EXPLAIN ANALYZE` w blokach Ballisty, domyślnie `false`), `expected_invalid`
 (oczekiwane nieważności; na końcu serii podsumowanie `smoke OK` / `smoke FAILED`) i `settle_s`
-(pauza przed przebiegiem, domyślnie 0). Warianty obejmują też `sail_lock` i `sail_udtf`.
-Konfiguracja jest
-walidowana przed startem serii (nieznane klucze, brak plików danych ⇒ błąd przed pierwszym
-pomiarem).
+(pauza przed przebiegiem, domyślnie 0). Warianty obejmują też `sail_lock` i `sail_udtf`. Konfiguracja jest walidowana przed startem
+serii (nieznane klucze, brak plików danych ⇒ błąd przed pierwszym pomiarem).
 
 ### 8.3 Protokół runnera
 
@@ -473,7 +471,7 @@ pomiarowym.
 |---|---|---|
 | Emulacja węzłów na jednej maszynie (wspólne L3, pamięć, dysk; brak sieci) | zawyżona sprawność rozproszenia względem prawdziwego klastra | opis w pracy; chmura jako rozszerzenie |
 | Wirtualne CPU w WSL przenoszone przez Hyper-V | szum pomiarowy | 5 powtórzeń, mediana, przebieg kontrolny |
-| Przegrzewanie / tryb oszczędzania energii laptopa | dryf czasów | zasilacz, plan wydajności, losowa kolejność, przebieg kontrolny |
+| Przegrzewanie / tryb oszczędzania energii laptopa | dryf czasów | zasilacz, suwak trybu zasilania na najlepszej wydajności (plan zasilania Windows bez zmian — użytkownik nie może go zmienić, sekcja 3), losowa kolejność, `settle_s`, przebiegi kontrolne wykrywają dryf |
 | Asymetria Saila (jeden proces, wspólna pamięć procesu) | porównanie Ballista vs Sail niesymetryczne | jawny opis, pomiar `pb_s`/`lock_wait_s`, próba K8s |
 | Asymetria klientów (PySpark vs Rust) | czas odbioru wyniku Saila zawyżony względem Ballisty | faza odbioru (`t_total_s − first_batch_s`) raportowana osobno; sonda partii (spec 3b-2, Zadanie 12); `SAIL_EXECUTION__BATCH_SIZE=65536` to strojenie silnika (Ballista: domyślne 8192), zmierzone tylko na ścieżce Arrow |
 | Stan pamięci WSL2 (zwracanie pamięci do Hyper-V) i dryf przebiegu kontrolnego | dwumodalny czas (~0,58 / ~0,72 s na 7-0), fałszywe dryfy | `settle_s`; przebiegi kontrolne zawsze po pauzie; końcowe przebiegi kontrolne bywają wolniejsze od początkowych (sekcja 12) |
