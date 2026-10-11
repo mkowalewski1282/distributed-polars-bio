@@ -76,7 +76,8 @@ otwarty, bez przypięcia klienta):
    `nearest`, `coverage`, `merge`, `subtract`) budują `RangeOptions` i wołają
    `polars_bio.range_op.range_operation(df1, df2, options, output_type, ctx, …)`. Podmiana tej
    funkcji na wersję, która w miejsce `ctx` wstawia kontekst bieżącego wątku, czyni publiczne
-   `pb.*()` bezpiecznymi wątkowo (sonda z kontekstem na wątek): 6 wątków, 3 rundy, 24 grupy, zero rozbieżności dla pięciu
+   `pb.*()` bezpiecznymi wątkowo (sonda z kontekstem na wątek): 6 wątków, 3 rundy, 24 grupy,
+   zero rozbieżności dla pięciu
    operacji.
 4. **W Sailu blokada kosztuje dziś ~10%.** `overlap` 7-0, Arrow: z blokadą 6,49 / 6,47 / 5,40 s,
    z kontekstem na wątek 5,91 / 5,57 / 4,79 s (N = 1 / 2 / 3) — liczby z wcześniejszej wersji
@@ -286,7 +287,8 @@ Orkiestrator czyta fragment logu serwera Saila z czasu przebiegu i liczy uruchom
 
 Dekodowanie naszych węzłów w executorze (`bio_phys_codec.rs`) loguje rozmiar odebranego ładunku
 broadcastu (stały prefiks, poziom info). Orkiestrator sumuje wpisy z logów executorów z czasu
-przebiegu → kolumna `broadcast_bytes` (bajty, które faktycznie dotarły: ładunek × liczba wiadomości startowych — jedna na executor i etap w trybie push — a nie × liczba zadań).
+przebiegu → kolumna `broadcast_bytes` (bajty, które faktycznie dotarły: ładunek × liczba
+wiadomości startowych — jedna na executor i etap w trybie push — a nie × liczba zadań).
 Dla operacji bez broadcastu: 0. Wielkość potrzebna do hipotezy P2.
 
 ### 6.4 Fazy
@@ -433,7 +435,7 @@ Bez pauzy rozkład dwumodalny (szybkie ~0,58 s, wolne ~0,72 s; różnica w `firs
 **Smoke na release** (`smoke/20261010-235255`, ~37 min, `settle_s` 3 s): 281 przebiegów, 50
 nieważnych = 2 bloki powtórzone przez dryf × 25 przebiegów (Ballista N = 3, próba 1: mediany
 kontrolne 0,812 → 0,670 s, 17%; Sail N = 3, próba 1: 0,705 → 0,844 s, 20%; oba powtórzenia czyste,
-2,4% i 2,5%; pozostałe bloki 0,2–3,9%), błędów 0, niezgodności sum 0, swap 0, `sail_workers` = N,
+2,3% i 2,5%; pozostałe bloki 0,2–3,9%), błędów 0, niezgodności sum 0, swap 0, `sail_workers` = N,
 `broadcast_bytes` `nearest`/`coverage` 1-2 = 10 709 132 × N (N = 1, 2, 3), pozostałe operacje 0,
 15 plików EXPLAIN. Diagnoza: przejściowe spowolnienia maszyny; użytkownik uznał serię za
 zaliczoną.
@@ -453,9 +455,9 @@ wszystkich wariantach. Mediany ważnych przebiegów (s), N = 1 / N = 3:
 
 `sail_lock`/`sail`: 1,08–1,49 (7-0: 1,11 / 1,15); `sail_udtf`/`sail`: 12–24×. Komórki UDTF N = 3
 dla par 1-2 mają 1–2 ważne przebiegi. Szczyt RSS serwera Saila na 7-0: `sail` 1,93 / 2,30 GB,
-`sail_lock` 1,80 / 2,13 GB, `sail_udtf` 3,12 GB (N = 1) i 3,37–3,79 GB (N = 3) → swap
-(`pswpout` +2 783 … +12 055 stron) w rozgrzewce i we wszystkich 3 rundach → nieważne, plus
-kaskada `pswpin` unieważniająca 8 innych przebiegów UDTF i 3 końcowe przebiegi kontrolne.
+`sail_lock` 1,80 / 2,13 GB, `sail_udtf` 3,12 GB (N = 1, bez swapu; 3 ważne przebiegi na
+komórkę) i 3,37–3,79 GB (N = 3). Swap wystąpił tylko przy `sail_udtf` N = 3: `pswpout`
++2 783 … +12 055 stron w rozgrzewce i we wszystkich 3 rundach → nieważne, plus kaskada `pswpin` unieważniająca 8 innych przebiegów UDTF i 3 końcowe przebiegi kontrolne.
 Nieważne: bloki powtórzone przez dryf (`sail` N = 3, próba 1: 10,7%, powtórzenie 0,0%;
 `sail_udtf` N = 1, próba 1: 13,4%, powtórzenie czyste) = 24 + 24 przebiegi + 40 kontrolnych;
 reszta to swap. Wpisu `expected_invalid` nie da się użyć dla kaskady `pswpin` (dotyka innych
@@ -468,11 +470,17 @@ scenariuszy i wariantu kontrolnego), więc serii nie powtarzano.
 29 198 988 × N, 7-0 57 383 884 × N (dużo poniżej 512 MiB). `peak_rss_sum` 0,74–2,76 GB
 (pojedyncze przebiegi, zaszumione). Pliki EXPLAIN dla n1–n3.
 
-**Wzorzec dryfu kontroli (otwarte).** Końcowe przebiegi kontrolne są niemal zawsze wolniejsze
-od początkowych (sail-paths: 2,2%, 10,7%, 8,0%, 8,9%, 13,4%; różnica w `first_batch_s`: start
-~0,28–0,31 s, koniec ~0,33–0,36 s; końcowe często przyspieszają w ciągu 10 przebiegów).
-Hipotezy niesprawdzone: wyczerpany budżet taktowania CPU po ciężkim bloku albo pamięć trzymana
-przez silnik. Do zbadania przed 3b-3.
+**Dryf kontroli (otwarte).** Dryf ze znakiem = (mediana końca − mediana początku) / mediana
+początku, z ważnych przebiegów kontrolnych. Sail-paths, pierwsze próby: `sail` N = 1 −2,2%,
+`sail` N = 3 +10,7%, `sail_lock` N = 1 +8,0%, `sail_lock` N = 3 +8,9%, `sail_udtf` N = 1
++13,4%, `sail_udtf` N = 3 +7,9%; powtórzenia: `sail` N = 3 +0,1%, `sail_udtf` N = 1 +2,9% — koniec
+wolniejszy w 6 z 8 bloków (1 mniej więcej równy, 1 szybszy). Smoke (`20261010-235255`) takiego
+wzorca nie pokazuje: 5 bloków z szybszym końcem, 5 z wolniejszym, 1 równy; największy dryf
+(Ballista N = 3, 17,5%) miał końcowe kontrole szybsze (0,812 → 0,670 s). Wniosek: tendencja
+widoczna w sail-paths (bloki z ciężkimi przebiegami Saila), niepotwierdzona ogólnie. Hipotezy bez
+zmian: wyczerpany budżet taktowania CPU po ciężkim bloku albo pamięć trzymana przez silnik
+w trakcie końcowych kontroli. Do ponownej oceny przed 3b-3 na wartościach ze znakiem dla
+wszystkich zacommitowanych serii.
 
 **Uwagi operacyjne.** Czyszczenie swapu: `sudo swapoff -a && sudo swapon /dev/sdc` (urządzenie
 swapu WSL nie jest w fstab, więc `swapon -a` go nie włącza). `vm.swappiness` = 60 (domyślne)
@@ -483,18 +491,23 @@ swapu; logi serii przez `tee` lub przekierowanie; sprawdzenie VS Code:
 
 ## 10. Kryteria ukończenia
 
-1. Pakiet testów zielony lokalnie (z `real_data`) i w CI.
+1. Pakiet testów zielony lokalnie (z `real_data`) i w CI. **Status:** lokalnie spełnione; część CI
+   oczekuje — wymaga pusha, a ten wymaga zgody użytkownika.
 2. Smoke na release zaliczony automatycznie (`smoke OK`): każdy przebieg ważny albo na liście
-   `expected_invalid`; żaden blok nie powtórzony przez dryf.
+   `expected_invalid`; żaden blok nie powtórzony przez dryf. **Status:** zaakceptowane przez
+   użytkownika (10.10.2026): seria zgłosiła FAILED z powodu 2 bloków powtórzonych przez dryf
+   (powtórzenia czyste), bez błędów i niezgodności sum.
 3. Badanie szumu: odsetek fałszywych dryfów przy progu 10% ≤ 5%; inaczej decyzja użytkownika
-   o progu, na podstawie liczb.
+   o progu, na podstawie liczb. **Status:** spełnione (1,8% z `settle_s` = 3,0 s).
 4. Komórki ⚠ macierzy (Ballista: `nearest`, `coverage` na 2-7 i 7-0) wykonują się albo mają
-   opisany powód niewykonalności.
+   opisany powód niewykonalności. **Status:** spełnione (`broadcast-check`, sekcja 9.1).
 5. Sail liczy ścieżką Arrow z pulą kontekstów; porównanie trzech ścieżek zapisane w wynikach
-   i w `wnioski_claude.md`.
+   i w `wnioski_claude.md`. **Status:** zaakceptowane przez użytkownika (11.10.2026): sail-paths
+   zgłosiło FAILED (pamięć UDTF N = 3 na 7-0 i kaskada `pswpin`, 2 powtórzenia przez dryf), ale
+   wyniki porównania są kompletne w granicach opisanych w 9.1.
 6. Fazy zapisywane: `first_batch_s` we wszystkich silnikach, `pb_s` w Sailu, pliki `EXPLAIN
-   ANALYZE` dla Ballisty; `broadcast_bytes` wypełnione.
-7. Dokumentacja zaktualizowana (etap 6).
+   ANALYZE` dla Ballisty; `broadcast_bytes` wypełnione. **Status:** spełnione.
+7. Dokumentacja zaktualizowana (etap 6). **Status:** spełnione.
 
 ## 11. Ryzyka
 

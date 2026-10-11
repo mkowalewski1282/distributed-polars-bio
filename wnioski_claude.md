@@ -283,8 +283,8 @@ etapami, po jednej zmianie. Punkty dopisywane po każdym etapie.
      0,31 / 0,23 / 0,28 s (overlap / nearest / coverage / merge / subtract).
    - Seria sail-paths (mediany, N = 1 / 3): UDTF/pula 12–24×; np. `overlap` 1-2: 5,24 / 5,34 s vs
      0,257 / 0,224 s; `overlap` 7-0: 41,57 s vs 2,572 s (N = 1). UDTF na 7-0 trzyma serwer w
-     3,12 GB (N = 1) i 3,37–3,79 GB (N = 3) wobec 1,8–2,3 GB ścieżek Arrow → swap i nieważne
-     przebiegi.
+     3,12 GB (N = 1, bez swapu, 3 ważne przebiegi na komórkę) i 3,37–3,79 GB (N = 3) wobec
+     1,8–2,3 GB ścieżek Arrow; swap i nieważne przebiegi tylko przy UDTF N = 3.
    - Wszystkie trzy warianty dają identyczne wiersze i sumy kontrolne, więc różnica to koszt
      mechanizmu, nie algorytmu: wzorzec `collect_list` + LATERAL + `explode` kontra wymiana tabel
      Arrow. Wniosek o dojrzałości API rozszerzeń Saila: `applyInArrow` (API PySparka) działa od
@@ -306,7 +306,7 @@ etapami, po jednej zmianie. Punkty dopisywane po każdym etapie.
      byłoby 11,4%, 5% — 23,4%. Pauza wprowadza stan deterministycznie zimny (czasy ~+0,1 s na 7-0).
 5. **Smoke na release (10.10.2026, `settle_s` 3 s, ~37 min).**
    - 281 przebiegów, 0 błędów, 0 niezgodności sum, swap 0; 50 nieważnych = 2 bloki powtórzone
-     przez dryf (Ballista N = 3: 17%, Sail N = 3: 20%; powtórzenia 2,4% i 2,5%) — przejściowe
+     przez dryf (Ballista N = 3: 17%, Sail N = 3: 20%; powtórzenia 2,3% i 2,5%) — przejściowe
      spowolnienia maszyny, seria uznana za zaliczoną.
    - Ballista release vs debug (smoke 04.10.2026), mediana `t_total_s` ze wszystkich
      przebiegów mierzonych, także nieważnych (n = 1–2 na komórkę w release, n = 2 w debug; w debug
@@ -342,8 +342,12 @@ etapami, po jednej zmianie. Punkty dopisywane po każdym etapie.
    pandas >= 3.0.0” (`pyspark/sql/connect/utils.py:41`, `pyspark/testing/utils.py:127`) na obu
    ścieżkach; ścieżka UDTF dodatkowo `pyspark/sql/connect/udtf.py:88`. Bez `Pandas4Warning`,
    żadnych ostrzeżeń po stronie serwera.
-8. **Otwarte: końcowe przebiegi kontrolne są wolniejsze od początkowych.** W sail-paths dryfy
-   2,2%, 10,7%, 8,0%, 8,9% i 13,4%; różnica w `first_batch_s` (start ~0,28–0,31 s, koniec
-   ~0,33–0,36 s), końcowe często przyspieszają w ciągu 10 przebiegów. Hipotezy niesprawdzone:
-   wyczerpany budżet taktowania CPU po ciężkim bloku albo pamięć trzymana przez silnik podczas
-   końcowych kontroli. Do zbadania przed 3b-3.
+8. **Otwarte: dryf kontroli ze znakiem.** Dryf = (mediana końca − mediana początku) / mediana
+   początku. Sail-paths, pierwsze próby: `sail` N = 1 −2,2%, `sail` N = 3 +10,7%, `sail_lock`
+   N = 1 +8,0%, N = 3 +8,9%, `sail_udtf` N = 1 +13,4%, N = 3 +7,9%; powtórzenia `sail` N = 3
+   +0,1%, `sail_udtf` N = 1 +2,9% — koniec wolniejszy w 6 z 8 bloków. Smoke (20261010-235255)
+   bez takiego wzorca: 5 bloków z szybszym końcem, 5 z wolniejszym, 1 równy; największy dryf
+   (Ballista N = 3, 17,5%) miał końcowe kontrole szybsze (0,812 → 0,670 s). Tendencja widoczna
+   w sail-paths (ciężkie bloki Saila), niepotwierdzona ogólnie. Hipotezy bez zmian: budżet
+   taktowania CPU po ciężkim bloku albo pamięć trzymana przez silnik. Do ponownej oceny przed
+   3b-3 na wartościach ze znakiem dla wszystkich zacommitowanych serii.

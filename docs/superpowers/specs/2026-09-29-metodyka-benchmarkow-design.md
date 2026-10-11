@@ -293,11 +293,11 @@ Każdy plik opisuje serię: listę scenariuszy (`op`, `pair` lub `dataset`, opcj
 liczbę powtórzeń (`repeats`, domyślnie 5), rozgrzewkę (`warmup`, domyślnie 1), limit czasu
 (`timeout_s`, domyślnie 1200), ziarno losowania kolejności (`seed`). Plan 3b-2 dodaje klucze:
 `control` (zadanie kontrolne, domyślnie `{op: overlap, pair: "7-0"}`), `control_repeats`
-(domyślnie 10), `explain` (dodatkowy
-przebieg `EXPLAIN ANALYZE` w blokach Ballisty, domyślnie `false`), `expected_invalid`
-(oczekiwane nieważności; na końcu serii podsumowanie `smoke OK` / `smoke FAILED`) i `settle_s`
-(pauza przed przebiegiem, domyślnie 0). Warianty obejmują też `sail_lock` i `sail_udtf`. Konfiguracja jest walidowana przed startem
-serii (nieznane klucze, brak plików danych ⇒ błąd przed pierwszym pomiarem).
+(domyślnie 10), `explain` (dodatkowy przebieg `EXPLAIN ANALYZE` w blokach Ballisty, domyślnie
+`false`), `expected_invalid` (oczekiwane nieważności; na końcu serii podsumowanie
+`<seria> OK` / `<seria> FAILED`) i `settle_s` (pauza przed przebiegiem, domyślnie 0). Warianty
+obejmują też `sail_lock` i `sail_udtf`. Konfiguracja jest walidowana przed startem serii
+(nieznane klucze, brak plików danych ⇒ błąd przed pierwszym pomiarem).
 
 ### 8.3 Protokół runnera
 
@@ -357,7 +357,8 @@ Jeden wiersz na przebieg: `timestamp`, `git_commit`, `engine_versions`, `series`
 (JSON: proces → bajty), `base_rss` (RSS tuż po wyzerowaniu licznika szczytu), `peak_rss_sum`, `shuffle_bytes`, `broadcast_bytes`, `pswpout_delta`.
 
 Plan 3a dodaje `is_reference` (przebieg wzorcowy), `attempt` (2 — powtórzenie bloku po
-dryfie), `wall_s` (czas procesu runnera ze startem, do szacowania długości serii), `extra`
+dryfie), `wall_s` (czas procesu runnera ze startem, do szacowania długości serii; dochodzi `settle_s`
+na przebieg — smoke: 281 przebiegów × 3 s ≈ 14 z ~37 min), `extra`
 (JSON z runnera, m.in. `target_partitions`) i `pswpin_delta` (wczytania ze swapu, sekcja 6).
 Katalog serii zawiera też `env.json` (środowisko procesów silników po wyczyszczeniu
 odziedziczonych zmiennych), `logs/` (stderr nieudanych przebiegów) i `explain/`. Zapis:
@@ -474,7 +475,7 @@ pomiarowym.
 | Przegrzewanie / tryb oszczędzania energii laptopa | dryf czasów | zasilacz, suwak trybu zasilania na najlepszej wydajności (plan zasilania Windows bez zmian — użytkownik nie może go zmienić, sekcja 3), losowa kolejność, `settle_s`, przebiegi kontrolne wykrywają dryf |
 | Asymetria Saila (jeden proces, wspólna pamięć procesu) | porównanie Ballista vs Sail niesymetryczne | jawny opis, pomiar `pb_s`/`lock_wait_s`, próba K8s |
 | Asymetria klientów (PySpark vs Rust) | czas odbioru wyniku Saila zawyżony względem Ballisty | faza odbioru (`t_total_s − first_batch_s`) raportowana osobno; sonda partii (spec 3b-2, Zadanie 12); `SAIL_EXECUTION__BATCH_SIZE=65536` to strojenie silnika (Ballista: domyślne 8192), zmierzone tylko na ścieżce Arrow |
-| Stan pamięci WSL2 (zwracanie pamięci do Hyper-V) i dryf przebiegu kontrolnego | dwumodalny czas (~0,58 / ~0,72 s na 7-0), fałszywe dryfy | `settle_s`; przebiegi kontrolne zawsze po pauzie; końcowe przebiegi kontrolne bywają wolniejsze od początkowych (sekcja 12) |
+| Stan pamięci WSL2 (zwracanie pamięci do Hyper-V) i dryf przebiegu kontrolnego | dwumodalny czas (~0,58 / ~0,72 s na 7-0), fałszywe dryfy | `settle_s`; przebiegi kontrolne zawsze po pauzie; dryf kontroli ze znakiem do ponownej oceny (sekcja 12) |
 | Strażnik broadcastu koduje tabelę do IPC w schedulerze | niemierzony narzut w `t_total_s` `nearest`/`coverage` (Ballista) | opis w 9.2; bez korekty |
 | Zbiory AIList różnią się strukturą, nie tylko rozmiarem | pomieszanie efektu rozmiaru i struktury w P1 | raportowanie *non-flatness* przy każdej parze |
 | Limit gRPC przy broadcaście | brak wyników dla części komórek | sekcja 9.2 |
@@ -486,9 +487,17 @@ pomiarowym.
 - dostęp do chmury i jej finansowanie;
 - konkretna architektura lakehouse i sposób podłączenia źródła danych;
 - zakres operacji `complement` i `cluster` (poza obecnym etapem);
-- przyczyna systematycznie wolniejszych końcowych przebiegów kontrolnych (sail-paths: dryfy
-  2,2–13,4%; różnica w `first_batch_s`) — hipotezy: wyczerpany budżet taktowania CPU po
-  ciężkim bloku albo pamięć trzymana przez silnik; do zbadania przed 3b-3;
+- dryf kontroli: w sail-paths koniec bloku był wolniejszy od początku w 6 z 8 bloków (od −2,2%
+  do +13,4%), w smoke bez takiego wzorca (5 szybszych, 5 wolniejszych, 1 równy) — tendencja
+  niepotwierdzona ogólnie; hipotezy: wyczerpany budżet taktowania CPU po ciężkim bloku albo
+  pamięć trzymana przez silnik; do ponownej oceny przed 3b-3 (spec 3b-2, 9.1);
+- resztkowy wzrost pamięci serwera Saila w obrębie bloku, także z pulą i z blokadą (sail-paths,
+  `sail` N = 1 7-0: szczyt serwera 1,31 → 1,93 GB w rozgrzewce i 3 rundach, `base_rss` 0,23 →
+  1,32 GB; `sail_lock` 1,50 → 1,80 GB; sonda: blisko plateau ~2,2 GB po 24 zapytaniach) —
+  `peak_rss` Saila zależy od pozycji rundy, a ryzyko swapu rośnie dla większych par w 3b-3;
+- `settle_s` (i sparsowana konfiguracja serii) nie jest zapisywany w `runs.parquet` ani
+  `env.json` — do dodania w 3b-3 (dwie serie szumu sprzed pauzy, 224800 i 225255, odróżnia
+  tylko dokumentacja);
 - `vm.swappiness` (domyślne 60 daje drobny `pswpout` już przy ~2,9 GB szczytu procesu
   i ~4,2 GB `MemAvailable`) — obniżenie jako opcja, niezastosowane;
 - sekcja 1 (rola wyników lokalnych wobec chmury) — do zrewidowania w brainstormingu 3b-3;

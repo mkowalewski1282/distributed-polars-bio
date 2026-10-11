@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--remote", required=True, help="server address, e.g. sc://127.0.0.1:50051")
     parser.add_argument(
         "--path", choices=list(PATHS), default="arrow",
-        help="arrow (applyInArrow, per-thread polars-bio context), arrow-lock (applyInArrow with "
+        help="arrow (applyInArrow, polars-bio context pool), arrow-lock (applyInArrow with "
              "a lock) or udtf (LATERAL UDTF)",
     )
     args = parse_scenario(parser, argv)

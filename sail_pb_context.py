@@ -9,8 +9,12 @@ Sail wykonuje funkcje Pythona w wątkach procesu serwera, więc dotąd chroniła
 Wszystkie pięć operacji (overlap, nearest, coverage, merge, subtract) budują RangeOptions
 i wołają polars_bio.range_op.range_operation(df1, df2, options, output_type, ctx, …). Moduł
 podmienia tę funkcję na wersję, która w miejsce ctx wstawia kontekst pobrany z puli (tworzony,
-gdy pula jest pusta, z tymi samymi opcjami co globalny) i po wywołaniu go zwraca. Każde
-równoczesne wywołanie ma więc własny kontekst: kontekstów jest tyle, ile wywołań naraz. Publiczne
+gdy pula jest pusta, z tymi samymi opcjami co globalny) i po udanym wywołaniu go zwraca
+(po wyjątku kontekst jest porzucany). Każde równoczesne wywołanie ma więc własny kontekst:
+kontekstów jest tyle, ile wynosi szczyt liczby wywołań naraz. Pula zakłada wyniki gorliwe
+(polars.DataFrame, jak w sail_arrow): przy leniwych (polars.LazyFrame, datafusion.DataFrame)
+polars-bio używa kontekstu dopiero przy collect, po jego powrocie do puli, więc równoczesne
+wywołanie mogłoby go współdzielić. Publiczne
 pb.*() zostają bez zmian — z własnymi ustawieniami domyślnymi — a wywołania przestają dzielić
 tabele (sonda 3b-2: 0 rozbieżności, 5 operacji × 6 wątków × 3 rundy; overlap 7-0 2,4× szybciej
 na 6 wątkach).
@@ -38,7 +42,8 @@ import polars_bio.range_op as _range_op
 from polars_bio.polars_bio import BioSessionContext
 
 #: Opcje kontekstu z puli: jak w globalnym kontekście polars-bio 0.36 (polars_bio/context.py,
-#: Context.__init__) oraz układ 0-based — dane databio-8p są 0-based, półotwarte.
+#: Context.__init__) oraz zapasowy układ 0-based (dane databio-8p są 0-based, półotwarte);
+#: o układzie decydują metadane współrzędnych ramki, opcja kontekstu jest tylko zapasowa.
 OPTIONS = {
     "datafusion.execution.target_partitions": "1",
     "datafusion.execution.parquet.schema_force_view_types": "true",
