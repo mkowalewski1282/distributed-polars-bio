@@ -1,9 +1,9 @@
 # Etap 3b-2: narzędzie gotowe do pomiarów — projekt
 
 - **Data:** 9 października 2026
-- **Status:** zatwierdzony przez użytkownika (09.10.2026); plan: `docs/superpowers/plans/2026-10-09-narzedzie-gotowe-do-pomiarow-3b2.md`
+- **Status:** zatwierdzony (09.10.2026); plan: `docs/superpowers/plans/2026-10-09-narzedzie-gotowe-do-pomiarow-3b2.md`; wykonany 11.10.2026
 - **Zakres:** protokół pomiaru (czas bez sumy kontrolnej, przebieg kontrolny, swap), nowa ścieżka
-  Saila (`applyInArrow` z osobnym kontekstem polars-bio na wątek), Ballista gotowa do pomiarów
+  Saila (`applyInArrow` z pulą kontekstów polars-bio), Ballista gotowa do pomiarów
   (build release, limity gRPC, `broadcast_bytes`, `EXPLAIN ANALYZE`), fazy, drobne poprawki
   z przeglądów planów 3a i 3b-1
 - **Powiązane:** `docs/superpowers/specs/2026-09-29-metodyka-benchmarkow-design.md` (metodyka),
@@ -40,7 +40,7 @@ sprowadzało się do napisania konfiguracji i uruchomienia serii.
 | Kwestia | Decyzja |
 |---|---|
 | Ścieżka Saila | **maksymalna optymalizacja** w granicach publicznego API Saila, PySparka i polars-bio, bez zmian w ich kodzie (ta sama reguła co dla Ballisty: build i konfiguracja). Główna ścieżka: `groupBy/cogroup(...).applyInArrow`; stary UDTF zostaje w repo i jest porównany raz |
-| Blokada polars-bio w Sailu | **rozwiązanie pomostowe we własnym repo**: osobny kontekst polars-bio na wątek, bez blokady. Globalny kontekst polars-bio jest docelowo do zmiany, ale **bez zmian w polars-bio w tym etapie**; każda ewentualna zmiana w polars-bio wymaga wyraźnego, potrójnego potwierdzenia użytkownika |
+| Blokada polars-bio w Sailu | **rozwiązanie pomostowe we własnym repo**: pula kontekstów polars-bio (kontekst na równoczesne wywołanie, nie na wątek — sekcja 5.1), bez blokady. Globalny kontekst polars-bio jest docelowo do zmiany, ale **bez zmian w polars-bio w tym etapie**; każda ewentualna zmiana w polars-bio wymaga wyraźnego, potrójnego potwierdzenia użytkownika |
 | Wersja polars-bio | zostaje **0.36.0** (`uv.lock`); w `pyproject.toml` dochodzi `polars<2` (polars 2.0 z 06.10.2026 psuje polars-bio; 0.36.1 tylko to przypina) |
 | Czas pomiaru | zegar stop po **ostatniej partii**; suma kontrolna liczona **po** zatrzymaniu zegara; `t_total_s` = metryka główna, `checksum_s` zapisywany informacyjnie (czas „z sumą” = suma obu) |
 | Przebieg kontrolny | `overlap` **7-0** w polars-bio A, **10** powtórzeń na początku i na końcu bloku (`control_repeats`), porównanie **median**, próg **10%**; próg sprawdzany badaniem szumu |
@@ -69,17 +69,18 @@ otwarty, bez przypięcia klienta):
 
 2. **polars-bio 0.36 nadal ma jeden globalny kontekst.** Operacje na ramkach rejestrują tabele
    pod stałymi nazwami `s1`/`s2`; równoczesne wywołania w wątkach kończą się błędem
-   `The table s1 already exists`. Osobny `BioSessionContext` na wątek daje wynik identyczny
+   `The table s1 already exists`. Osobny `BioSessionContext` na wywołanie daje wynik identyczny
    z `pb.*()` i prawdziwą równoległość (GIL zwalniany w trakcie liczenia): `overlap` 7-0 na
    ramkach chromosomów — 2,4× na 6 wątkach.
 3. **Podmiana kontekstu w jednym punkcie wystarcza.** Wszystkie pięć operacji (`overlap`,
    `nearest`, `coverage`, `merge`, `subtract`) budują `RangeOptions` i wołają
    `polars_bio.range_op.range_operation(df1, df2, options, output_type, ctx, …)`. Podmiana tej
    funkcji na wersję, która w miejsce `ctx` wstawia kontekst bieżącego wątku, czyni publiczne
-   `pb.*()` bezpiecznymi wątkowo: 6 wątków, 3 rundy, 24 grupy, zero rozbieżności dla pięciu
+   `pb.*()` bezpiecznymi wątkowo (sonda z kontekstem na wątek): 6 wątków, 3 rundy, 24 grupy, zero rozbieżności dla pięciu
    operacji.
 4. **W Sailu blokada kosztuje dziś ~10%.** `overlap` 7-0, Arrow: z blokadą 6,49 / 6,47 / 5,40 s,
-   z kontekstem na wątek 5,91 / 5,57 / 4,79 s (N = 1 / 2 / 3).
+   z kontekstem na wątek 5,91 / 5,57 / 4,79 s (N = 1 / 2 / 3) — liczby z wcześniejszej wersji
+   z kontekstem na wątek, zastąpionej pulą (sekcja 5.1, „Zmiana w Zadaniu 27b”).
 5. **Najwięcej kosztuje odbiór wyniku przez klienta w Pythonie.** `overlap` 7-0 (2,76 mln
    wierszy), N = 3: skan + shuffle + `cogroup` 0,43 s; liczenie w polars-bio ~0,64 s
    (zapytanie zakończone `count()` — 1,07 s); z przesłaniem wyniku do klienta i sumą kontrolną
@@ -141,20 +142,23 @@ Bez zmian poza:
 - nowe kolumny: `control_position` (4.2), `base_rss` (JSON: proces → RSS tuż po wyzerowaniu
   licznika szczytu; sekcja 7, pozycja 9);
 - wypełniana kolumna `broadcast_bytes` (6.3);
+- nowy klucz konfiguracji **`settle_s`** (pauza przed każdym przebiegiem, domyślnie 0; sekcja 9.1);
 - nowe klucze w JSON-ach: `phases.first_batch_s` (wszystkie silniki), `phases.pb_s`,
   `phases.lock_wait_s` (Sail), `extra.udf_groups`, `extra.sail_workers` (Sail).
 
 ## 5. Sail
 
-### 5.1 Pomost: kontekst polars-bio na wątek
+### 5.1 Pomost: pula kontekstów polars-bio
 
 - Nowy moduł **`sail_pb_context.py`** (katalog główny repo, obok `sail_pb_guard.py`;
   importowalny po nazwie, bo funkcje dla Saila serializuje cloudpickle, a moduły idą przez
   referencję).
 - Przy imporcie podmienia `polars_bio.range_op.range_operation` na wersję, która przekazuje dalej
-  wszystkie argumenty, ale w miejsce `ctx` wstawia **kontekst bieżącego wątku** (`threading.local`,
-  `BioSessionContext` tworzony przy pierwszym użyciu w wątku).
-- Kontekst wątku dostaje te same opcje co globalny kontekst polars-bio (`target_partitions = 1`,
+  wszystkie argumenty, ale w miejsce `ctx` wstawia **kontekst z puli**: każde równoczesne wywołanie
+  bierze `BioSessionContext` z puli (tworzony, gdy pula jest pusta), po udanym wywołaniu zwraca go
+  do puli, po wyjątku porzuca. (Pierwotny projekt: `threading.local`, kontekst na wątek —
+  zastąpiony, patrz niżej.)
+- Kontekst z puli dostaje te same opcje co globalny kontekst polars-bio (`target_partitions = 1`,
   `schema_force_view_types`, `skip_physical_aggregate_schema_check`, `bio.interval_join_algorithm =
   coitrees`, sprawdzanie układu współrzędnych wyłączone) oraz `coordinate_system_zero_based = true`.
 - Kod Saila woła zwykłe, publiczne `pb.overlap()`, `pb.merge()` itd. — z ich własnymi ustawieniami
@@ -163,7 +167,22 @@ Bez zmian poza:
   importuje.
 - Zależność od wnętrza polars-bio: wersja przypięta (`polars-bio==0.36.*`), a test zgodności
   (5.7) wykryje zmianę w nowej wersji.
+- Niuans: komentarz przy `OPTIONS` w `sail_pb_context.py` przecenia opcję `zero_based` — o układzie
+  współrzędnych decydują metadane ramki (ustawiane przed wywołaniem), opcja kontekstu jest tylko
+  zapasowa.
 
+**Zmiana w Zadaniu 27b (11.10.2026): pula zamiast `threading.local`.** Sail woła Python z wątków
+Rusta i przy każdym wywołaniu odtwarza stan wątku Pythona, więc kontekst „na wątek” stawał się
+nowym kontekstem na każde wywołanie. Sonda 11.10.2026: 162 konteksty na 3 zapytania (54 na
+zapytanie `overlap` 7-0 — po jednym na grupę chromosomową) przy 2 wątkach natywnych; RSS serwera
+Saila po 12 zapytaniach 0,94 → 2,65 GB (~150 MB na zapytanie) wobec 0,95 → 1,83 GB z pulą
+(= `sail_lock`: 0,90 → 1,80 GB); szczyt serwera z pulą 2,21 GB po 24 zapytaniach (blisko
+plateau); identyczne wiersze i sumy kontrolne, czasy nieco niższe. Poza Sailem (zwykłe wątki
+Pythona) żadna wersja nie rośnie (RSS stały ~0,88–0,95 GB). Odrzucone po drodze hipotezy: limit
+czasu sesji Sail (sesje są usuwane zaraz po przebiegu), areny glibc (`MALLOC_ARENA_MAX=2`),
+ustawienia alokatora Arrow/jemalloc — bez efektu. Poprzednia próba serii (przerwana, nieprzechowana):
+przy wersji na wątek szczyt serwera `sail` N = 1 na 7-0 rósł w jednym bloku 1,32 → 1,91 → 2,08 →
+2,52 GB aż do swapu.
 ### 5.2 Zapytanie
 
 - `merge`: `tabela.groupBy("chrom").applyInArrow(f, schemat)`;
@@ -183,13 +202,13 @@ Bez zmian poza:
 
 | Wariant | Ścieżka | Rola |
 |---|---|---|
-| `sail` | Arrow + kontekst na wątek (`sail_pb_context`) | główny, w macierzy P1–P3 |
+| `sail` | Arrow + pula kontekstów (`sail_pb_context`) | główny, w macierzy P1–P3 |
 | `sail_lock` | Arrow + blokada (`sail_pb_guard`) | tylko porównanie |
 | `sail_udtf` | UDTF z `sail_bio.py` bez zmian | tylko porównanie |
 
 Wszystkie trzy korzystają z tego samego serwera bloku (`SailEngine`); runner Saila dostaje
 argument wybierający ścieżkę. Porównanie: `bench/conf/sail_paths.yaml` — pięć operacji na 1-2
-(`merge`: zbiór 1) i `overlap` 7-0, N ∈ {1, 3}, 3 powtórzenia, 1 rozgrzewka.
+(`merge`: zbiór 1) i `overlap` 7-0, N ∈ {1, 3}, 3 powtórzenia, 1 rozgrzewka. Wynik: sekcja 9.1.
 
 ### 5.4 Wielkość partii wyniku (ograniczone czasowo: pół dnia)
 
@@ -248,13 +267,15 @@ Orkiestrator czyta fragment logu serwera Saila z czasu przebiegu i liczy uruchom
   i `grpc_max_encoding_message_size`; klient — `ballista.client.grpc_max_message_size`.
   Orkiestrator przekazuje tę samą wartość wszystkim procesom klastra i klientowi.
 - Uzasadnienie wartości: tabela rozsyłana (prawa strona `nearest` i `coverage`) to szacunkowo
-  ~29 MiB na zadanie dla 2-7 (ex-anno, 1,19 mln wierszy) i ~56 MiB dla 7-0 (chainRn4, 2,35 mln);
-  wiadomość do executora niesie kilka zadań, więc potrzebny kilkukrotny zapas.
+  ~29 MiB dla 2-7 (ex-anno, 1,19 mln wierszy) i ~56 MiB dla 7-0 (chainRn4, 2,35 mln);
+  wiadomość do executora niesie plan etapu raz (nie raz na zadanie), z narzutem, więc potrzebny
+  zapas (strażnik: `MESSAGE_SIZE_MARGIN = 2`).
 - **Szybki błąd zamiast wiszenia:** po przekroczeniu limitu Ballista 53 (tryb push) nie zgłasza
   błędu zapytania, tylko ponawia (zapytanie wisi do timeoutu 20 min). Tabela rozsyłana jest
   materializowana przy planowaniu fizycznym w schedulerze (`DistCoverageProvider::scan`,
   odpowiednik w `nearest`) — tam sprawdzamy, czy wiadomość z ładunkami dla wszystkich slotów
-  executora zmieści się w limicie; jeśli nie, planowanie kończy się błędem z rozmiarem i limitem,
+  executora zmieści się w limicie (tabela × `MESSAGE_SIZE_MARGIN` = 2; Ballista 53 wysyła plan
+  etapu raz na executor i etap — `MultiTaskDefinition`); jeśli nie, planowanie kończy się błędem z rozmiarem i limitem,
   który dociera do klienta jako błąd zapytania. Dokładne miejsce sprawdzenia (planowanie albo
   kodowanie) ustala plan; warunek: zapytanie kończy się czytelnym błędem.
 - Plan zapasowy ze specyfikacji metodyki 9.2 (ładunek ze ścieżką do pliku zamiast danych) — tylko
@@ -264,7 +285,7 @@ Orkiestrator czyta fragment logu serwera Saila z czasu przebiegu i liczy uruchom
 
 Dekodowanie naszych węzłów w executorze (`bio_phys_codec.rs`) loguje rozmiar odebranego ładunku
 broadcastu (stały prefiks, poziom info). Orkiestrator sumuje wpisy z logów executorów z czasu
-przebiegu → kolumna `broadcast_bytes` (bajty, które faktycznie dotarły: ładunek × liczba zadań).
+przebiegu → kolumna `broadcast_bytes` (bajty, które faktycznie dotarły: ładunek × liczba wiadomości startowych — jedna na executor i etap w trybie push — a nie × liczba zadań).
 Dla operacji bez broadcastu: 0. Wielkość potrzebna do hipotezy P2.
 
 ### 6.4 Fazy
@@ -376,6 +397,89 @@ Po checkliście RAM (zamknięty VS Code i aplikacje w tle, `.wslconfig` 5 GB, pu
 5. broadcast Ballisty: `nearest` i `coverage` na 2-7 i 7-0 przy N = 1, 2, 3 — ukończenie,
    `broadcast_bytes`, szczyt pamięci (dane wejściowe także dla kalibracji w 3b-3).
 
+### 9.1 Wyniki (10–11.10.2026)
+
+Maszyna: AMD Ryzen 5 4600H (6C/12T), host Windows 10.0.19045 z 7,4 GB RAM, WSL 3.0.1.0, jądro
+6.18.40.1, `.wslconfig` pamięć 5 GB / swap 4 GB; plan zasilania Windows bez zmian (użytkownik nie
+może go zmienić), suwak trybu zasilania na najlepszej wydajności, zasilacz (odstępstwo od
+metodyki).
+
+**Przerwa `settle_s` (Zadanie 27a).** Klucz konfiguracji: pauza przed każdym mierzonym,
+kontrolnym, rozgrzewkowym i wzorcowym przebiegiem (nie przed `EXPLAIN ANALYZE`); domyślnie 0,
+w czterech konfiguracjach na laptopie 3,0 s. Powód — zwracanie wolnych stron WSL2 (*free page
+reporting*): `hv_balloon` gościa zgłasza zwolnioną pamięć Hyper-V (bloki 2 MB) po ~2 s
+(`PAGE_REPORTING_DELAY` jądra), host odrzuca jej zaplecze; przebieg startujący ≥ 2 s po
+poprzednim „zimno” zapełnia strony (+~0,1 s na ~650 MB RSS, w całości w `first_batch_s`).
+Dowody: przemiatanie pauzy — 0,5 s mieszane, 1,0 s wszystkie szybkie (~0,58–0,60 s), 2,0 i 3,0 s
+wszystkie wolne (~0,68–0,76 s); dotknięcie 1,4 GB tuż przed przebiegiem — głównie szybkie;
+3 s pętli CPU w pauzie — nadal wolno (to nie stan zasilania CPU); `[wsl2] pageReporting=false`
+to nieznany klucz w WSL 3.0.1 — bez efektu. Pauza czyni każdy przebieg startem z „zimnej”
+pamięci: czasy bezwzględne ~+0,1 s na 7-0 wobec przebiegów jeden po drugim; stan jest celowy
+i deterministyczny.
+
+**Badanie szumu** (20 przebiegów polars-bio A `overlap` 7-0, dwie grupy po 10, próg 10%,
+kryterium ≤ 5%):
+
+| Seria | Mediana | Rozrzut | Odsetek fałszywych dryfów |
+|---|---|---|---|
+| 20261010-224800 (bez pauzy) | 0,615 s | 38,2% (CV 11,2%) | 47,7% (próg 12%: 38,8%, 15%: 20,8%, 18%: 7,5%, 20%: 1,5%, 25%: 0,0%) |
+| 20261010-225255 (suwak: najlepsza wydajność, bez pauzy) | 0,657 s | 36,1% | 65,0% (ścisła naprzemienność) |
+| 20261010-235042 (`settle_s` 3,0) | 0,722 s (min 0,688, max 0,798) | 16,0% (CV 5,6%) | **1,8%** — spełnione (próg 8%: 11,4%, 5%: 23,4%) |
+
+Bez pauzy rozkład dwumodalny (szybkie ~0,58 s, wolne ~0,72 s; różnica w `first_batch_s`:
+0,27 vs 0,37 s). Z pauzą pozostaje łagodny wzorzec dwupoziomowy (0,69–0,72 vs 0,77–0,80 s).
+
+**Smoke na release** (`smoke/20261010-235255`, ~37 min, `settle_s` 3 s): 281 przebiegów, 50
+nieważnych = 2 bloki powtórzone przez dryf × 25 przebiegów (Ballista N = 3, próba 1: mediany
+kontrolne 0,812 → 0,670 s, 17%; Sail N = 3, próba 1: 0,705 → 0,844 s, 20%; oba powtórzenia czyste,
+2,4% i 2,5%; pozostałe bloki 0,2–3,9%), błędów 0, niezgodności sum 0, swap 0, `sail_workers` = N,
+`broadcast_bytes` `nearest`/`coverage` 1-2 = 10 709 132 × N (N = 1, 2, 3), pozostałe operacje 0,
+15 plików EXPLAIN. Diagnoza: przejściowe spowolnienia maszyny; użytkownik uznał serię za
+zaliczoną.
+
+**Porównanie ścieżek Saila** (`sail-paths/20261011-170650`; seria FAILED, wynik przyjęty przez
+użytkownika): 358 przebiegów, 103 nieważne, błędów 0, identyczne sumy i liczby wierszy we
+wszystkich wariantach. Mediany ważnych przebiegów (s), N = 1 / N = 3:
+
+| Scenariusz | `sail` (pula) | `sail_lock` | `sail_udtf` |
+|---|---|---|---|
+| overlap 1-2 | 0,257 / 0,224 | 0,312 / 0,334 | 5,24 / 5,34 |
+| nearest 1-2 | 0,418 / 0,372 | 0,452 / 0,433 | 5,89 / 6,30 |
+| coverage 1-2 | 0,283 / 0,291 | 0,318 / 0,322 | 5,48 / 5,23 |
+| merge 1 | 0,196 / 0,198 | 0,220 / 0,221 | 2,37 / 2,60 |
+| subtract 1-2 | 0,256 / 0,261 | 0,281 / 0,289 | 5,48 / 5,64 |
+| overlap 7-0 | 2,572 / 2,184 | 2,858 / 2,501 | 41,57 / brak ważnego |
+
+`sail_lock`/`sail`: 1,08–1,49 (7-0: 1,11 / 1,15); `sail_udtf`/`sail`: 12–24×. Komórki UDTF N = 3
+dla par 1-2 mają 1–2 ważne przebiegi. Szczyt RSS serwera Saila na 7-0: `sail` 1,93 / 2,30 GB,
+`sail_lock` 1,80 / 2,13 GB, `sail_udtf` 3,12 GB (N = 1) i 3,37–3,79 GB (N = 3) → swap
+(`pswpout` +2 783 … +12 055 stron) w rozgrzewce i we wszystkich 3 rundach → nieważne, plus
+kaskada `pswpin` unieważniająca 8 innych przebiegów UDTF i 3 końcowe przebiegi kontrolne.
+Nieważne: bloki powtórzone przez dryf (`sail` N = 3, próba 1: 10,7%, powtórzenie 0,0%;
+`sail_udtf` N = 1, próba 1: 13,4%, powtórzenie czyste) = 24 + 24 przebiegi + 40 kontrolnych;
+reszta to swap. Wpisu `expected_invalid` nie da się użyć dla kaskady `pswpin` (dotyka innych
+scenariuszy i wariantu kontrolnego), więc serii nie powtarzano.
+
+**Broadcast Ballisty** (`broadcast-check/20261011-185454`): OK — 35 przebiegów, 0 nieważnych,
+0 błędów, swap 0, sumy zgodne z wzorcem polars-bio. Pojedyncze przebiegi, N = 1 / 2 / 3 (s):
+`nearest` 2-7 1,13 / 1,04 / 1,17; `coverage` 2-7 0,67 / 0,63 / 0,66; `nearest` 7-0 2,31 / 2,24 /
+2,48; `coverage` 7-0 1,18 / 1,29 / 1,38. `broadcast_bytes` dokładnie liniowo z N: 2-7
+29 198 988 × N, 7-0 57 383 884 × N (dużo poniżej 512 MiB). `peak_rss_sum` 0,74–2,76 GB
+(pojedyncze przebiegi, zaszumione). Pliki EXPLAIN dla n1–n3.
+
+**Wzorzec dryfu kontroli (otwarte).** Końcowe przebiegi kontrolne są niemal zawsze wolniejsze
+od początkowych (sail-paths: 2,2%, 10,7%, 8,0%, 8,9%, 13,4%; różnica w `first_batch_s`: start
+~0,28–0,31 s, koniec ~0,33–0,36 s; końcowe często przyspieszają w ciągu 10 przebiegów).
+Hipotezy niesprawdzone: wyczerpany budżet taktowania CPU po ciężkim bloku albo pamięć trzymana
+przez silnik. Do zbadania przed 3b-3.
+
+**Uwagi operacyjne.** Czyszczenie swapu: `sudo swapoff -a && sudo swapon /dev/sdc` (urządzenie
+swapu WSL nie jest w fstab, więc `swapon -a` go nie włącza). `vm.swappiness` = 60 (domyślne)
+daje drobny `pswpout` już przy ~2,9 GB szczytu procesu i ~4,2 GB `MemAvailable`; obniżenie to
+opcja, niezastosowana. Testy `real_data` uruchamiać przed `wsl --shutdown` albo po wyczyszczeniu
+swapu; logi serii przez `tee` lub przekierowanie; sprawdzenie VS Code:
+`pgrep -fc '[v]scode-server'`.
+
 ## 10. Kryteria ukończenia
 
 1. Pakiet testów zielony lokalnie (z `real_data`) i w CI.
@@ -385,7 +489,7 @@ Po checkliście RAM (zamknięty VS Code i aplikacje w tle, `.wslconfig` 5 GB, pu
    o progu, na podstawie liczb.
 4. Komórki ⚠ macierzy (Ballista: `nearest`, `coverage` na 2-7 i 7-0) wykonują się albo mają
    opisany powód niewykonalności.
-5. Sail liczy ścieżką Arrow z kontekstem na wątek; porównanie trzech ścieżek zapisane w wynikach
+5. Sail liczy ścieżką Arrow z pulą kontekstów; porównanie trzech ścieżek zapisane w wynikach
    i w `wnioski_claude.md`.
 6. Fazy zapisywane: `first_batch_s` we wszystkich silnikach, `pb_s` w Sailu, pliki `EXPLAIN
    ANALYZE` dla Ballisty; `broadcast_bytes` wypełnione.

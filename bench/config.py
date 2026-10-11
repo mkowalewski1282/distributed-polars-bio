@@ -17,7 +17,7 @@ import yaml
 from bench.data.datasets import resolve
 from bench.ops import OPS, UNARY_OPS
 
-#: Warianty (specyfikacja 3; 3b-2, 5.3): sail — applyInArrow z kontekstem polars-bio na wątek
+#: Warianty (specyfikacja 3; 3b-2, 5.3): sail — applyInArrow z pulą kontekstów polars-bio
 #: (główny), sail_lock — applyInArrow z blokadą, sail_udtf — UDTF z LATERAL (tylko porównanie).
 VARIANTS = ("polars_bio_a", "polars_bio_b", "ballista", "sail", "sail_lock", "sail_udtf")
 NODES = (1, 2, 3)

@@ -32,7 +32,7 @@ samymi narzędziami — dostęp i finansowanie do ustalenia na dalszym etapie.
 | **P1** | Czy i o ile wykonanie rozproszone jest szybsze od polars-bio na jednej maszynie — dla której operacji i od jakiej klasy rozmiaru danych? | Dla klasy S rozproszenie przegrywa (dominuje narzut planowania, serializacji i shuffle); przewaga pojawia się od pewnego rozmiaru, o ile lokalnie w ogóle. |
 | **P2** | Jak zmienia się czas przy 1 → 2 → 3 węzłach i stałych danych (skalowanie silne)? | Operacje z shuffle (`merge`, `subtract`) skalują się lepiej niż operacje z broadcastem (`nearest`, `coverage`), bo broadcast powiela budowę indeksu na każdym węźle. |
 | **P3** (poboczne) | Czy ranking algorytmów indeksowania w `overlap` zmienia się po rozproszeniu? | Ranking przesuwa się na korzyść algorytmów z tańszą budową indeksu — w wersji rozproszonej indeks lewej tabeli budowany jest co najmniej raz na executor (`IntervalJoinExec`, tryb `CollectLeft`, `OnceAsync` na instancję planu), a nie raz na zapytanie. |
-| — | Ballista vs Sail | Porównanie przekrojowe wynikające z P1–P2, uzupełnione o **kryteria jakościowe**: nakład integracji (kodery vs UDTF), wymagania operacyjne (Sail wymaga Kubernetesa do wieloprocesowości), ograniczenia (limit wiadomości gRPC przy broadcaście, blokada globalnego kontekstu polars-bio, sufit równoległości ≈ liczba chromosomów). |
+| — | Ballista vs Sail | Porównanie przekrojowe wynikające z P1–P2, uzupełnione o **kryteria jakościowe**: nakład integracji (kodery vs UDTF), wymagania operacyjne (Sail wymaga Kubernetesa do wieloprocesowości), ograniczenia (limit wiadomości gRPC przy broadcaście, globalny kontekst polars-bio (pomost: pula kontekstów), sufit równoległości ≈ liczba chromosomów). |
 
 Skalowanie słabe (dane rosnące razem z klastrem) jest **poza zakresem**: wymagałoby generatora
 danych, a przyjęto wyłącznie zbiory rzeczywiste. Oś rozmiaru danych pokrywa P1 — z zastrzeżeniem,
@@ -46,7 +46,10 @@ jednej maszynie, a nie wyłącznie z samym sobą przy mniejszej liczbie węzłó
 
 **Maszyna:** AMD Ryzen 5 4600H (6 rdzeni, 12 wątków), WSL2. Hosta 7,4 GB RAM; WSL domyślnie
 3,5 GB. Na czas pomiarów WSL podniesiony do 5 GB i 4 GB swapu (`.wslconfig`), przy czym każdy
-przebieg z użyciem swapu jest nieważny (sekcja 6).
+przebieg dotykający swapu jest nieważny (sekcja 6). System hosta: Windows 10.0.19045, WSL
+3.0.1.0, jądro 6.18.40.1. Plan zasilania Windows pozostaje bez zmian (użytkownik nie ma
+uprawnień do jego zmiany); suwak trybu zasilania ustawiony na najlepszą wydajność, laptop na
+zasilaczu — odstępstwo od „planu wysokiej wydajności”, do opisania w pracy.
 
 **Oprogramowanie (od planu 3b-1):**
 - Python 3.12 w środowisku uv (`pyproject.toml`, `uv.lock`);
@@ -80,7 +83,7 @@ wątków polars-bio), bez polegania na autodetekcji.
 | **polars-bio A** (węzeł tej samej wielkości) | jeden proces na wątkach węzła 1 (2 wątki: `target_partitions = 2`, `POLARS_MAX_THREADS = 2`); niezależny od N |
 | **polars-bio B** (maszyna = cały klaster) | jeden proces na wątkach węzłów 1..N (2N wątków, `target_partitions = 2N`); dla N = 1 tożsamy z A |
 | **Ballista** | scheduler (CPU 0–1) + N executorów, executor *i* na wątkach węzła *i*, 2 sloty zadań na executor; `BIO_TARGET_PARTITIONS = 2N` w każdym procesie klastra i w kliencie |
-| **Sail** | jeden proces serwera (`local-cluster`, N workerów, równoległość 2N) na wątkach węzłów 1..N — te same zasoby co klaster, ale bez rozproszenia i z blokadą `sail_pb_guard` (asymetria opisana jawnie); 8 slotów na workera, bo przy 2 Sail sam dokłada workery ponad N, a z limitem `worker_max_count` zapytanie wisi (sonda 01.10.2026); przy N = 1 Sail 0.5.3 sporadycznie i tak dokładał drugiego workera (16 zadań skanowania > 8 slotów; smoke 02.10.2026), w Sailu 0.7.2 każda sesja ma dokładnie N workerów (smoke 04.10.2026); driver i workery Sail tworzy osobno dla każdej sesji Spark Connect, czyli dla każdego przebiegu, przy pierwszym RPC sesji — przed pomiarem czasu (sonda 02.10.2026) |
+| **Sail** | serwer `local-cluster` (N workerów, równoległość 2N) na wątkach węzłów 1..N, `POLARS_MAX_THREADS = 2N` w procesie serwera. Funkcja to `groupBy/cogroup(...).applyInArrow` z pulą kontekstów polars-bio (bez blokady `sail_pb_guard`; sama blokada i stary UDTF to warianty porównawcze `sail_lock` i `sail_udtf`, spec 3b-2, 5.3). Jeden proces (asymetria wieloprocesowości opisana jawnie); klient PySpark w Pythonie (Ballista: klient w Ruście) — czas odbioru wyniku jest osobną fazą; 8 slotów na workera, bo przy 2 Sail sam dokłada workery ponad N, a z limitem `worker_max_count` zapytanie wisi (sonda 01.10.2026); przy N = 1 Sail 0.5.3 sporadycznie i tak dokładał drugiego workera (16 zadań skanowania > 8 slotów; smoke 02.10.2026), w Sailu 0.7.2 każda sesja ma dokładnie N workerów (smoke 04.10.2026); driver i workery Sail tworzy osobno dla każdej sesji Spark Connect, czyli dla każdego przebiegu, przy pierwszym RPC sesji — przed pomiarem czasu (sonda 02.10.2026) |
 
 Który z wariantów A/B jest punktem odniesienia głównym — do ustalenia na dalszym etapie; mierzone
 są oba.
@@ -132,10 +135,10 @@ przepustowość pamięci i dysk; brak fizycznej sieci (ruch przez interfejs pęt
 
 | Metryka | polars-bio | Ballista | Sail |
 |---|---|---|---|
-| **Czas** — od wysłania zapytania do skonsumowania ostatniego wiersza wyniku, mierzony w runnerze (`perf_counter` / `Instant`), bez startu procesu, importów i startu klastra | ✓ | ✓ | ✓ |
-| **Fazy** | tylko całość | etapy i operatory z `EXPLAIN ANALYZE` (osobny, dodatkowy przebieg) | suma czasu wywołań `pb.*()` i suma czasu oczekiwania na blokadę, logowane z UDTF |
-| **Szczyt pamięci** | `VmHWM` z `/proc/<pid>/status` świeżego procesu | `VmHWM` każdego procesu; licznik zerowany przed przebiegiem (`echo 5 > /proc/<pid>/clear_refs`) | jak Ballista (jeden proces) |
-| **Wolumen shuffle** | — | rozmiar plików shuffle w katalogach roboczych executorów (przyrost w przebiegu) + rozmiar ładunku broadcast w planie | niedostępny (asymetria, jawnie) |
+| **Czas** — od wysłania zapytania do odebrania ostatniej partii wyniku (`t_total_s`), mierzony w runnerze (`perf_counter` / `Instant`), bez startu procesu, importów i startu klastra; suma kontrolna liczona po zatrzymaniu zegara | ✓ | ✓ | ✓ |
+| **Fazy** | `first_batch_s` | `first_batch_s` + `EXPLAIN ANALYZE` (dodatkowy, niemierzony przebieg, `explain: true`) | `first_batch_s`, `pb_s` (suma czasu wywołań `pb.*()`, może przekraczać `t_total_s`), `lock_wait_s` (tylko `sail_lock`), `udf_groups`, `sail_workers` |
+| **Szczyt pamięci** | `VmHWM` z `/proc/<pid>/status` świeżego procesu | `VmHWM` każdego procesu; licznik zerowany przed przebiegiem (`echo 5 > /proc/<pid>/clear_refs`); `base_rss` — RSS tuż po wyzerowaniu | jak Ballista (jeden proces) |
+| **Wolumen shuffle** | — | rozmiar plików shuffle w katalogach roboczych executorów (przyrost w przebiegu); `broadcast_bytes` — suma ładunków broadcastu odebranych przez executory (z logów), czyli ładunek × liczba wiadomości startowych (jedna na executor i etap) | niedostępny (asymetria, jawnie) |
 
 Pamięć klastra raportowana jako suma szczytów procesów — **górne oszacowanie** (szczyty nie
 muszą być jednoczesne) — oraz maksimum per węzeł.
@@ -143,25 +146,40 @@ muszą być jednoczesne) — oraz maksimum per węzeł.
 ## 6. Protokół pomiaru
 
 1. **Przygotowanie serii:** zamknięty VS Code (seria uruchamiana skryptem z Windows Terminal),
-   zamknięte aplikacje w tle, `.wslconfig` = 5 GB / 4 GB swap, laptop na zasilaczu, plan
-   zasilania „wysoka wydajność”.
-2. **Bloki:** dla każdej pary (N, silnik): start klastra → przebieg kontrolny → 1 przebieg
-   rozgrzewkowy na scenariusz (odrzucany) → **5 rund mierzonych**; w każdej rundzie scenariusze
-   w losowej kolejności (ziarno zapisywane) → przebieg kontrolny → zatrzymanie klastra.
-3. **Przebieg kontrolny:** `overlap` na parze 1-2, polars-bio A. Rozjazd > 10% (`control_tolerance`)
-   między początkiem a końcem bloku ⇒ blok powtarzany raz; po drugim dryfie przebiegi bloku
-   zostają nieważne.
-4. **Konsumpcja wyniku:** strumieniowo po stronie klienta, bez zapisu na dysk; liczba wierszy
-   i suma kontrolna niezależna od kolejności wierszy (sekcja 8.4). Każdy pomiar jest zarazem
+   zamknięte aplikacje w tle, `.wslconfig` = 5 GB / 4 GB swap, laptop na zasilaczu, suwak trybu
+   zasilania na najlepszej wydajności (plan zasilania bez zmian, sekcja 3).
+2. **Bloki:** dla każdej pary (N, silnik): start klastra → przebiegi kontrolne (`control_repeats`
+   = 10) → 1 przebieg rozgrzewkowy na scenariusz (odrzucany) → **5 rund mierzonych**; w każdej
+   rundzie scenariusze w losowej kolejności (ziarno zapisywane) → przebiegi kontrolne →
+   zatrzymanie klastra. Przed każdym przebiegiem (mierzonym, kontrolnym, rozgrzewkowym,
+   wzorcowym; nie przed `EXPLAIN ANALYZE`) pauza `settle_s` (3,0 s w konfiguracjach na laptopie):
+   WSL2 po ~2 s zwraca zwolnioną pamięć do Hyper-V, więc przebieg startujący później zaczyna od
+   „zimnej” pamięci (~+0,1 s na ~650 MB RSS, w całości w `first_batch_s`), a przebieg tuż po
+   poprzednim — od „ciepłej”; pauza ≥ 2 s czyni stan zimny deterministycznym (kosztem ~+0,1 s na
+   `overlap` 7-0 względem przebiegów bez przerwy). Opis i dowody: spec 3b-2, 9.1.
+3. **Przebieg kontrolny:** `overlap` 7-0 w polars-bio A (zadanie `control` z konfiguracji),
+   `control_repeats` = 10 przebiegów na każdym końcu bloku; porównanie **median** ważnych
+   przebiegów. Dryf median > 10% (`control_tolerance`) ⇒ blok powtarzany raz; po drugim dryfie
+   przebiegi bloku zostają nieważne. Mniej niż połowa ważnych przebiegów kontrolnych na którymś
+   końcu ⇒ jak dryf (`control run invalid`). Badanie szumu (20 przebiegów, losowe podziały na
+   dwie grupy po 10; kryterium: odsetek fałszywych dryfów ≤ 5%): bez pauzy 47,7% i 65,0%
+   (rozkład dwumodalny ~0,58 / ~0,72 s, różnica w `first_batch_s`), z `settle_s` = 3,0 s —
+   **1,8%** (spełnione); spec 3b-2, 9.1.
+4. **Konsumpcja wyniku:** partie wyniku trzymane w pamięci klienta, bez zapisu na dysk; zegar
+   staje po ostatniej partii, a liczba wierszy i suma kontrolna niezależna od kolejności
+   wierszy (sekcja 8.4) liczone są po zatrzymaniu zegara (`checksum_s` informacyjnie, poza
+   `t_total_s`). Czas odbioru wyniku = `t_total_s − first_batch_s`. Każdy pomiar jest zarazem
    testem poprawności względem wyniku wzorcowego (polars-bio na 1 partycji, sekcja 3).
-5. **Nieważność przebiegu:** przyrost `pswpout` w `/proc/vmstat` > 0; niezgodność liczby wierszy
+5. **Nieważność przebiegu:** seria startuje od pustego swapu (sprawdzenie przed serią; w razie
+   zajętego swapu — `sudo swapoff -a && sudo swapon /dev/sdc` albo `wsl --shutdown`); przyrost
+   `pswpout` **lub** `pswpin` w `/proc/vmstat` > 0 unieważnia przebieg; niezgodność liczby wierszy
    lub sumy kontrolnej; przekroczenie limitu 20 minut. Timeout zapisywany jako wynik („timeout”),
    bez ponawiania. Ponadto: zabicie przez strażnika pamięci (`MemAvailable` < 300 MiB) i śmierć
-   procesu silnika w trakcie przebiegu. Po timeoucie, strażniku albo śmierci procesu silnik jest
-   restartowany, a scenariusz pomijany do końca bloku (`"skipped: …"`). Przyrost `pswpin`
-   (wczytania ze swapu) jest zapisywany (`pswpin_delta`), ale nie unieważnia przebiegu: przy
-   niepustym swapie na starcie serii wczytują go także inne procesy. Reguła — plan 3b (np.
-   unieważnianie, gdy seria startuje od pustego swapu po `wsl --shutdown`).
+   procesu silnika wykrywana w trakcie przebiegu (runner przerywany od razu). Po timeoucie,
+   strażniku albo śmierci procesu silnik jest restartowany (twardo, SIGKILL, jeśli nie
+   zakończy się sam), a scenariusz pomijany do końca bloku (`"skipped: …"`). Przyrost `pswpin`
+   jest zapisywany w `pswpin_delta`; przebieg, który wczyta stronę wyrzuconą przez wcześniejszy
+   przebieg, też jest nieważny (spec 3b-2, 4.3).
 6. **Statystyki:** mediana (wartość główna), min i max (rozrzut), średnia (zgodność
    z polars-bio-bench). Przyspieszenia liczone z median.
 7. **Zapis:** jeden wiersz na przebieg (sekcja 8.5); surowe plany `EXPLAIN ANALYZE` do plików.
@@ -235,7 +253,9 @@ na P1.
 
 ```
 bench/
-  conf/            smoke.yaml (plan 3a); kalibracja.yaml, p1.yaml, p2.yaml, p3.yaml (plan 3b)
+  conf/            smoke.yaml (plan 3a); control_noise.yaml, sail_paths.yaml,
+                   broadcast_check.yaml (plan 3b-2); kalibracja.yaml, p1.yaml, p2.yaml,
+                   p3.yaml (plan 3b-3)
   config.py        konfiguracja serii: walidacja, bloki, kolejność z ziarna
   orchestrator.py  sterowanie blokami, pomiary, walidacja, zapis wyników
   engines.py       silniki bloku: przypięcie do rdzeni, klaster Ballisty, serwer Saila
@@ -243,11 +263,16 @@ bench/
   results.py       zapis wyników (JSON Lines → Parquet)
   metrics.py       /proc: VmHWM, clear_refs, pswpout, MemAvailable; rozmiar katalogów shuffle
   checksum.py      suma kontrolna (implementacja referencyjna)
+  control_noise.py badanie szumu przebiegu kontrolnego (odsetek fałszywych dryfów)
+  logscan.py       liczniki z logów silników (broadcast_bytes, liczba workerów Saila)
+  preflight.py     sprawdzenia przed serią (swap, CPU/SMT, taskset, pysail, binarki)
   procutil.py      porty i gotowość procesów silników
   runners/
     polars_bio_runner.py
     sail_runner.py
     sail_server.py serwer Saila na czas bloku
+sail_arrow.py      ścieżka applyInArrow Saila (katalog główny repo, importowana po nazwie)
+sail_pb_context.py pula kontekstów polars-bio (pomost bez blokady; katalog główny repo)
   data/download.py pobranie databio-8p (poza gitem)
   analyze.py       wyniki -> tabele i wykresy (po pomiarach)
   results/         surowe wyniki (Parquet) + plany EXPLAIN ANALYZE (w repozytorium)
@@ -259,14 +284,20 @@ Ballista nie wymaga wrappera pythonowego: runnerem jest binarka Rust `bench_clie
 uruchamiana przez orkiestrator jako proces. Istniejąca binarka `dist_ops` (używana przez testy)
 pozostaje bez zmian. `bench_client` powstał w planie 2 z częścią protokołu (liczba wierszy,
 zapis wyniku do Parquet, wynik w schemacie 8.4); w planie 3a doszły czas, suma kontrolna
-(`checksum.rs`), szczyt pamięci i `BIO_TARGET_PARTITIONS`; fazy — plan 3b.
+(`checksum.rs`), szczyt pamięci i `BIO_TARGET_PARTITIONS`; w planie 3b-2 — fazy
+(`first_batch_s`), `--explain-analyze` i limit gRPC.
 
 ### 8.2 Konfiguracja (YAML)
 
 Każdy plik opisuje serię: listę scenariuszy (`op`, `pair` lub `dataset`, opcjonalnie
 `algorithm`), listę wariantów (`polars_bio_a`, `polars_bio_b`, `ballista`, `sail`), wartości N,
 liczbę powtórzeń (`repeats`, domyślnie 5), rozgrzewkę (`warmup`, domyślnie 1), limit czasu
-(`timeout_s`, domyślnie 1200), ziarno losowania kolejności (`seed`). Konfiguracja jest
+(`timeout_s`, domyślnie 1200), ziarno losowania kolejności (`seed`). Plan 3b-2 dodaje klucze: `control` (zadanie kontrolne,
+domyślnie `{op: overlap, pair: "7-0"}`), `control_repeats` (domyślnie 10), `explain` (dodatkowy
+przebieg `EXPLAIN ANALYZE` w blokach Ballisty, domyślnie `false`), `expected_invalid`
+(oczekiwane nieważności; na końcu serii podsumowanie `smoke OK` / `smoke FAILED`) i `settle_s`
+(pauza przed przebiegiem, domyślnie 0). Warianty obejmują też `sail_lock` i `sail_udtf`.
+Konfiguracja jest
 walidowana przed startem serii (nieznane klucze, brak plików danych ⇒ błąd przed pierwszym
 pomiarem).
 
@@ -277,15 +308,16 @@ Runner to osobny proces wywoływany z argumentami scenariusza. Na standardowe wy
 
 ```json
 {"rows": 54246, "checksum": "0x…", "t_total_s": 1.234,
- "phases": {"...": 0.0}, "extra": {"target_partitions": 4, "checksum_s": 0.012},
+ "phases": {"first_batch_s": 0.31}, "extra": {"target_partitions": 4, "checksum_s": 0.012},
  "peak_rss_bytes": 104857600}
 ```
 
 `peak_rss_bytes` — VmHWM procesu runnera (licznik zerowany tuż przed zapytaniem); szczyty
 procesów długożyjących (scheduler, executory, serwer Saila) mierzy orkiestrator.
-`extra.checksum_s` — czas liczenia sumy kontrolnej, wliczony w `t_total_s` (sekcja 6.4); jego
-koszt zależy od silnika (Python albo Rust, rdzenie węzła albo systemowe), więc jest zapisywany
-osobno — czy odejmować go od czasu, ustala plan 3b. `extra.broadcast_bytes` — plan 3b.
+`extra.checksum_s` — czas liczenia sumy kontrolnej, **poza** `t_total_s` (sekcja 6.4); jego
+koszt zależy od silnika (Python albo Rust), więc jest zapisywany tylko informacyjnie.
+`broadcast_bytes` wypełnia orkiestrator z logów executorów (linia `broadcast payload decoded:
+N bytes`), nie runner.
 
 Błąd silnika ⇒ niezerowy kod wyjścia i komunikat na stderr; orkiestrator zapisuje przebieg jako
 nieważny z przyczyną.
@@ -322,13 +354,16 @@ zgodność sprawdzana testem na wspólnych wartościach wzorcowych.
 
 Jeden wiersz na przebieg: `timestamp`, `git_commit`, `engine_versions`, `series`, `seed`,
 `scenario_id`, `op`, `pair`, `algorithm`, `variant`, `n_nodes`, `rep`, `is_warmup`, `is_control`,
+`control_position` (`start` / `end` dla przebiegów kontrolnych),
 `valid`, `invalid_reason`, `rows`, `checksum`, `t_total_s`, `phases` (JSON), `peak_rss`
-(JSON: proces → bajty), `peak_rss_sum`, `shuffle_bytes`, `broadcast_bytes`, `pswpout_delta`.
+(JSON: proces → bajty), `base_rss` (RSS tuż po wyzerowaniu licznika szczytu), `peak_rss_sum`, `shuffle_bytes`, `broadcast_bytes`, `pswpout_delta`.
 
 Plan 3a dodaje `is_reference` (przebieg wzorcowy), `attempt` (2 — powtórzenie bloku po
 dryfie), `wall_s` (czas procesu runnera ze startem, do szacowania długości serii), `extra`
 (JSON z runnera, m.in. `target_partitions`) i `pswpin_delta` (wczytania ze swapu, sekcja 6).
-Zapis: `bench/results/<seria>/<znacznik czasu>/runs.jsonl` po każdym bloku i `runs.parquet` na
+Katalog serii zawiera też `env.json` (środowisko procesów silników po wyczyszczeniu
+odziedziczonych zmiennych), `logs/` (stderr nieudanych przebiegów) i `explain/`. Zapis:
+`bench/results/<seria>/<znacznik czasu>/runs.jsonl` po każdym bloku i `runs.parquet` na
 końcu. Przerwanie serii (Ctrl-C, SIGTERM, SIGHUP — np. zamknięcie terminala) zapisuje też
 przebiegi przerwanego bloku (przyczyna `"series interrupted"`) i zatrzymuje runner oraz silnik;
 twarda awaria (np. wywrócenie WSL) traci co najwyżej bieżący blok.
@@ -340,8 +375,10 @@ twarda awaria (np. wywrócenie WSL) traci co najwyżej bieżący blok.
   reguły nieważności przebiegu;
 - integracyjny: orkiestrator na zbiorze testowym w układzie databio-8p, wszystkie warianty,
   N = 1 i 2 (`tests/test_orchestrator_integration.py`, kilka minut); smoke na danych 1-2 —
-  `python -m bench.orchestrator bench/conf/smoke.yaml` (smoke po planie 3b-1, 04.10.2026: poza dryfem przebiegu
-  kontrolnego wszystkie przebiegi ważne);
+  `uv run python -m bench.orchestrator bench/conf/smoke.yaml` (smoke po planie 3b-1, 04.10.2026: poza dryfem przebiegu
+  kontrolnego wszystkie przebiegi ważne; smoke na release po planie 3b-2, 10.10.2026: 281
+  przebiegów, 0 błędów i 0 niezgodności sum kontrolnych, 50 nieważnych = 2 bloki powtórzone
+  przez dryf);
 - istniejące 42 testy bez zmian.
 
 ## 9. Zmiany w istniejącym kodzie (warunki wstępne)
@@ -382,10 +419,17 @@ wspólny magazyn).
 Ballista 53 pozwala zmienić limit bez modyfikacji silnika: klient —
 `ballista.client.grpc_max_message_size` (konfiguracja sesji); scheduler —
 `grpc_server_max_decoding_message_size`; executor — `grpc_max_decoding_message_size`
-/ `grpc_max_encoding_message_size`. Limit podnoszony w binarkach z 9.1; skuteczność
-potwierdza przebieg smoke na parze z tabelą broadcastowaną > 16 MB. Plan zapasowy: ładunek
-broadcastu zawiera ścieżkę do pliku Parquet zamiast danych, a executor czyta tabelę sam.
-Koszt wzorca (ładunek × liczba zadań) jest raportowany jako `broadcast_bytes`.
+/ `grpc_max_encoding_message_size`. **Wdrożone w planie 3b-2:** jeden limit 512 MiB (`BALLISTA_GRPC_MAX_MESSAGE_BYTES`) dla
+klienta, schedulera i executorów. Strażnik broadcastu przy planowaniu fizycznym kończy
+zapytanie czytelnym błędem, gdy tabela rozsyłana × 2 nie mieści się w limicie (Ballista 53
+w trybie push przy zbyt dużej wiadomości nie zgłasza błędu, tylko wisi). Strażnik koduje tabelę
+do IPC jeszcze raz w schedulerze, w mierzonym `t_total_s` `nearest` i `coverage` (chwilowo
+≈ 2× ładunek, 29–57 MB na planowanych parach); koszt nie jest mierzony osobno — znany narzut.
+Wynik `broadcast-check` (11.10.2026): `nearest` i `coverage` na 2-7 i 7-0 przy N = 1, 2, 3
+wykonują się (35 przebiegów, 0 nieważnych), sumy zgodne z wzorcem; `broadcast_bytes` rośnie
+liniowo z N (2-7: 29 198 988 × N, 7-0: 57 383 884 × N), dużo poniżej limitu. Plan zapasowy
+(ładunek ze ścieżką do pliku Parquet zamiast danych) niepotrzebny. Koszt wzorca (ładunek ×
+liczba wiadomości startowych: jedna na executor i etap) jest raportowany jako `broadcast_bytes`.
 
 Ustalenia planu 2 (`ballista_genomics/OPIS.md`): stroną broadcastowaną w `nearest`
 i `coverage` jest df2 (tabela indeksowana), nie df1. Para 1-2 mieści się w domyślnym
@@ -402,8 +446,11 @@ pomiarowym.
   (`spark.read.parquet`, UDTF-y dla danych bez kolumny z nazwą). Pobieranie danych:
   `bench/data/download.py` (zamiast `gdown` — `requests`, bez nowej zależności).
 - Parametr `algorithm` dla `overlap`: przez koder Ballisty i UDTF Saila (P3).
-- Instrumentacja UDTF Saila: czas wywołania `pb.*()` i czas oczekiwania na blokadę w
-  `sail_pb_guard`, zapisywane do pliku przebiegu.
+- Instrumentacja Saila: czas wywołania `pb.*()` i (w `sail_lock`) czas oczekiwania na blokadę,
+  zapisywane do pliku przebiegu — **zrobione (plan 3b-2)**, fazy `pb_s` i `lock_wait_s`.
+- Uwaga: `warm_up` Saila to `spark.range(1).count()` i nie importuje polars-bio w serwerze;
+  pierwsze wywołanie funkcji w świeżym serwerze płaci import w mierzonym czasie, dlatego serie
+  mają rundy rozgrzewkowe. Sail usuwa sesję i zatrzymuje workery zaraz po każdym przebiegu.
 
 ## 10. Zadania osobne (poza tą specyfikacją)
 
@@ -427,7 +474,10 @@ pomiarowym.
 | Emulacja węzłów na jednej maszynie (wspólne L3, pamięć, dysk; brak sieci) | zawyżona sprawność rozproszenia względem prawdziwego klastra | opis w pracy; chmura jako rozszerzenie |
 | Wirtualne CPU w WSL przenoszone przez Hyper-V | szum pomiarowy | 5 powtórzeń, mediana, przebieg kontrolny |
 | Przegrzewanie / tryb oszczędzania energii laptopa | dryf czasów | zasilacz, plan wydajności, losowa kolejność, przebieg kontrolny |
-| Asymetria Saila (jeden proces, blokada) | porównanie Ballista vs Sail niesymetryczne | jawny opis, pomiar czasu blokady, próba K8s |
+| Asymetria Saila (jeden proces, wspólna pamięć procesu) | porównanie Ballista vs Sail niesymetryczne | jawny opis, pomiar `pb_s`/`lock_wait_s`, próba K8s |
+| Asymetria klientów (PySpark vs Rust) | czas odbioru wyniku Saila zawyżony względem Ballisty | faza odbioru (`t_total_s − first_batch_s`) raportowana osobno; sonda partii (spec 3b-2, Zadanie 12); `SAIL_EXECUTION__BATCH_SIZE=65536` to strojenie silnika (Ballista: domyślne 8192), zmierzone tylko na ścieżce Arrow |
+| Stan pamięci WSL2 (zwracanie pamięci do Hyper-V) i dryf przebiegu kontrolnego | dwumodalny czas (~0,58 / ~0,72 s na 7-0), fałszywe dryfy | `settle_s`; przebiegi kontrolne zawsze po pauzie; końcowe przebiegi kontrolne bywają wolniejsze od początkowych (sekcja 12) |
+| Strażnik broadcastu koduje tabelę do IPC w schedulerze | niemierzony narzut w `t_total_s` `nearest`/`coverage` (Ballista) | opis w 9.2; bez korekty |
 | Zbiory AIList różnią się strukturą, nie tylko rozmiarem | pomieszanie efektu rozmiaru i struktury w P1 | raportowanie *non-flatness* przy każdej parze |
 | Limit gRPC przy broadcaście | brak wyników dla części komórek | sekcja 9.2 |
 | Pamięć 5 GB | mniej par lokalnych | reguła kalibracji; pary odrzucone → chmura |
@@ -438,3 +488,9 @@ pomiarowym.
 - dostęp do chmury i jej finansowanie;
 - konkretna architektura lakehouse i sposób podłączenia źródła danych;
 - zakres operacji `complement` i `cluster` (poza obecnym etapem);
+- przyczyna systematycznie wolniejszych końcowych przebiegów kontrolnych (sail-paths: dryfy
+  2,2–13,4%; różnica w `first_batch_s`) — hipotezy: wyczerpany budżet taktowania CPU po
+  ciężkim bloku albo pamięć trzymana przez silnik; do zbadania przed 3b-3;
+- `vm.swappiness` (domyślne 60 daje drobny `pswpout` już przy ~2,9 GB szczytu procesu
+  i ~4,2 GB `MemAvailable`) — obniżenie jako opcja, niezastosowane;
+- sekcja 1 (rola wyników lokalnych wobec chmury) — do zrewidowania w brainstormingu 3b-3;

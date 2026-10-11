@@ -437,10 +437,12 @@ o typach prawdziwych danych, z przypadkami brzegowymi; `tests/test_real_data.py`
 
 - `bench_client` wypisuje pełny protokół runnera (specyfikacja 8.3):
   - `rows`, `checksum`;
-  - `t_total_s` (od `ctx.sql` do ostatniej partii, bez połączenia z klastrem);
-  - `phases` (puste; fazy w planie 3b);
+  - `t_total_s` (od `ctx.sql` do ostatniej partii, bez połączenia z klastrem; od planu 3b-2
+    partie są trzymane w pamięci, a suma kontrolna liczona po zatrzymaniu zegara);
+  - `phases` (od planu 3b-2: `first_batch_s`);
   - `extra.target_partitions`;
-  - `extra.checksum_s` (czas liczenia sumy kontrolnej, wliczony w `t_total_s`);
+  - `extra.checksum_s` (czas liczenia sumy kontrolnej; w planie 3a wliczony w `t_total_s`, od 3b-2
+    poza nim, informacyjnie);
   - `peak_rss_bytes` (VmHWM klienta, licznik zerowany przed zapytaniem).
 - Suma kontrolna (`src/checksum.rs`) ma definicję wspólną z `bench/checksum.py`. Zgodność
   sprawdza tryb `bench_client --op OP --checksum PLIK` na wartościach wzorcowych
@@ -491,7 +493,42 @@ o typach prawdziwych danych, z przypadkami brzegowymi; `tests/test_real_data.py`
   klasa optymalizacji co oficjalne paczki polars-bio 0.36.0 (ich `Cargo.toml` nie ma sekcji
   `[profile]`); wersja kompilatora: Rust 1.95.0 (`rust-toolchain.toml`).
 - Polecenie: `CARGO_BUILD_JOBS=1 cargo build --release --bins --locked`.
-- Pierwszy build: 60 min 26 s (wall clock), szczyt pamięci ≈ 1,2 GB, `target/release` 3,1 GB.
+- Pierwszy build: 60 min 26 s (wall clock), szczyt pamięci 1 240 812 KiB (≈ 1,18 GiB), `target/release` 3,1 GB.
 - Narzędzie pomiarowe używa domyślnie binarek release; przed serią sprawdza, czy są nowsze od
   źródeł (`bench/engines.py`, `require_ballista_binaries`), a ich sumy SHA-256 zapisuje
   w `engine_versions`.
+- **Limit gRPC.** Jeden limit wiadomości dla całego klastra: zmienna
+  `BALLISTA_GRPC_MAX_MESSAGE_BYTES` (liczba bajtów od 16 MiB do `u32::MAX`; domyślnie 512 MiB =
+  536870912 B; niepoprawna wartość → kod 2 w binarkach). Ustawiany w `bio_ballista_config`
+  (klient: `ballista.client.grpc_max_message_size`, ta konfiguracja trafia też do klienta gRPC
+  schedulera i executorów) oraz w `ballista_node` (scheduler: dekodowanie i kodowanie wiadomości
+  serwera gRPC, executor: `grpc_max_decoding_message_size` i `grpc_max_encoding_message_size`).
+  Orkiestrator przekazuje tę samą wartość wszystkim procesom.
+- **Strażnik broadcastu** (`src/broadcast.rs`). Ballista 53 w trybie push, gdy wiadomość do
+  executora przekracza limit, nie zgłasza błędu zapytania: uznaje executor za utraconego
+  i ponawia, więc zapytanie wisi do timeoutu. Dlatego rozmiar sprawdzamy przy planowaniu
+  fizycznym w schedulerze (`DistCoverageProvider::scan` i odpowiednik w `nearest`), gdzie tabela
+  rozsyłana jest zmaterializowana: jeśli jej rozmiar w IPC razy `MESSAGE_SIZE_MARGIN` (= 2)
+  przekracza limit, planowanie kończy się błędem z rozmiarem i limitem, który dociera do klienta
+  jako błąd zapytania. Margines 2 wynika z tego, że Ballista 53 wysyła plan etapu raz na
+  executor i etap (`MultiTaskDefinition`), a nie raz na zadanie. Strażnik koduje tabelę do IPC
+  (`ipc_len`) jeszcze raz w schedulerze — w mierzonym `t_total_s` `nearest` i `coverage`;
+  chwilowo ≈ 2× ładunek (29–57 MB na planowanych parach), koszt niemierzony osobno.
+- **`broadcast payload decoded: N bytes`.** Dekoder naszych węzłów w executorze
+  (`bio_phys_codec.rs`) loguje rozmiar odebranego ładunku broadcastu. Orkiestrator sumuje wpisy
+  z logów executorów z czasu przebiegu (`bench/logscan.py`) → kolumna `broadcast_bytes`:
+  ładunek × liczba wiadomości startowych (jedna na executor i etap w trybie push).
+- **`bench_client --explain-analyze <plik>`.** Zamiast pomiaru zapisuje plan `EXPLAIN ANALYZE`
+  z metrykami operatorów do pliku (stdout: `{"explain_bytes": N}`); nie łączy się z `--output`.
+  Orkiestrator woła go w dodatkowym, niemierzonym przebiegu po rundach bloku (`explain: true`).
+- **Konwencja współrzędnych obowiązkowa.** Funkcje `dist_*` wymagają argumentu `'strict'`|`'weak'`
+  (wcześniej domyślne `'weak'` ukrywało błąd `nearest` z 3b-1).
+- **Wynik `broadcast-check`** (`broadcast-check/20261011-185454`): `nearest` i `coverage` na
+  2-7 i 7-0 przy N = 1, 2, 3 wykonują się poprawnie (sumy zgodne z polars-bio, 0 nieważnych);
+  `broadcast_bytes` liniowo z N: 2-7 = 29 198 988 × N, 7-0 = 57 383 884 × N.
+- **Znany nieaktualny komentarz:** `src/runner.rs` (przy `GRPC_MAX_MESSAGE_ENV`, ok. linii 65)
+  mówi, że ładunek niesie tabelę „w każdym zadaniu”; ściślej: w każdej wiadomości startowej
+  (raz na executor i etap). Do poprawienia przy najbliższej zmianie Rusta (zmiany w `*.rs` nie
+  wchodziły w zakres dokumentacji 3b-2).
+- Smoke na release (10.10.2026): `broadcast_bytes` dla `nearest` i `coverage` na 1-2 =
+  10 709 132 × N.

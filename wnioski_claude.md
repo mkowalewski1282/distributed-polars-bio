@@ -221,7 +221,7 @@ etapami, po jednej zmianie. Punkty dopisywane po każdym etapie.
    - Ścieżka UDTF projektu (wiersze, nie pandas UDF) działa, a testy porównują jej wynik
      z polars-bio.
    - Do sprawdzenia w planie 3b-2 przy przejściu na UDTF ze strzałką (Arrow), gdzie PySpark
-     konwertuje partie przez pandas.
+     konwertuje partie przez pandas — wynik: sekcja „Plan 3b-2”, punkt 7.
 5. **Weryfikacja końcowa (04.10.2026).**
    - Testy na danych rzeczywistych: 13 passed, 2 xfailed (standalone przy broadcaście — bez
      zmian).
@@ -236,7 +236,7 @@ etapami, po jednej zmianie. Punkty dopisywane po każdym etapie.
 ## Plan 3b-2 — narzędzie gotowe do pomiarów (od 09.10.2026)
 
 1. **Partie wyniku Saila (sonda 10.10.2026, plan 3b-2, Zadanie 12).**
-   - Ścieżka `applyInArrow` z kontekstem polars-bio na wątek, `overlap` 7-0 (2 761 621 wierszy),
+   - Ścieżka `applyInArrow` z kontekstem polars-bio na wątek (wersja później zastąpiona pulą, punkt 2), `overlap` 7-0 (2 761 621 wierszy),
      N = 3, klient PySpark (`to_table_as_iterator`); najmniejsze czasy z 3 powtórzeń, VS Code
      otwarty — liczby orientacyjne, nie pomiar do pracy.
 
@@ -251,9 +251,98 @@ etapami, po jednej zmianie. Punkty dopisywane po każdym etapie.
    - We wszystkich wariantach ta sama liczba wierszy i suma kontrolna (`0x19f5668a8b28be3a`).
    - Decyzja (reguła planu: ≥ 20% krótszy odbiór przy tej samej sumie): `SAIL_EXECUTION__BATCH_SIZE
      = 65536` w `sail_env` (`bench/runners/sail_server.py`) — odbiór krótszy o 43%, cały przebieg
-     o 28%. Opcje sesji Spark Connect nie zmieniają liczby partii — o rozmiarze partii wyniku
-     decyduje rozmiar partii wykonania Saila.
+     o 28%. Opcje sesji Spark Connect nie zmieniają liczby partii — na liczbę partii wyniku
+     wpływa rozmiar partii wykonania Saila (uściślenie niżej).
    - Do opisu w metodyce: to strojenie silnika (rozmiar partii wykonania dotyczy całego planu,
      nie tylko odbioru), w granicach publicznej konfiguracji Saila; Ballista zostaje przy
      domyślnym rozmiarze partii DataFusion. Odbiór wyniku przez klienta w Pythonie pozostaje
      osobną fazą (asymetria klientów: Ballista — Rust, Sail — Python).
+   - Uściślenie: 273 partie to nie 2,76 mln / 65 536 — rozmiar partii wykonania wpływa na liczbę
+     partii wyniku, ale ta nie wynika z niego wprost. `SAIL_EXECUTION__BATCH_SIZE=65536` działa na
+     wszystkie trzy warianty Saila, lecz zmierzono go tylko na ścieżce Arrow. To strojenie silnika
+     wobec domyślnych 8192 w Ballistcie — asymetria do opisania w pracy.
+2. **Globalny kontekst polars-bio, pomost i pula kontekstów.**
+   - polars-bio 0.36 ma jeden globalny kontekst (`s1`/`s2`); równoczesne wywołania w wątkach jednego
+     procesu kończą się błędem `The table s1 already exists`. Obserwacja dla pracy: polars-bio nie
+     jest bezpieczny wątkowo w jednym procesie, co ogranicza integrację z silnikami wykonującymi
+     funkcje Pythona w wątkach (Sail). Pomost we własnym repo (podmiana `range_operation`, bez
+     zmian w polars-bio) usuwa blokadę.
+   - Zysk z braku blokady (`sail_lock` / `sail`, mediany ważnych przebiegów, sail-paths 11.10.2026):
+     1,08–1,49 na parach 1-2; na `overlap` 7-0 1,11 (N = 1) i 1,15 (N = 3): 2,572 → 2,858 s
+     i 2,184 → 2,501 s. Sonda z 08.10 (kontekst na wątek) dawała ~10% na 7-0.
+   - Lekcja o puli: `threading.local` jest błędnym wyborem, gdy Python jest wołany z obcych
+     (Rustowych) wątków — Sail odtwarza stan wątku Pythona przy każdym wywołaniu, więc „kontekst
+     na wątek” stawał się kontekstem na wywołanie (sonda 11.10.2026: 162 konteksty na 3 zapytania,
+     54 na zapytanie `overlap` 7-0 przy 2 wątkach natywnych). Pamięć serwera Saila po 12 zapytaniach:
+     0,94 → 2,65 GB (~150 MB na zapytanie) wobec 0,95 → 1,83 GB z pulą (`sail_lock`: 0,90 → 1,80
+     GB); szczyt puli 2,21 GB po 24 zapytaniach (blisko plateau); te same wiersze i sumy. Poza
+     Sailem (zwykłe wątki) żadna wersja nie rośnie. Odrzucone hipotezy: limit czasu sesji, areny
+     glibc (`MALLOC_ARENA_MAX=2`), ustawienia alokatora Arrow/jemalloc.
+3. **Ścieżka Arrow a UDTF w Sailu (koszt mechanizmu integracji).**
+   - Sonda 08.10 (para 1-2, N = 1): UDTF 5,61 / 6,33 / 5,75 / 2,36 / 5,71 s vs Arrow 0,33 / 0,46 /
+     0,31 / 0,23 / 0,28 s (overlap / nearest / coverage / merge / subtract).
+   - Seria sail-paths (mediany, N = 1 / 3): UDTF/pula 12–24×; np. `overlap` 1-2: 5,24 / 5,34 s vs
+     0,257 / 0,224 s; `overlap` 7-0: 41,57 s vs 2,572 s (N = 1). UDTF na 7-0 trzyma serwer w
+     3,12 GB (N = 1) i 3,37–3,79 GB (N = 3) wobec 1,8–2,3 GB ścieżek Arrow → swap i nieważne
+     przebiegi.
+   - Wszystkie trzy warianty dają identyczne wiersze i sumy kontrolne, więc różnica to koszt
+     mechanizmu, nie algorytmu: wzorzec `collect_list` + LATERAL + `explode` kontra wymiana tabel
+     Arrow. Wniosek o dojrzałości API rozszerzeń Saila: `applyInArrow` (API PySparka) działa od
+     razu i jest szybkie; ścieżka UDTF jest wolna, pamięciożerna i miała regresję w 0.7.2
+     (LATERAL, punkt 3 sekcji „Plan 3b-1”).
+4. **Badanie szumu przebiegu kontrolnego i przerwa `settle_s`.**
+   - Para 1-2 (~0,13 s) była za krótka, więc kontrolą jest `overlap` 7-0 (~0,6–0,7 s w polars-bio A),
+     10 powtórzeń, mediany. Mimo to bez pauzy odsetek fałszywych dryfów przy progu 10% wyniósł 47,7%
+     (mediana 0,615 s, rozrzut 38,2%) i 65,0% (suwak trybu zasilania na najlepszej wydajności:
+     mediana 0,657 s, rozrzut 36,1%) — rozkład dwumodalny ~0,58 / ~0,72 s, różnica w całości w
+     `first_batch_s` (0,27 vs 0,37 s).
+   - Przyczyna: WSL2 po ~2 s zwraca zwolnioną pamięć do Hyper-V (*free page reporting*), więc
+     przebieg startujący później „zimno” zapełnia strony (+~0,1 s na ~650 MB RSS). Dowody:
+     przemiatanie pauzy (0,5 s mieszane; 1,0 s szybkie; 2,0 i 3,0 s wolne), dotknięcie 1,4 GB przed
+     przebiegiem → głównie szybkie, pętla CPU w pauzie → nadal wolno; `pageReporting=false` w
+     `.wslconfig` bez efektu.
+   - Rozwiązanie: `settle_s` = 3,0 s. Seria 20261010-235042: mediana 0,722 s (0,688–0,798), rozrzut
+     16,0%, CV 5,6%, odsetek fałszywych dryfów **1,8%** (kryterium ≤ 5%: spełnione); przy progu 8%
+     byłoby 11,4%, 5% — 23,4%. Pauza wprowadza stan deterministycznie zimny (czasy ~+0,1 s na 7-0).
+5. **Smoke na release (10.10.2026, `settle_s` 3 s, ~37 min).**
+   - 281 przebiegów, 0 błędów, 0 niezgodności sum, swap 0; 50 nieważnych = 2 bloki powtórzone
+     przez dryf (Ballista N = 3: 17%, Sail N = 3: 20%; powtórzenia 2,4% i 2,5%) — przejściowe
+     spowolnienia maszyny, seria uznana za zaliczoną.
+   - Ballista release vs debug (smoke 04.10.2026), mediana `t_total_s` przebiegów mierzonych
+     (po wszystkich przebiegach, bo debug nie ma ważnego przebiegu przy N = 3):
+
+     | Scenariusz | N | release [s] | debug [s] | debug / release |
+     |---|---|---|---|---|
+     | overlap 1-2 | 1 / 2 / 3 | 0,136 / 0,138 / 0,164 | 1,39 / 1,37 / 1,44 | 10,2 / 9,9 / 8,7 |
+     | nearest 1-2 | 1 / 2 / 3 | 0,366 / 0,342 / 0,365 | 2,50 / 2,32 / 2,33 | 6,8 / 6,8 / 6,4 |
+     | coverage 1-2 | 1 / 2 / 3 | 0,210 / 0,294 / 0,265 | 1,43 / 1,45 / 1,46 | 6,8 / 4,9 / 5,5 |
+     | merge 1 | 1 / 2 / 3 | 0,068 / 0,081 / 0,079 | 0,67 / 0,51 / 0,56 | 9,9 / 6,3 / 7,1 |
+     | subtract 1-2 | 1 / 2 / 3 | 0,159 / 0,091 / 0,110 | 1,10 / 0,79 / 0,81 | 6,9 / 8,6 / 7,3 |
+
+     Debug jest 4,9–10,2× wolniejszy (mediana ilorazów ≈ 6,9×). Serie nie są w pełni
+     porównywalne: debug liczył sumę kontrolną w `t_total_s` (`checksum_s` ≈ 0,16 s wobec 0,005 s
+     w release, więc część różnicy to zmiana protokołu), nie miał pauzy `settle_s`, a przebiegi
+     były pojedyncze (1–2 przebiegi na komórkę, bez rozgrzewki). Rząd wielkości jest jednak
+     pewny: build debug nie nadaje się do pomiarów.
+6. **Broadcast Ballisty (`broadcast-check` 11.10.2026, strażnik gRPC).**
+   - `nearest` i `coverage` na 2-7 i 7-0 wykonują się przy N = 1, 2, 3 (35 przebiegów, 0 nieważnych,
+     sumy zgodne z polars-bio). Pojedyncze przebiegi (N = 1 / 2 / 3): `nearest` 2-7 1,13 / 1,04 /
+     1,17 s; `coverage` 2-7 0,67 / 0,63 / 0,66 s; `nearest` 7-0 2,31 / 2,24 / 2,48 s; `coverage` 7-0
+     1,18 / 1,29 / 1,38 s.
+   - `broadcast_bytes` rośnie dokładnie liniowo z N: 2-7 = 29 198 988 × N, 7-0 = 57 383 884 × N
+     (smoke 1-2: 10 709 132 × N) — to ładunek × liczba wiadomości startowych (jedna na executor
+     i etap w trybie push), a **nie** × liczba zadań (poprawka względem założeń planu: Ballista 53
+     wysyła plan etapu raz na executor). Dużo poniżej 512 MiB; `peak_rss_sum` 0,74–2,76 GB
+     (pojedyncze przebiegi, zaszumione).
+   - Strażnik broadcastu koduje tabelę do IPC jeszcze raz w schedulerze, w mierzonym czasie
+     (chwilowo ≈ 2× ładunek, 29–57 MB); koszt niemierzony osobno.
+7. **Ostrzeżenia PySparka 4.2 przy pandas 3 na ścieżce Arrow (Zadanie 10; uzupełnienie punktu 4
+   sekcji „Plan 3b-1”).** Po stronie klienta `FutureWarning` „PySpark does not yet fully support
+   pandas >= 3.0.0” (`pyspark/sql/connect/utils.py:41`, `pyspark/testing/utils.py:127`) na obu
+   ścieżkach; ścieżka UDTF dodatkowo `pyspark/sql/connect/udtf.py:88`. Bez `Pandas4Warning`,
+   żadnych ostrzeżeń po stronie serwera.
+8. **Otwarte: końcowe przebiegi kontrolne są wolniejsze od początkowych.** W sail-paths dryfy
+   2,2%, 10,7%, 8,0%, 8,9% i 13,4%; różnica w `first_batch_s` (start ~0,28–0,31 s, koniec
+   ~0,33–0,36 s), końcowe często przyspieszają w ciągu 10 przebiegów. Hipotezy niesprawdzone:
+   wyczerpany budżet taktowania CPU po ciężkim bloku albo pamięć trzymana przez silnik podczas
+   końcowych kontroli. Do zbadania przed 3b-3.

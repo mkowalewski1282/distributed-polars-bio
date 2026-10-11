@@ -56,6 +56,22 @@ uv run python -m bench.orchestrator bench/conf/smoke.yaml --ballista-profile deb
 Wyniki trafiają do `bench/results/<seria>/<czas>/runs.parquet`. Metodyka:
 `docs/superpowers/specs/2026-09-29-metodyka-benchmarkow-design.md`.
 
+Serie pomiarowe używają domyślnie binarek release (build trwa ponad godzinę przy
+`CARGO_BUILD_JOBS=1`; narzędzie sprawdza przed startem, czy binarki są nowsze od źródeł):
+
+```bash
+cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --release --bins && cd ..
+uv run python -m bench.orchestrator bench/conf/control_noise.yaml   # badanie szumu przebiegu kontrolnego
+uv run python -m bench.control_noise bench/results/control-noise/<czas>   # odsetek fałszywych dryfów
+uv run python -m bench.orchestrator bench/conf/sail_paths.yaml      # porównanie ścieżek Saila
+uv run python -m bench.orchestrator bench/conf/broadcast_check.yaml # broadcast Ballisty (nearest, coverage)
+```
+
+Serie pomiarowe wymagają pustego swapu (narzędzie sprawdza to przed startem; wyczyścić:
+`sudo swapoff -a && sudo swapon /dev/sdc` albo `wsl --shutdown`), zamkniętego VS Code i
+`.wslconfig` z 5 GB pamięci. Klucz `settle_s` w konfiguracji dodaje pauzę przed każdym przebiegiem
+(WSL2 zwraca zwolnioną pamięć do Hyper-V, co bez pauzy daje dwumodalne czasy).
+
 ## Dokumentacja
 
 - `raporty/sprawozdanie_stanu_prac.md` — stan prac;
