@@ -74,10 +74,6 @@ def base_env() -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith(INHERITED_PREFIXES)}
     env["MPLBACKEND"] = "Agg"
     return env
-#: Wariant Saila → ścieżka runnera (bench/runners/sail_runner.py, specyfikacja 3b-2, 5.3).
-SAIL_PATHS = {"sail": "arrow", "sail_lock": "arrow-lock", "sail_udtf": "udtf"}
-
-
 def node_cpus(k: int) -> tuple[int, int]:
     """Węzeł k (1..3) = rdzeń fizyczny k = wątki {2k, 2k+1} (lscpu -e)."""
     if k not in (1, 2, 3):
@@ -339,8 +335,8 @@ class SailEngine:
     """Jeden proces serwera Saila (local-cluster, N workerów) na rdzeniach węzłów 1..N;
     runner-klient na rdzeniu systemowym."""
 
-    def __init__(self, n_nodes: int, *, data_root: Path, log_dir: Path, path: str = "arrow"):
-        self.n, self.data_root, self.log_dir, self.path = n_nodes, data_root, log_dir, path
+    def __init__(self, n_nodes: int, *, data_root: Path, log_dir: Path):
+        self.n, self.data_root, self.log_dir = n_nodes, data_root, log_dir
         self.proc: subprocess.Popen | None = None
         self.port: int | None = None
 
@@ -400,7 +396,7 @@ class SailEngine:
         return _python(
             "bench.runners.sail_runner",
             SYSTEM_CPUS,
-            [*scenario_args(scenario, self.data_root), "--remote", f"sc://127.0.0.1:{self.port}", "--path", self.path],
+            [*scenario_args(scenario, self.data_root), "--remote", f"sc://127.0.0.1:{self.port}"],
             {},
         )
 
@@ -432,6 +428,6 @@ def make_engine(variant: str, n_nodes: int, *, data_root: Path, log_dir: Path, p
         return PolarsBioEngine(SLOTS_PER_NODE * n_nodes, cluster_cpus(n_nodes), data_root)
     if variant == "ballista":
         return BallistaEngine(n_nodes, profile=profile, data_root=data_root, log_dir=log_dir)
-    if variant in SAIL_PATHS:
-        return SailEngine(n_nodes, data_root=data_root, log_dir=log_dir, path=SAIL_PATHS[variant])
+    if variant == "sail":
+        return SailEngine(n_nodes, data_root=data_root, log_dir=log_dir)
     raise ValueError(f"unknown variant {variant!r}")

@@ -1,7 +1,7 @@
 """
 Formalne testy poprawności dla operacji merge (Faza C) — Ballista (lokalnie,
 patrz ballista_genomics/OPIS.md nt. braku furtki do pełnej dystrybucji dla tej
-operacji) i Sail (prawdziwy UDTF, ten sam wzorzec co overlap).
+operacji).
 
 Uruchomienie: pytest tests/test_merge_correctness.py -v
 """
@@ -46,22 +46,4 @@ def test_ballista_local_merge_matches_oracle():
 
     assert actual == expected, (
         f"Only in pb.merge(): {expected - actual}\nOnly in Ballista: {actual - expected}"
-    )
-
-
-def test_sail_merge_matches_oracle():
-    import sail_merge_udtf as mod
-
-    sail_result, _ = mod.run_sail_merge()
-    actual = set(
-        zip(
-            sail_result["chrom"].tolist(),
-            sail_result["start"].tolist(),
-            sail_result["end"].tolist(),
-        )
-    )
-    expected = reference_merge_intervals(INTERVALS_A)
-
-    assert actual == expected, (
-        f"Only in pb.merge(): {expected - actual}\nOnly in Sail: {actual - expected}"
     )

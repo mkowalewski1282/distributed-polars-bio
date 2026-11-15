@@ -29,7 +29,7 @@ OUTPUT_CSV = BALLISTA_DIR / "output" / "dist_overlap_result.csv"
 
 # Dane testowe muszą być identyczne z tymi zaszytymi w main.rs (DATA_LEFT_CSV/
 # DATA_RIGHT_CSV wskazują na ballista_genomics/data/intervals_a.csv i intervals_b.csv)
-# oraz z tymi w overlap_comparison.py/sail_overlap_udtf.py — to ten sam zestaw
+# oraz z tymi w overlap_comparison.py — to ten sam zestaw
 # używany we wszystkich testach w tej pracy, żeby wyniki były bezpośrednio
 # porównywalne między silnikami.
 INTERVALS_A = [

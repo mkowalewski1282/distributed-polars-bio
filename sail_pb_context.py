@@ -3,8 +3,8 @@
 polars-bio 0.36 trzyma jeden globalny kontekst (BioSessionContext) i rejestruje w nim tabele
 operacji na ramkach pod stałymi nazwami s1/s2: równoczesne wywołania pb.*() w wątkach jednego
 procesu kończą się błędem „The table s1 already exists” (w 0.28 — cichym nadpisaniem tabel).
-Sail wykonuje funkcje Pythona w wątkach procesu serwera, więc dotąd chroniła je blokada
-(sail_pb_guard) — kosztem liczenia jednego chromosomu naraz.
+Sail wykonuje funkcje Pythona w wątkach procesu serwera, więc bez puli trzeba by je chronić
+blokadą — kosztem liczenia jednego chromosomu naraz.
 
 Wszystkie pięć operacji (overlap, nearest, coverage, merge, subtract) budują RangeOptions
 i wołają polars_bio.range_op.range_operation(df1, df2, options, output_type, ctx, …). Moduł
@@ -30,7 +30,7 @@ Zależność od wnętrza polars-bio, nie od publicznego API: wersja przypięta w
 wnętrza w nowej wersji wyjdzie od razu. Kodu polars-bio nie zmieniamy (decyzja 3b-2).
 
 Import instaluje podmianę: moduł importuje po nazwie funkcja Saila (sail_arrow) w procesie
-serwera, jak sail_pb_guard. Działa tylko w procesie, który go zaimportował — runner polars-bio
+serwera. Działa tylko w procesie, który go zaimportował — runner polars-bio
 (wzorzec, warianty A i B) go nie importuje."""
 
 from __future__ import annotations

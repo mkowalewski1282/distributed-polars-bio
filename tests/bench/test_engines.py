@@ -155,18 +155,11 @@ def test_sail_server_is_pinned_and_configured(tmp_path):
         } <= environ(pid)
         cmd = engine.command(Scenario("overlap", "1-2"))
         assert cmd.argv[:6] == ["taskset", "-c", "0,1", sys.executable, "-m", "bench.runners.sail_runner"]
-        assert cmd.argv[-4:] == ["--remote", f"sc://127.0.0.1:{engine.port}", "--path", "arrow"]
+        assert cmd.argv[-2:] == ["--remote", f"sc://127.0.0.1:{engine.port}"]
         assert cmd.cwd == engines.REPO
     finally:
         engine.stop()
     assert not Path(f"/proc/{pid}").exists()
-
-
-@pytest.mark.parametrize("variant, path", [("sail", "arrow"), ("sail_lock", "arrow-lock"), ("sail_udtf", "udtf")])
-def test_sail_variants_choose_runner_path(variant, path, tmp_path):
-    engine = engines.make_engine(variant, 2, data_root=tmp_path, log_dir=tmp_path / "logs", profile="debug")
-    argv = engine.command(Scenario("overlap", "1-2")).argv
-    assert argv[argv.index("--path") + 1] == path
 
 
 def test_sail_engine_counts_session_workers_from_its_log(tmp_path):
@@ -316,5 +309,5 @@ def test_env_records_list_what_the_tool_sets(tmp_path):
     assert make("ballista", 2).env_record() == {
         "BIO_TARGET_PARTITIONS": "4", "BALLISTA_GRPC_MAX_MESSAGE_BYTES": "536870912",
     }
-    sail = make("sail_lock", 3).env_record()
+    sail = make("sail", 3).env_record()
     assert sail["SAIL_CLUSTER__WORKER_INITIAL_COUNT"] == "3" and sail["POLARS_MAX_THREADS"] == "6"

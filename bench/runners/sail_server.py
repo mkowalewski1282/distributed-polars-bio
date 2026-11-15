@@ -2,9 +2,9 @@
 runnery-klienci (bench/runners/sail_runner.py) łączą się przez Spark Connect.
 
 Zasoby ustawia orkiestrator: przypięcie do rdzeni węzłów 1..N (taskset) i zmienne SAIL_*
-z `sail_env`. polars-bio jest importowany przed startem, żeby pierwsze wywołanie UDTF nie
+z `sail_env`. polars-bio jest importowany przed startem, żeby pierwsze wywołanie funkcji nie
 płaciło za import. Proces kończy się sygnałem SIGTERM. Katalog roboczy musi być katalogiem
-głównym repozytorium — UDTF z sail_bio importuje moduły po nazwie w tym procesie."""
+głównym repozytorium — funkcje applyInArrow z sail_arrow importują moduły po nazwie w tym procesie."""
 
 from __future__ import annotations
 

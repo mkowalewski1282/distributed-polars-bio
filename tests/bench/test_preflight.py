@@ -51,7 +51,7 @@ def test_pysail_is_required_only_for_sail_variants(monkeypatch):
     monkeypatch.setattr(preflight, "_importable", lambda name: False)
     preflight.check_tools(["polars_bio_a", "ballista"])
     with pytest.raises(ConfigError, match="pysail"):
-        preflight.check_tools(["sail_lock"])
+        preflight.check_tools(["sail"])
 
 
 def test_importable_runs_a_real_import():

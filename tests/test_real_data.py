@@ -102,17 +102,19 @@ def test_ballista_cluster_on_1_2(op, cluster, real_dirs, real_expected, tmp_path
 
 @pytest.fixture(scope="module")
 def spark():
-    import sail_bio
+    import sail_session
 
-    with sail_bio.sail_session() as session:
+    with sail_session.local_session() as session:
         yield session
 
 
 @pytest.mark.parametrize("op", OPS)
 def test_sail_on_1_2(op, spark, real_dirs, real_expected):
-    import sail_bio
+    import polars as pl
+
+    import sail_arrow
 
     left, right = real_dirs
-    df = sail_bio.run_op(spark, op, left, None if op in UNARY_OPS else right)
-    actual = row_multiset(op, df)
+    df = sail_arrow.build_query(spark, op, left, None if op in UNARY_OPS else right)
+    actual = row_multiset(op, pl.from_arrow(df.toArrow()))
     assert actual == real_expected[op], f"{op}: {describe_diff(real_expected[op], actual)}"

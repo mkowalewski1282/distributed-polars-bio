@@ -1,6 +1,6 @@
 """
 Formalne testy poprawności dla coverage i subtract (Faza C) — Ballista
-(lokalnie) i Sail (prawdziwy UDTF).
+(lokalnie).
 
 Uruchomienie: pytest tests/test_coverage_subtract_correctness.py -v
 """
@@ -62,44 +62,4 @@ def test_ballista_local_subtract_matches_oracle():
     expected = reference_subtract(INTERVALS_A, INTERVALS_B)
     assert actual == expected, (
         f"Only in pb.subtract(): {expected - actual}\nOnly in Ballista: {actual - expected}"
-    )
-
-
-def test_sail_coverage_and_subtract_match_oracle():
-    """
-    Jeden test dla obu UDTF-ów, woła je w JEDNEJ sesji Spark Connect przez
-    run_udtfs(). UWAGA (znaleziona pułapka): PySpark cache'uje SparkSession
-    jako globalny singleton — dwa osobne testy pytest, każdy tworzący WŁASNY
-    SparkConnectServer, kończyły się błędem "Connection refused" na drugim
-    (getOrCreate() zwracał starą, już zatrzymaną sesję). Stąd jeden test,
-    jedna sesja, dwa UDTF-y — patrz sail_coverage_subtract_udtf.run_udtfs().
-    """
-    import sail_coverage_subtract_udtf as mod
-
-    results = mod.run_udtfs({
-        "coverage_udtf": mod._make_coverage_udtf,
-        "subtract_udtf": mod._make_subtract_udtf,
-    })
-
-    sail_cov = results["coverage_udtf"]
-    actual_cov = set(
-        zip(
-            sail_cov["chrom"].tolist(),
-            sail_cov["start"].tolist(),
-            sail_cov["end"].tolist(),
-            sail_cov["coverage"].tolist(),
-        )
-    )
-    expected_cov = reference_coverage(INTERVALS_A, INTERVALS_B)
-    assert actual_cov == expected_cov, (
-        f"Only in pb.coverage(): {expected_cov - actual_cov}\nOnly in Sail: {actual_cov - expected_cov}"
-    )
-
-    sail_sub = results["subtract_udtf"]
-    actual_sub = set(
-        zip(sail_sub["chrom"].tolist(), sail_sub["start"].tolist(), sail_sub["end"].tolist())
-    )
-    expected_sub = reference_subtract(INTERVALS_A, INTERVALS_B)
-    assert actual_sub == expected_sub, (
-        f"Only in pb.subtract(): {expected_sub - actual_sub}\nOnly in Sail: {actual_sub - expected_sub}"
     )

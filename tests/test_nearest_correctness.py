@@ -1,6 +1,5 @@
 """
-Formalne testy poprawności dla operacji nearest (Faza C) — Ballista (lokalnie)
-i Sail (prawdziwy UDTF).
+Formalne testy poprawności dla operacji nearest (Faza C) — Ballista (lokalnie).
 
 Uruchomienie: pytest tests/test_nearest_correctness.py -v
 """
@@ -93,16 +92,4 @@ def test_ballista_and_pb_nearest_pick_same_neighbours():
     assert ballista_pairs == pb_pairs, (
         "Ballista and pb.nearest() chose different neighbours (different tie rules) - "
         f"Ballista: {sorted(ballista_pairs)}, pb: {sorted(pb_pairs)}"
-    )
-
-
-def test_sail_nearest_matches_oracle():
-    import sail_nearest_udtf as mod
-
-    sail_result, _ = mod.run_sail_nearest()
-    actual = set(zip(sail_result["name_a"].tolist(), sail_result["name_b"].tolist()))
-    expected = reference_nearest_pairs(INTERVALS_A, INTERVALS_B)
-
-    assert actual == expected, (
-        f"Only in pb.nearest(): {expected - actual}\nOnly in Sail: {actual - expected}"
     )

@@ -1,5 +1,5 @@
 """Ścieżka Arrow w Sailu (plan 3b-2, Zadanie 9; specyfikacja 5.2): groupBy/cogroup(...).applyInArrow
-z polars-bio w trybie „pula kontekstów” i „blokada” — wynik zgodny z polars-bio, plik faz."""
+z polars-bio w trybie „pula kontekstów” — wynik zgodny z polars-bio, plik faz."""
 
 from __future__ import annotations
 
@@ -47,42 +47,39 @@ def spark(tmp_path_factory):
         proc.wait(timeout=30)
 
 
-@pytest.mark.parametrize("mode", sail_arrow.MODES)
 @pytest.mark.parametrize("op", OPS)
-def test_arrow_path_matches_polars_bio(op, mode, spark, parquet_dirs, parquet_expected, tmp_path):
+def test_arrow_path_matches_polars_bio(op, spark, parquet_dirs, parquet_expected, tmp_path):
     left, right = parquet_dirs
     phases = tmp_path / "phases.jsonl"
     df = sail_arrow.build_query(
-        spark, op, left, None if op in UNARY_OPS else right, mode=mode, phase_log=str(phases)
+        spark, op, left, None if op in UNARY_OPS else right, phase_log=str(phases)
     )
     checksum = cs.Checksum(op)
     checksum.update(df.toArrow())
     expected = parquet_expected[op]
     assert checksum.rows == sum(expected.values())
     assert checksum.hex() == cs.format_checksum(cs.checksum_rows(op, expected.elements()))
-    pb_s, wait_s, calls = sail_arrow.read_phases(phases)
+    pb_s, calls = sail_arrow.read_phases(phases)
     assert calls == LEFT_CHROMOSOMES and pb_s > 0
-    assert wait_s == 0.0 if mode == "context" else wait_s >= 0.0
 
 
 def test_empty_left_group_returns_empty_table_without_calling_polars_bio(tmp_path):
     empty = pa.table({"chrom": pa.array([], pa.string()), "start": pa.array([], pa.int64()),
                       "end": pa.array([], pa.int64())})
     phases = tmp_path / "phases.jsonl"
-    for mode in sail_arrow.MODES:
-        result = sail_arrow.evaluate("overlap", empty, empty, mode, str(phases))
-        assert result.num_rows == 0 and result.schema == sail_arrow.arrow_schema("overlap")
+    result = sail_arrow.evaluate("overlap", empty, empty, str(phases))
+    assert result.num_rows == 0 and result.schema == sail_arrow.arrow_schema("overlap")
     assert not phases.exists()
 
 
 def test_read_phases_sums_records_and_tolerates_missing_or_empty_file(tmp_path):
-    assert sail_arrow.read_phases(None) == (0.0, 0.0, 0)
-    assert sail_arrow.read_phases(tmp_path / "missing.jsonl") == (0.0, 0.0, 0)
+    assert sail_arrow.read_phases(None) == (0.0, 0)
+    assert sail_arrow.read_phases(tmp_path / "missing.jsonl") == (0.0, 0)
     path = tmp_path / "phases.jsonl"
     path.write_text("")
-    assert sail_arrow.read_phases(path) == (0.0, 0.0, 0)
-    path.write_text(json.dumps({"pb_s": 0.5, "wait_s": 0.25}) + "\n" + json.dumps({"pb_s": 1.0, "wait_s": 0.0}) + "\n")
-    assert sail_arrow.read_phases(str(path)) == (1.5, 0.25, 2)
+    assert sail_arrow.read_phases(path) == (0.0, 0)
+    path.write_text(json.dumps({"pb_s": 0.5}) + "\n" + json.dumps({"pb_s": 1.0}) + "\n")
+    assert sail_arrow.read_phases(str(path)) == (1.5, 2)
 
 
 def test_schemas_follow_normalized_output_columns():
@@ -93,14 +90,13 @@ def test_schemas_follow_normalized_output_columns():
 
 
 @pytest.mark.parametrize(
-    "op, right, mode, message",
+    "op, right, message",
     [
-        ("join", "b", "context", "unknown operation"),
-        ("overlap", "b", "fast", "unknown mode"),
-        ("merge", "b", "context", "merge requires one table"),
-        ("overlap", None, "context", "overlap requires two tables"),
+        ("join", "b", "unknown operation"),
+        ("merge", "b", "merge requires one table"),
+        ("overlap", None, "overlap requires two tables"),
     ],
 )
-def test_build_query_rejects_bad_arguments(op, right, mode, message):
+def test_build_query_rejects_bad_arguments(op, right, message):
     with pytest.raises(ValueError, match=message):
-        sail_arrow.build_query(None, op, "a", right, mode=mode)
+        sail_arrow.build_query(None, op, "a", right)
