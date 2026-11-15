@@ -26,11 +26,10 @@ pub const MESSAGE_SIZE_MARGIN: usize = 2;
 
 /// Tabela rozsyłana przez pierwszy węzeł z broadcastem w drzewie planu.
 pub fn broadcast_batch(plan: &Arc<dyn ExecutionPlan>) -> Option<Arc<RecordBatch>> {
-    let any = plan.as_any();
-    if let Some(n) = any.downcast_ref::<NearestExec>() {
+    if let Some(n) = plan.downcast_ref::<NearestExec>() {
         return Some(Arc::clone(&n.left_batch));
     }
-    if let Some(c) = any.downcast_ref::<DistCoverageExec>() {
+    if let Some(c) = plan.downcast_ref::<DistCoverageExec>() {
         return Some(Arc::clone(&c.left_batch));
     }
     plan.children().into_iter().find_map(|child| broadcast_batch(child))

@@ -34,7 +34,7 @@ use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::joins::utils::{ColumnIndex, JoinFilter};
 use datafusion::physical_plan::joins::PartitionMode;
 use datafusion_bio_function_ranges::{Algorithm, IntervalJoinExec, parse_intervals};
-use datafusion_proto::physical_plan::PhysicalExtensionCodec;
+use datafusion_proto::physical_plan::{PhysicalExtensionCodec, PhysicalProtoConverterExtension};
 use datafusion_proto::physical_plan::from_proto::parse_physical_expr;
 use datafusion_proto::physical_plan::to_proto::serialize_physical_expr;
 use datafusion_proto::protobuf::PhysicalExprNode;
@@ -195,9 +195,10 @@ impl PhysicalExtensionCodec for IntervalJoinPhysicalCodec {
         buf: &[u8],
         inputs: &[Arc<dyn ExecutionPlan>],
         registry: &TaskContext,
+        proto_converter: &dyn PhysicalProtoConverterExtension,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         if !has_magic(buf, MAGIC) {
-            return self.inner.try_decode(buf, inputs, registry);
+            return self.inner.try_decode(buf, inputs, registry, proto_converter);
         }
 
         let left = inputs
@@ -328,9 +329,14 @@ impl PhysicalExtensionCodec for IntervalJoinPhysicalCodec {
         Ok(Arc::new(exec))
     }
 
-    fn try_encode(&self, node: Arc<dyn ExecutionPlan>, buf: &mut Vec<u8>) -> Result<()> {
-        let Some(ij) = node.as_any().downcast_ref::<IntervalJoinExec>() else {
-            return self.inner.try_encode(node, buf);
+    fn try_encode(
+        &self,
+        node: Arc<dyn ExecutionPlan>,
+        buf: &mut Vec<u8>,
+        proto_converter: &dyn PhysicalProtoConverterExtension,
+    ) -> Result<()> {
+        let Some(ij) = node.downcast_ref::<IntervalJoinExec>() else {
+            return self.inner.try_encode(node, buf, proto_converter);
         };
 
         buf.extend_from_slice(&MAGIC.to_le_bytes());

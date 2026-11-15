@@ -16,7 +16,6 @@
 //! co tamten gubi. Dla optymalizatora i dla DistributedPlannera Ballisty
 //! zachowuje sie identycznie jak wezel wewnetrzny.
 
-use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
@@ -26,14 +25,16 @@ use datafusion::arrow::compute::concat_batches;
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::catalog::Session;
 use datafusion::common::Statistics;
+use datafusion::common::tree_node::TreeNodeRecursion;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
 use datafusion::logical_expr::Expr;
-use datafusion::physical_expr::Distribution;
+use datafusion::physical_expr::PhysicalExpr;
 use datafusion::physical_plan::metrics::MetricsSet;
 use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties,
+    ChildStats, DisplayAs, DisplayFormatType, ExecutionPlan, InputDistributionRequirements,
+    PlanProperties, StatisticsArgs,
 };
 use datafusion::prelude::SessionContext;
 use datafusion_bio_function_ranges::{
@@ -73,11 +74,11 @@ pub fn build_count_overlaps_exec(
         right: Arc::clone(&right),
         columns_2: Arc::new(columns_2),
         filter_op,
-        // Atrapa; `with_new_children` ponizej przelicza cache dokladnie tak,
+        // Atrapa; `recompute_with_children` ponizej przelicza cache dokladnie tak,
         // jak zrobilby to vendor (wlacznie z EmissionType::Final).
         cache: crate::bio_phys_codec::placeholder_props(schema),
     };
-    Arc::new(exec).with_new_children(vec![right])
+    crate::bio_phys_codec::recompute_with_children(Arc::new(exec), vec![right])
 }
 
 /// Transparentny dekorator nad `CountOverlapsExec`.
@@ -120,8 +121,13 @@ impl ExecutionPlan for DistCoverageExec {
         "DistCoverageExec"
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
+    // DataFusion 55: wymagane. Wezel nie ma wlasnych wyrazen (wewnetrzny
+    // `CountOverlapsExec` tez nie), wiec nie ma czego odwiedzac.
+    fn apply_expressions(
+        &self,
+        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
+    ) -> Result<TreeNodeRecursion> {
+        Ok(TreeNodeRecursion::Continue)
     }
 
     fn properties(&self) -> &Arc<PlanProperties> {
@@ -132,8 +138,9 @@ impl ExecutionPlan for DistCoverageExec {
         self.inner.children()
     }
 
-    fn required_input_distribution(&self) -> Vec<Distribution> {
-        self.inner.required_input_distribution()
+    // DataFusion 55: nastepca `required_input_distribution` (domyslnie ja owija).
+    fn input_distribution_requirements(&self) -> InputDistributionRequirements {
+        self.inner.input_distribution_requirements()
     }
 
     fn maintains_input_order(&self) -> Vec<bool> {
@@ -154,7 +161,7 @@ impl ExecutionPlan for DistCoverageExec {
             columns_2: Arc::clone(&self.columns_2),
             filter_op: self.filter_op.clone(),
             coverage: self.coverage,
-            inner: Arc::clone(&self.inner).with_new_children(children)?,
+            inner: crate::bio_phys_codec::recompute_with_children(Arc::clone(&self.inner), children)?,
         }))
     }
 
@@ -170,8 +177,19 @@ impl ExecutionPlan for DistCoverageExec {
         self.inner.metrics()
     }
 
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Statistics> {
-        self.inner.partition_statistics(partition)
+    // DataFusion 55: statystyki licza `StatisticsContext` przez te dwie metody
+    // (nastepcy `partition_statistics`); dzieci sa dziecmi wezla wewnetrznego,
+    // wiec delegacja obu zachowuje dekorator przezroczystym.
+    fn child_stats_requests(&self, partition: Option<usize>) -> Vec<ChildStats> {
+        self.inner.child_stats_requests(partition)
+    }
+
+    fn statistics_from_inputs(
+        &self,
+        input_stats: &[Arc<Statistics>],
+        args: &StatisticsArgs,
+    ) -> Result<Arc<Statistics>> {
+        self.inner.statistics_from_inputs(input_stats, args)
     }
 }
 
@@ -243,10 +261,6 @@ impl DistCoverageProvider {
 
 #[async_trait]
 impl TableProvider for DistCoverageProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         Arc::clone(&self.schema)
     }

@@ -17,7 +17,7 @@ use datafusion::error::Result;
 use datafusion::execution::TaskContext;
 use datafusion::logical_expr::{Extension, LogicalPlan};
 use datafusion::prelude::SessionConfig;
-use datafusion::sql::TableReference;
+use datafusion::common::TableReference;
 use datafusion_proto::logical_plan::LogicalExtensionCodec;
 
 use crate::dist_payload::DistPayload;
@@ -77,7 +77,7 @@ impl LogicalExtensionCodec for BioDistLogicalCodec {
         node: Arc<dyn TableProvider>,
         buf: &mut Vec<u8>,
     ) -> Result<()> {
-        match node.as_any().downcast_ref::<DistBioProvider>() {
+        match node.downcast_ref::<DistBioProvider>() {
             Some(p) => {
                 buf.extend_from_slice(&p.payload().encode());
                 Ok(())

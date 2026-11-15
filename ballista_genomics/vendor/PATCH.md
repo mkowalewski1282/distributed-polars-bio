@@ -7,26 +7,33 @@ dlatego, że upstream jeszcze ich nie ma.
 
 ## Wersja kopii
 
-Kopia to `datafusion/bio-function-ranges` z tagu **v0.22.2** repozytorium
-biodatageeks/datafusion-bio-functions — ta sama wersja, z którą zbudowano polars-bio 0.36.0
-(pilnuje tego `tests/test_algorithm_versions.py`). `Cargo.toml` kopii ma rozwinięte dziedziczenie
-z workspace upstreamu (`version.workspace` itd.), poza tym jest bez zmian. Upstream v0.22.2 nadal
-nie udostępnia ani `physical_planner::intervals`, ani węzłów fizycznych operacji, więc obie łatki
-są nałożone ponownie bez zmian — struktury mają te same pola co w 0.18.0 (plan 3b-1, 02.10.2026).
+Kopia to `datafusion/bio-function-ranges` z tagu **v0.25.0** repozytorium
+biodatageeks/datafusion-bio-functions (DataFusion =55.2.0, ten sam co Ballista 55). `Cargo.toml`
+kopii ma rozwinięte dziedziczenie z workspace upstreamu v0.25.0 (`version.workspace` itd.),
+poza tym jest bez zmian. Upstream v0.25.0 nadal nie udostępnia ani `physical_planner::intervals`,
+ani węzłów fizycznych operacji, więc obie łatki są nałożone ponownie bez zmian — struktury mają
+te same pola co w 0.18.0 i 0.22.2 (Etap 4, 15.11.2026).
+
+**Okres przejściowy:** polars-bio 0.37 jest zbudowany z v0.24.0 (DataFusion 53), Ballista liczy
+kopią v0.25.0 (DataFusion 55.2). v0.24.x → v0.25.0 to wyłącznie przeniesienie na API DataFusion 55
+(plus deterministyczna zmiana funkcji haszującej klucze równościowe w `IntervalJoinExec`), bez zmian
+algorytmów przedziałowych — tę równoważność jawnie dopuszcza `tests/test_algorithm_versions.py`
+(`EQUIVALENT_RANGES`). Asymetria znika z polars-bio 0.38 (DataFusion 55.2, v0.25.0).
 
 Obie łatki mają tę samą naturę: **zero linii logiki, wyłącznie słowa `pub` i re-eksporty**.
 Regułę utrzymaniową sprawdza się względem czystego tagu upstreamu:
 
 ```bash
-git clone -q --depth 1 --branch v0.22.2 https://github.com/biodatageeks/datafusion-bio-functions /tmp/dbf
+git clone -q --depth 1 --branch v0.25.0 https://github.com/biodatageeks/datafusion-bio-functions /tmp/dbf
 diff -ru /tmp/dbf/datafusion/bio-function-ranges/src ballista_genomics/vendor/datafusion-bio-function-ranges/src \
   | grep '^[+-]' | grep -v '^[+-][+-]'
 ```
 
 Jeśli w wyniku pojawi się cokolwiek poza dodanym `pub`, re-eksportem lub komentarzem,
 łatka przestała być „czysta" i wymaga osobnej decyzji. Aktualizacja vendora: łatki to różnica
-kopii względem czystego tagu poprzedniej wersji, nakładana `patch -p1` na nową (plan 3b-1,
-Zadanie 3).
+kopii względem czystego tagu poprzedniej wersji (`diff -ru -x Cargo.toml`, ścieżki w nagłówkach
+sprowadzone do `a/`/`b/`), nakładana `patch -p1` na nową; `Cargo.toml` nowej kopii rozwija się
+ręcznie wartościami z workspace nowego tagu (plan 3b-1, Zadanie 3; Etap 4: v0.22.2 → v0.25.0).
 
 ## Łatka 1: `pub mod intervals` — `ColIntervals` nienazywalny
 

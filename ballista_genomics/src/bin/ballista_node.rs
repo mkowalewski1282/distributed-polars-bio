@@ -102,7 +102,8 @@ async fn run_executor(o: ExecutorOpts, grpc_limit: usize) -> Result<(), Box<dyn 
         grpc_port: o.grpc_port,
         scheduler_host: "localhost".into(),
         scheduler_port: o.scheduler_port,
-        concurrent_tasks: o.concurrent_tasks,
+        // Ballista 55: `concurrent_tasks` przemianowane na `vcores` (liczba slotow executora).
+        vcores: o.concurrent_tasks,
         task_scheduling_policy: TaskSchedulingPolicy::PushStaged,
         work_dir: Some(o.work_dir.clone()),
         override_config_producer: Some(config_producer),

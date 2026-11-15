@@ -1,6 +1,6 @@
 [package]
 name = "datafusion-bio-function-ranges"
-version = "0.22.2"
+version = "0.25.0"
 description = "Interval join, coverage, and count-overlaps for Apache DataFusion"
 license = "Apache-2.0"
 authors = ["BiodataGeeks Team"]
@@ -9,7 +9,7 @@ homepage = "https://github.com/biodatageeks/datafusion-bio-functions"
 edition = "2024"
 
 [dependencies]
-datafusion = { version = "=53.0.0", default-features = false, features = ["nested_expressions", "crypto_expressions", "datetime_expressions", "encoding_expressions", "regex_expressions", "string_expressions", "unicode_expressions", "parquet", "recursive_protection", "sql"] }
+datafusion = { version = "=55.2.0", default-features = false, features = ["nested_expressions", "crypto_expressions", "datetime_expressions", "encoding_expressions", "regex_expressions", "string_expressions", "unicode_expressions", "parquet", "recursive_protection", "sql"] }
 tokio = { version = "1.43.0", features = ["rt-multi-thread", "rt", "macros"] }
 futures = "0.3.31"
 log = "0.4.27"

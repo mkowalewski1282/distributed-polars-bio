@@ -25,11 +25,13 @@ use datafusion::common::{DataFusionError, Result};
 use datafusion::execution::TaskContext;
 use datafusion::physical_expr::{EquivalenceProperties, Partitioning};
 use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
-use datafusion::physical_plan::{ExecutionPlan, PlanProperties};
+use datafusion::physical_plan::{
+    ChildrenPropertiesMode, ExecutionPlan, PlanProperties, ReplaceChildrenOptions,
+};
 use datafusion_bio_function_ranges::{
     build_nearest_indexes, FilterOp, MergeExec, NearestExec, SubtractExec,
 };
-use datafusion_proto::physical_plan::PhysicalExtensionCodec;
+use datafusion_proto::physical_plan::{PhysicalExtensionCodec, PhysicalProtoConverterExtension};
 
 use crate::codec_io::*;
 use crate::coverage_node::{build_count_overlaps_exec, DistCoverageExec};
@@ -56,7 +58,7 @@ impl Default for BioRangesPhysicalCodec {
 }
 
 /// `PlanProperties` z atrapa partycjonowania. Nigdy nie trafia do gotowego
-/// wezla: zaraz po zbudowaniu literalu wolamy `with_new_children()`, ktore
+/// wezla: zaraz po zbudowaniu literalu wolamy `recompute_with_children()`, ktore
 /// przelicza `cache` DOKLADNIE tak, jak zrobilby to vendor (wlacznie z
 /// wlasciwym `EmissionType`). Dzieki temu nie musimy nawet wiedziec, czy dana
 /// operacja jest `Incremental` czy `Final` - i eliminujemy cala klase bledow
@@ -69,6 +71,19 @@ pub fn placeholder_props(schema: datafusion::arrow::datatypes::SchemaRef) -> Arc
         EmissionType::Incremental,
         Boundedness::Bounded,
     ))
+}
+
+/// Podmiana dzieci z przeliczeniem `cache` — odpowiednik dawnego `with_new_children()`
+/// (w DataFusion 55 przestarzalego): `replace_children` z `ChildrenPropertiesMode::Recompute`
+/// dla wezlow vendora konczy sie w ich `with_new_children()`, wiec wynik jest ten sam.
+pub fn recompute_with_children(
+    plan: Arc<dyn ExecutionPlan>,
+    children: Vec<Arc<dyn ExecutionPlan>>,
+) -> Result<Arc<dyn ExecutionPlan>> {
+    plan.replace_children(
+        children,
+        ReplaceChildrenOptions::new(ChildrenPropertiesMode::Recompute),
+    )
 }
 
 fn build_merge_exec(
@@ -86,7 +101,7 @@ fn build_merge_exec(
         strict,
         cache: placeholder_props(schema),
     };
-    Arc::new(exec).with_new_children(vec![input])
+    recompute_with_children(Arc::new(exec), vec![input])
 }
 
 /// Wezel BINARNY - pierwszy z dwojgiem dzieci. DataFusion serializuje oba
@@ -113,7 +128,7 @@ fn build_subtract_exec(
         has_extra_cols,
         cache: placeholder_props(schema),
     };
-    Arc::new(exec).with_new_children(vec![left, right])
+    recompute_with_children(Arc::new(exec), vec![left, right])
 }
 
 fn encode_subtract(sx: &SubtractExec, buf: &mut Vec<u8>) -> Result<()> {
@@ -220,7 +235,7 @@ fn build_nearest_exec(
         compute_distance,
         cache: placeholder_props(schema),
     };
-    Arc::new(exec).with_new_children(vec![right])
+    recompute_with_children(Arc::new(exec), vec![right])
 }
 
 /// Rozmiar odebranego ładunku broadcastu: orkiestrator sumuje te linie z logów executorów
@@ -352,20 +367,25 @@ fn decode_merge(
 }
 
 impl PhysicalExtensionCodec for BioRangesPhysicalCodec {
-    fn try_encode(&self, node: Arc<dyn ExecutionPlan>, buf: &mut Vec<u8>) -> Result<()> {
-        if let Some(m) = node.as_any().downcast_ref::<MergeExec>() {
+    fn try_encode(
+        &self,
+        node: Arc<dyn ExecutionPlan>,
+        buf: &mut Vec<u8>,
+        proto_converter: &dyn PhysicalProtoConverterExtension,
+    ) -> Result<()> {
+        if let Some(m) = node.downcast_ref::<MergeExec>() {
             return encode_merge(m, buf);
         }
-        if let Some(sx) = node.as_any().downcast_ref::<SubtractExec>() {
+        if let Some(sx) = node.downcast_ref::<SubtractExec>() {
             return encode_subtract(sx, buf);
         }
-        if let Some(n) = node.as_any().downcast_ref::<NearestExec>() {
+        if let Some(n) = node.downcast_ref::<NearestExec>() {
             return encode_nearest(n, buf);
         }
-        if let Some(c) = node.as_any().downcast_ref::<DistCoverageExec>() {
+        if let Some(c) = node.downcast_ref::<DistCoverageExec>() {
             return encode_coverage(c, buf);
         }
-        self.inner.try_encode(node, buf)
+        self.inner.try_encode(node, buf, proto_converter)
     }
 
     fn try_decode(
@@ -373,9 +393,10 @@ impl PhysicalExtensionCodec for BioRangesPhysicalCodec {
         buf: &[u8],
         inputs: &[Arc<dyn ExecutionPlan>],
         registry: &TaskContext,
+        proto_converter: &dyn PhysicalProtoConverterExtension,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         if !has_magic(buf, BIO_PHYS_MAGIC) {
-            return self.inner.try_decode(buf, inputs, registry);
+            return self.inner.try_decode(buf, inputs, registry, proto_converter);
         }
         let mut pos = 4usize;
         let tag = read_u8(buf, &mut pos)?;

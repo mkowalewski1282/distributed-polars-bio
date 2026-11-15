@@ -11,7 +11,6 @@
 //! jednego typu na operację. Dodanie kolejnej operacji = jeden wariant enuma
 //! + jedna gałąź `match` w `build()`.
 
-use std::any::Any;
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
@@ -219,10 +218,6 @@ fn is_parquet_source(path: &Path) -> bool {
 
 #[async_trait]
 impl TableProvider for DistBioProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.inner.schema()
     }
