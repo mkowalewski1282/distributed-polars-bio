@@ -140,3 +140,18 @@ def test_install_is_explicit_and_idempotent():
     r = subprocess.run([sys.executable, "-c", code], cwd=REPO, capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stderr[-2000:]
     assert r.stdout.strip() == "False True True"
+
+
+def test_evaluate_installs_the_bridge():
+    """Ścieżka serwera: evaluate() ma sam włączyć pulę w świeżym procesie (bez jawnego install())."""
+    code = (
+        "import pyarrow as pa; "
+        "from sail_genomics import arrow, pb_context as s; "
+        "before = s.installed(); "
+        "t = pa.table({'chrom': ['chr1', 'chr1'], 'start': [1, 5], 'end': [10, 20]}); "
+        "arrow.evaluate('merge', t, None, None); "
+        "print(before, s.installed())"
+    )
+    r = subprocess.run([sys.executable, "-c", code], cwd=REPO, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr[-2000:]
+    assert r.stdout.strip() == "False True"
