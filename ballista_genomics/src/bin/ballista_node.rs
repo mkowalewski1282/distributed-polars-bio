@@ -112,6 +112,11 @@ async fn run_executor(o: ExecutorOpts, grpc_limit: usize) -> Result<(), Box<dyn 
         // Limit wiadomości gRPC serwera executora — tu przychodzą zadania z ładunkiem broadcastu.
         grpc_max_decoding_message_size: grpc_limit as u32,
         grpc_max_encoding_message_size: grpc_limit as u32,
+        // Bez puli pamięci, jak w Ballistcie 53. W 55 `None` znaczy pulę automatyczną
+        // (FairSpillPool = 70% pamięci hosta/cgroup, dzielone na vcores), a dopiero `Some(0)`
+        // daje nieograniczoną pulę DataFusion (`MemoryBudget::Unbounded`). Zachowujemy
+        // semantykę 53; pamięć wykonania protokół pomiarowy traktuje osobno.
+        memory_pool_size: Some(0),
         ..ExecutorProcessConfig::default()
     };
     println!(
