@@ -7,7 +7,7 @@ przechodzi przez Arrow bez zamiany na wiersze Pythona — sonda 3b-2: 10–20× 
 UDTF z LATERAL na parze 1-2, wynik zgodny z polars-bio dla pięciu operacji.
 
 Dostęp do polars-bio w procesie serwera Saila: kontekst polars-bio z puli, jeden na równoczesne
-wywołanie (sail_pb_context), bez blokady — chromosomy liczą się równolegle.
+wywołanie (sail_genomics.pb_context), bez blokady — chromosomy liczą się równolegle.
 
 Chromosom tylko po prawej stronie (pusta lewa) daje pusty wynik bez wołania polars-bio; tylko po
 lewej — polars-bio dostaje pustą prawą stronę i sam rozstrzyga semantykę.
@@ -17,8 +17,8 @@ Fazy: gdy podano plik faz, każde wywołanie polars-bio dopisuje do niego linię
 (read_phases). Plik leży na tej samej maszynie co serwer (lokalny klaster); dopisywanie krótkich
 linii w trybie append jest bezpieczne między wątkami.
 
-Moduł musi być importowalny po nazwie w procesie serwera (katalog roboczy = repozytorium):
-cloudpickle serializuje funkcję przekazaną do applyInArrow, a ta importuje sail_arrow."""
+Pakiet musi być importowalny po nazwie w procesie serwera (katalog roboczy = repozytorium):
+cloudpickle serializuje funkcję przekazaną do applyInArrow, a ta importuje sail_genomics.arrow."""
 
 from __future__ import annotations
 
@@ -28,20 +28,17 @@ from pathlib import Path
 
 import pyarrow as pa
 
-from bench.data.datasets import COLUMNS
-from bench.ops import OUTPUT_COLUMNS, UNARY_OPS, normalize_polars_bio
+from sail_genomics.schema import (
+    DEFAULT_INPUT_COLUMNS,
+    OUTPUT_COLUMNS,
+    UNARY_OPS,
+    arrow_schema,
+    ddl_schema,
+    rename_polars_bio,
+)
 
 #: Nazwy kolumn przedziału, pod którymi dane trafiają do polars-bio.
 _PB_COLS = ("chrom", "start", "end")
-
-
-def ddl_schema(op: str) -> str:
-    """Schemat wyniku dla applyInArrow (DDL Sparka) w schemacie znormalizowanym."""
-    return ", ".join(f"{c} {'string' if c.startswith('chrom') else 'long'}" for c in OUTPUT_COLUMNS[op])
-
-
-def arrow_schema(op: str) -> pa.Schema:
-    return pa.schema([(c, pa.string() if c.startswith("chrom") else pa.int64()) for c in OUTPUT_COLUMNS[op]])
 
 
 def _frame(table: pa.Table):
@@ -72,7 +69,9 @@ def evaluate(op: str, left: pa.Table, right: pa.Table | None, phase_log: str | N
         return schema.empty_table()  # każda z operacji zwraca wiersze wynikające z lewej tabeli
     left_df = _frame(left)
     right_df = None if right is None else _frame(right)
-    import sail_pb_context  # noqa: F401 — import instaluje pulę kontekstów
+    from sail_genomics import pb_context  # import polars-bio dopiero w procesie serwera
+
+    pb_context.install()  # idempotentne: pula kontekstów w procesie serwera
 
     t = time.perf_counter()
     result = _call_polars_bio(op, left_df, right_df)
@@ -82,13 +81,13 @@ def evaluate(op: str, left: pa.Table, right: pa.Table | None, phase_log: str | N
             f.write(json.dumps({"pb_s": pb_s}) + "\n")
     if result.height == 0:
         return schema.empty_table()
-    return normalize_polars_bio(op, result, _PB_COLS).to_arrow().cast(schema)
+    return rename_polars_bio(op, result, _PB_COLS).to_arrow().cast(schema)
 
 
-def build_query(spark, op: str, left, right=None, cols: tuple[str, str, str] = COLUMNS, *,
+def build_query(spark, op: str, left, right=None, cols: tuple[str, str, str] = DEFAULT_INPUT_COLUMNS, *,
                 phase_log: str | None = None):
     """Zapytanie (leniwy DataFrame) na plikach Parquet (plik albo katalog) z wynikiem w schemacie
-    znormalizowanym (bench/ops.py)."""
+    znormalizowanym (schema.OUTPUT_COLUMNS)."""
     if op not in OUTPUT_COLUMNS:
         raise ValueError(f"unknown operation {op!r}")
     if (op in UNARY_OPS) != (right is None):
@@ -107,16 +106,16 @@ def build_query(spark, op: str, left, right=None, cols: tuple[str, str, str] = C
     schema = ddl_schema(op)
     if op in UNARY_OPS:
         def unary(table):
-            import sail_arrow
+            from sail_genomics import arrow
 
-            return sail_arrow.evaluate(op, table, None, phase_log)
+            return arrow.evaluate(op, table, None, phase_log)
 
         return load(left).groupBy("chrom").applyInArrow(unary, schema)
 
     def binary(left_table, right_table):
-        import sail_arrow
+        from sail_genomics import arrow
 
-        return sail_arrow.evaluate(op, left_table, right_table, phase_log)
+        return arrow.evaluate(op, left_table, right_table, phase_log)
 
     return load(left).groupBy("chrom").cogroup(load(right).groupBy("chrom")).applyInArrow(binary, schema)
 

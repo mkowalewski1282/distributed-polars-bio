@@ -12,7 +12,7 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 
-import sail_arrow
+from sail_genomics import arrow as sail_arrow
 from bench import checksum as cs
 from bench.ops import OPS, UNARY_OPS
 from bench.procutil import free_port, wait_for_port
@@ -100,3 +100,21 @@ def test_schemas_follow_normalized_output_columns():
 def test_build_query_rejects_bad_arguments(op, right, message):
     with pytest.raises(ValueError, match=message):
         sail_arrow.build_query(None, op, "a", right)
+
+
+def test_package_schema_matches_bench_schema():
+    from bench import ops
+    import sail_genomics
+    assert sail_genomics.OUTPUT_COLUMNS == ops.OUTPUT_COLUMNS
+    assert set(sail_genomics.UNARY_OPS) == set(ops.UNARY_OPS)
+    assert tuple(sail_genomics.OPS) == tuple(ops.OPS)
+
+
+def test_package_does_not_import_bench():
+    import ast
+    import pathlib
+    for path in pathlib.Path("sail_genomics").glob("*.py"):
+        tree = ast.parse(path.read_text())
+        names = [n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)] + \
+                [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
+        assert not any((m or "").split(".")[0] == "bench" for m in names), path

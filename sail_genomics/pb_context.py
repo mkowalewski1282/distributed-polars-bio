@@ -12,7 +12,7 @@ podmienia tę funkcję na wersję, która w miejsce ctx wstawia kontekst pobrany
 gdy pula jest pusta, z tymi samymi opcjami co globalny) i po udanym wywołaniu go zwraca
 (po wyjątku kontekst jest porzucany). Każde równoczesne wywołanie ma więc własny kontekst:
 kontekstów jest tyle, ile wynosi szczyt liczby wywołań naraz. Pula zakłada wyniki gorliwe
-(polars.DataFrame, jak w sail_arrow): przy leniwych (polars.LazyFrame, datafusion.DataFrame)
+(polars.DataFrame, jak w sail_genomics.arrow): przy leniwych (polars.LazyFrame, datafusion.DataFrame)
 polars-bio używa kontekstu dopiero przy collect, po jego powrocie do puli, więc równoczesne
 wywołanie mogłoby go współdzielić. Publiczne
 pb.*() zostają bez zmian — z własnymi ustawieniami domyślnymi — a wywołania przestają dzielić
@@ -29,8 +29,8 @@ Zależność od wnętrza polars-bio, nie od publicznego API: wersja przypięta w
 (polars-bio==0.36.*), a tests/test_sail_pb_context.py porównuje wyniki z podmianą i bez — zmiana
 wnętrza w nowej wersji wyjdzie od razu. Kodu polars-bio nie zmieniamy (decyzja 3b-2).
 
-Import instaluje podmianę: moduł importuje po nazwie funkcja Saila (sail_arrow) w procesie
-serwera. Działa tylko w procesie, który go zaimportował — runner polars-bio
+Podmianę włącza jawnie install() (idempotentnie; woła ją sail_genomics.arrow.evaluate w procesie
+serwera). Działa tylko w procesie, który go zaimportował — runner polars-bio
 (wzorzec, warianty A i B) go nie importuje."""
 
 from __future__ import annotations
@@ -105,5 +105,3 @@ def uninstall() -> None:
 def installed() -> bool:
     return _range_op.range_operation is _range_operation
 
-
-install()

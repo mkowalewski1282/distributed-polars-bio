@@ -102,7 +102,7 @@ def test_ballista_cluster_on_1_2(op, cluster, real_dirs, real_expected, tmp_path
 
 @pytest.fixture(scope="module")
 def spark():
-    import sail_session
+    from sail_genomics import session as sail_session
 
     with sail_session.local_session() as session:
         yield session
@@ -112,7 +112,7 @@ def spark():
 def test_sail_on_1_2(op, spark, real_dirs, real_expected):
     import polars as pl
 
-    import sail_arrow
+    from sail_genomics import arrow as sail_arrow
 
     left, right = real_dirs
     df = sail_arrow.build_query(spark, op, left, None if op in UNARY_OPS else right)

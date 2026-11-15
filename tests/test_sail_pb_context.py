@@ -1,6 +1,6 @@
 """Pula kontekstów polars-bio — rozwiązanie pomostowe (plan 3b-2, Zadanie 8; specyfikacja 5.1).
 
-Podmiana polars_bio.range_op.range_operation (sail_pb_context) ma dawać wyniki identyczne
+Podmiana polars_bio.range_op.range_operation (sail_genomics.pb_context) ma dawać wyniki identyczne
 z publicznym pb.*(), także przy równoczesnych wywołaniach w wątkach bez blokady. Test pilnuje też
 wnętrza polars-bio: gdy nowa wersja zmieni sposób wywołania range_operation, wyniki się rozjadą.
 
@@ -57,9 +57,9 @@ def _call(op: str, chrom: str) -> pl.DataFrame:
 def bridge():
     """Moduł pomostu z WYŁĄCZONĄ podmianą — test włącza ją jawnie; po teście przywracany oryginał,
     żeby pozostałe testy w tym procesie liczyły na globalnym kontekście polars-bio."""
-    import sail_pb_context
+    from sail_genomics import pb_context as sail_pb_context
 
-    sail_pb_context.uninstall()  # import instaluje podmianę
+    sail_pb_context.uninstall()  # na wszelki wypadek: start bez podmiany
     yield sail_pb_context
     sail_pb_context.uninstall()
 
@@ -130,12 +130,13 @@ def test_context_after_failed_call_does_not_return_to_pool(bridge, monkeypatch):
     assert bridge.contexts_created() - before == 2
 
 
-def test_import_installs_the_bridge():
-    """Proces serwera Saila importuje moduł po nazwie — sam import ma włączyć podmianę."""
+def test_install_is_explicit_and_idempotent():
+    """Import nie włącza podmiany; install() włącza ją w świeżym procesie, a drugie wywołanie nic nie zmienia."""
     code = (
-        "import polars_bio.range_op as r, sail_pb_context as s; "
-        "print(r.range_operation is s._range_operation)"
+        "import polars_bio.range_op as r; from sail_genomics import pb_context as s; "
+        "before = s.installed(); s.install(); s.install(); "
+        "print(before, s.installed(), r.range_operation is s._range_operation)"
     )
     r = subprocess.run([sys.executable, "-c", code], cwd=REPO, capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stderr[-2000:]
-    assert r.stdout.strip() == "True"
+    assert r.stdout.strip() == "False True True"

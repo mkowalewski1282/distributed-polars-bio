@@ -1,7 +1,7 @@
 """Runner Saila (specyfikacja 8.1, 8.3): klient Spark Connect łączący się z serwerem bloku
 (bench/runners/sail_server.py); jeden scenariusz w świeżym procesie.
 
-Zawsze applyInArrow z kontekstem polars-bio na wątek (sail_arrow, wariant `sail`). Funkcja
+Zawsze applyInArrow z kontekstem polars-bio na wątek (sail_genomics.arrow, wariant `sail`). Funkcja
 zapisuje fazy z wnętrza (czas wywołań polars-bio) do pliku tymczasowego, który runner sumuje po
 zapytaniu: `phases.pb_s`, `extra.udf_groups`.
 
@@ -50,7 +50,7 @@ def run(op: str, left: Path, right: Path | None, cols: tuple[str, str, str], rem
     require_paths(left, right)
     from pyspark.sql import SparkSession
 
-    import sail_arrow
+    from sail_genomics import arrow as sail_arrow
 
     fd, phase_log = tempfile.mkstemp(prefix="sail_phases_", suffix=".jsonl")
     os.close(fd)
