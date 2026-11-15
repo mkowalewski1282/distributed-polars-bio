@@ -50,9 +50,9 @@ macOS poza zakresem — patrz sekcja 9).
 | Kolejność | Najpierw podbicie wersji i zmiana semantyki P w `distributed-polars-bio` (pełny pakiet testów + CI), dopiero potem podział; **podział nie czeka na port Ballisty** po terminie odcięcia (sekcja 8) |
 | Raport | Nowe polecenie: z serii → tabela median (silnik × operacja × para × P) i wykresy czasu od P |
 | Treść nowych repozytoriów | Bez `docs/superpowers/`, `wnioski_claude.md`, `raporty/`, `ustalenia_zalozen.txt`, bez dokumentów roboczych, bez planów i specyfikacji |
-| Commity | **Bez stopki `Co-Authored-By`** (żadnej atrybucji Claude) — we wszystkich repozytoriach; komunikaty po polsku bez diakrytyków (jak dotąd) |
-| Język | Kod po angielsku poza komentarzami (konwencja z 3b-1, strażnik `test_code_language.py`); komentarze, docstringi i dokumentacja `*.md` po polsku |
-| GitHub | Użytkownik zakłada trzy **puste** repozytoria (bez README, `.gitignore`, licencji); wypychanie przez SSH **tylko za jego zgodą**; zaproszenia współpracownikom wysyła użytkownik **po** wypchnięciu kodu |
+| Commity | **Bez stopki `Co-Authored-By`** (żadnej atrybucji Claude) — we wszystkich repozytoriach; w nowych repozytoriach komunikaty **po angielsku**, w `distributed-polars-bio` po polsku bez diakrytyków (jak dotąd) |
+| Język | **Nowe repozytoria w całości po angielsku** (decyzja użytkownika 15.11.2026): kod, komentarze, docstringi, README, dokumentacja techniczna, komunikaty commitów; strażnik języka w nowych repozytoriach zaostrzony (żadnych polskich znaków poza danymi testowymi). Komentarze tłumaczone w `distributed-polars-bio` przed podziałem (skrypt podziału bierze kod stamtąd), razem z usuwaniem odwołań do dokumentów roboczych. Dokumenty robocze (specyfikacje, plany, sprawozdania) zostają po polsku |
+| GitHub | Użytkownik zakłada trzy repozytoria **prywatne z README** (opcja „Add a README file”; bez `.gitignore` i licencji) — `main` ma wtedy jeden commit użytkownika. Kod trafia na gałąź `import` (push przez SSH **tylko za zgodą**), użytkownik otwiera **PR do `main`**, przegląda diff na GitHubie (CI na PR) i scala **„Create a merge commit”** (zachowuje hashe — potrzebne submodułom). Po scaleniu zmienia widoczność na **publiczną**. Kolejność: `ballista-genomics`, `sail-genomics`, potem `genomics-engines-bench` (CI repo testowego klonuje submoduły, więc oba muszą być już publiczne). Zaproszenia współpracowników po upublicznieniu wszystkich trzech |
 | Stare repo | `distributed-polars-bio` zostaje publiczne jako warsztat: specyfikacje, plany, raporty, historia; ta specyfikacja i plan etapu trafiają tam |
 
 ## 3. Wersje i zgodność (rozpoznanie 15.11.2026)
@@ -276,7 +276,7 @@ Wynik serii z takimi komórkami jest poprawny — raport pokazuje brak z powodem
 - **Licencja:** `LICENSE` (Apache-2.0) + tekst licencji Apache-2.0 i informacja o pochodzeniu dla
   `vendor/datafusion-bio-function-ranges` (dziś brak — kopia ma tylko `superintervals/LICENSE`).
 - **CI:** build binarek, `cargo test --lib`, pytest (bez danych rzeczywistych); protoc jak dziś.
-- **README** (po polsku): czym jest integracja; **diagram przebiegu zapytania** (6.4); tabela
+- **README** (po angielsku): czym jest integracja; **diagram przebiegu zapytania** (6.4); tabela
   strategii rozproszenia na operację (overlap — `CollectLeft` z indeksem z całej lewej strony,
   merge/subtract — podział po chromosomie, nearest/coverage — broadcast lewej tabeli przez Arrow
   IPC); co jest nasze, co z Ballisty/DataFusion, co z bio-functions, czego dotyczą łatki;
@@ -296,7 +296,7 @@ Wynik serii z takimi komórkami jest poprawny — raport pokazuje brak z powodem
 - **Środowisko:** `pyproject.toml` (`package = true`) + `uv.lock`: pysail 0.7.3, pyspark[connect]
   4.2.1, polars-bio 0.37.0, pyarrow, polars.
 - **CI:** `uv sync --locked`, pytest.
-- **README** (po polsku): **diagram przebiegu zapytania** (6.4); dlaczego applyInArrow, a nie UDTF
+- **README** (po angielsku): **diagram przebiegu zapytania** (6.4); dlaczego applyInArrow, a nie UDTF
   — jeden akapit z liczbami z serii `sail-paths` 3b-2 (overlap 7-0, N = 1: UDTF 41,6 s vs
   applyInArrow z pulą 2,57 s; LATERAL powiela wiersz zewnętrzny → pamięć kwadratowa; brak
   argumentów TABLE w UDTF); dlaczego pula kontekstów (globalny kontekst polars-bio, stałe nazwy
@@ -333,7 +333,7 @@ Wynik serii z takimi komórkami jest poprawny — raport pokazuje brak z powodem
   Wyniki oficjalnej serii (etap D) commitowane w repo (`results/…/runs.parquet`, `summary.md`,
   wykresy), żeby dało się je obejrzeć bez uruchamiania.
 - **CI:** checkout z submodułami, build Ballisty, `uv sync --locked`, `pytest -m "not real_data"`.
-- **README** (po polsku): co mierzy procedura (P, równe zasoby, układ CPU z topologii, SMT),
+- **README** (po angielsku): co mierzy procedura (P, równe zasoby, układ CPU z topologii, SMT),
   protokół przebiegu (rozgrzewka, kontrola, `settle_s`, swap → nieważny, wzorzec poprawności
   i suma kontrolna), wymagania maszyny (Linux x86_64, uv, rustup, protoc, RAM), jak czytać
   `summary.md`, znane ograniczenia (asymetria DataFusion 53/55 do polars-bio 0.38; klient Ballisty
@@ -362,8 +362,9 @@ Wynik serii z takimi komórkami jest poprawny — raport pokazuje brak z powodem
   odwołujące się do „planu 3b-2”, „Zadania 27”, „specyfikacji 8.4” itp. przepisane na treść
   merytoryczną (komentarz ma tłumaczyć „dlaczego”, a nie odsyłać do dokumentu, którego w repo nie
   ma). Lista znalezisk pokazana użytkownikowi przed wypchnięciem.
-- Wypchnięcie przez SSH do pustych repozytoriów użytkownika — **po jego zgodzie**; potem CI
-  zielone w każdym repo.
+- Publikacja przez PR (wiersz „GitHub” w sekcji 2): gałąź `import` na `main` z README użytkownika,
+  push **po jego zgodzie**, przegląd diffu i CI na PR, scalenie merge commitem, zmiana widoczności
+  na publiczną.
 - `distributed-polars-bio`: krótka nota w README, że kod rozwija się w trzech nowych
   repozytoriach (linki); reszta bez zmian.
 

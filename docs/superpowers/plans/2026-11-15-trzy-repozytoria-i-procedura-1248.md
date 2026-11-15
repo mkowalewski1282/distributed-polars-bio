@@ -23,13 +23,17 @@ z planem; numery sekcji „spec X.Y” odnoszą się do niej).
   `pysail==0.7.*` (0.7.3 w `uv.lock`); `pyspark[connect]==4.2.*` (4.2.1); `pyarrow` 24.x; Python 3.12.
 - **Żadnych zmian w kodzie polars-bio** (fork, łatka, własny build). Używanie wewnętrznych API pb
   (`range_op.range_operation`, `BioSessionContext`, `_metadata`) jest dozwolone jak dotąd.
-- **Commity bez stopki `Co-Authored-By`** ani żadnej atrybucji Claude; komunikaty po polsku bez
-  diakrytyków.
-- Kod po angielsku poza komentarzami i docstringami (po polsku); strażnik `tests/test_code_language.py`
-  musi przechodzić. Dokumentacja `*.md` po polsku.
+- **Commity bez stopki `Co-Authored-By`** ani żadnej atrybucji Claude. Komunikaty: w
+  `distributed-polars-bio` po polsku bez diakrytyków (Task 1–13), w nowych repozytoriach **po angielsku**.
+- Język: w Task 1–11 jak dotąd (kod po angielsku, komentarze po polsku; strażnik
+  `tests/test_code_language.py`). Od Task 12 **wszystko, co trafia do nowych repozytoriów, po angielsku**:
+  kod, komentarze, docstringi, komentarze w YAML/TOML, README, dokumentacja techniczna, komunikaty
+  błędów i commitów. Dokumenty robocze (spec, plan) zostają po polsku.
 - Nowe repozytoria: bez `docs/superpowers/`, `wnioski_claude.md`, `raporty/`, `ustalenia_zalozen.txt`,
   bez odniesień do planów i specyfikacji, bez linków do `distributed-polars-bio`.
-- `git push` (gdziekolwiek) **tylko po wyraźnej zgodzie użytkownika** w tej rozmowie.
+- `git push` (gdziekolwiek) **tylko po wyraźnej zgodzie użytkownika** w tej rozmowie. Nowe
+  repozytoria: kod wyłącznie przez gałąź `import` i PR do `main` (przegląd diffu na GitHubie),
+  scalenie merge commitem przez użytkownika.
 - Budowanie Rusta zawsze z `CARGO_BUILD_JOBS=1`; nie uruchamiać Pythona z polars-bio równolegle
   z buildem Rusta (5 GB RAM).
 - Przed każdym pomiarem czasu (etap D, badanie szumu) **checklista RAM** (pamięć
@@ -533,28 +537,35 @@ def scan_workshop_refs(root: Path) -> list[str]   # "plik:linia: tekst"
   `sail-genomics`: `from bench.ops import …` w testach → `from sail_genomics.schema import …`.
   Po przepisaniu: w `ballista-genomics` i `sail-genomics` zero importów `bench` (sprawdzane w `export`).
   **Strażnik treści** (`WORKSHOP_PATTERNS`, bez rozróżniania wielkości liter): `specyfikacj`,
-  `\bspec(?:ification)?\b`, `\bplan(?:u|ie)? (?:2|3|3a|3b|P0)\b`, `zadani[ea] \d`, `docs/superpowers`,
-  `wnioski_claude`, `raporty/`, `ustalenia_zalozen`, `promotor`, `claude`, `\bfaz[aye] [A-H]\b`,
-  `przegl[aą]d(?:u)? (?:3a|3b|końcow)`; wyłączenia: `vendor/**` (kod upstreamu), pliki binarne.
+  `\bspec(?:ification)?\b`, `\bplan(?:u|ie)? (?:2|3|3a|3b|P0)\b`, `zadani[ea] \d`, `\btask \d`,
+  `docs/superpowers`, `wnioski_claude`, `raporty/`, `ustalenia_zalozen`, `promotor`, `supervisor`,
+  `claude`, `\bfaz[aye] [A-H]\b`, `\bphase [A-H]\b`, `przegl[aą]d(?:u)? (?:3a|3b|końcow)`,
+  `\breview (?:3a|3b)\b`. **Strażnik języka** (`POLISH_PATTERNS`): `[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]` oraz
+  słowa `\b(?:jest|oraz|przez|ktory|ktora|gdy|tylko|wiec|czyli|albo|zeby|dlatego)\b`.
+  `scan_workshop_refs` zwraca trafienia obu. Wyłączenia: `vendor/**` (kod upstreamu), pliki binarne,
+  `bench/data/datasets.py` tylko jeśli nazwy zbiorów to wymuszają (nie powinny).
 
 - [ ] **Step 1: Testy** `tests/test_split.py`: `test_split_refuses_existing_output` (niepusty `out` →
   `SystemExit`), `test_mapping_covers_every_moved_test` (każdy `tests/test_*.py` monorepo poza listą
   „zostaje w warsztacie” jest w dokładnie jednym repo albo w kilku jawnie), `test_scan_finds_workshop_refs`
-  (plik z „specyfikacja 3b-2” i „Zadanie 27” → 2 trafienia; „vendor/x.rs” z „spec” → 0),
+  (plik z „specyfikacja 3b-2” i „Zadanie 27” → 2 trafienia; komentarz „# liczba wątków” → 1 trafienie
+  języka; „vendor/x.rs” z „spec” → 0),
   `test_rewrites_remove_bench_imports` (przykładowy plik testu Ballisty po przepisaniu nie ma `bench`).
 - [ ] **Step 2:** FAIL → **Step 3:** implementacja → **Step 4:** PASS.
 - [ ] **Step 5:** Próbny eksport: `uv run python tools/split/split.py --source HEAD --out $SCRATCH/split-try`
   → lista trafień strażnika (oczekiwane: dużo — Task 12 je usuwa). Zapisać do `$SCRATCH/workshop-refs.txt`.
 - [ ] **Step 6:** Commit `"Etap 4: skrypt podzialu na trzy repozytoria"`.
 
-### Task 12: Oczyszczenie komentarzy i nakładki (pyproject, CI, licencje, setup)
+### Task 12: Tłumaczenie na angielski, oczyszczenie komentarzy i nakładki (pyproject, CI, licencje, setup)
 
 **Files:**
 - Modify: pliki przenoszone z trafieniami z `$SCRATCH/workshop-refs.txt` (komentarze i docstringi:
   `bench/**`, `ballista_genomics/src/**`, `sail_genomics/**`, `tests/**`)
 - Create (nakładki w `tools/split/overlay/<repo>/`):
   - wspólne: `LICENSE` (Apache-2.0, tekst z https://www.apache.org/licenses/LICENSE-2.0.txt),
-    `.gitignore`, `tests/test_no_workshop_refs.py` (te same `WORKSHOP_PATTERNS`, skan repo poza `vendor/`)
+    `.gitignore`, `tests/test_no_workshop_refs.py` (te same `WORKSHOP_PATTERNS` i `POLISH_PATTERNS`,
+    skan repo poza `vendor/`); CI każdego repo wyzwalane `push` na `main`, `pull_request` do `main`,
+    `workflow_dispatch`
   - `ballista-genomics/`: `pyproject.toml` (Python 3.12, `package = false`, zależności testów:
     `polars-bio==0.37.*`, `pyarrow`, `polars`, `pandas`, `pyyaml` jeśli potrzebne, grupa dev `pytest`),
     `.python-version`, `.github/workflows/tests.yml` (jak obecny CI: toolchain, rust-cache, protoc 28.3
@@ -579,9 +590,15 @@ def scan_workshop_refs(root: Path) -> list[str]   # "plik:linia: tekst"
     RAM jako tekst + `smoke` + `scaling` + `bench.report`)
 - Modify: `tools/split/split.py` (`uv lock` w każdym repo po skopiowaniu nakładek — wymaga sieci)
 
-- [ ] **Step 1:** Przepisać komentarze z trafieniami: odwołanie do dokumentu → treść merytoryczna
-  („dlaczego”) albo usunięcie odwołania; liczby i daty pomiarów zostają z opisem warunków. Tylko
-  komentarze/docstringi — zero zmian logiki (`git diff --stat` + przegląd).
+- [ ] **Step 1:** We **wszystkich** plikach przenoszonych do nowych repozytoriów (wg `MAPPING`, bez
+  `vendor/`): komentarze, docstringi i komentarze w YAML przetłumaczyć na angielski; przy okazji
+  odwołania do dokumentów roboczych → treść merytoryczna („why”) albo usunięcie odwołania; liczby
+  i daty pomiarów zostają z opisem warunków. Zero zmian logiki (przegląd `git diff -w`; w diffie
+  zmieniają się tylko linie komentarzy/docstringów). Komunikaty błędów i pomoc CLI są już po
+  angielsku (konwencja 3b-1) — sprawdzić. Praca w kilku commitach (po katalogach: `bench/`, Rust,
+  `tests/`, `sail_genomics/`), żeby recenzent mógł porównać tłumaczenie z oryginałem.
+  `tests/test_code_language.py` w monorepo: dodać `test_moved_files_are_english` — pliki z `MAPPING`
+  (import z `tools/split/split.py`) nie mają trafień `POLISH_PATTERNS`.
 - [ ] **Step 2:** `uv run pytest -m "not real_data" -q` w monorepo → PASS (strażnik języka też).
 - [ ] **Step 3:** Nakładki wg listy; `export` uruchamia `uv lock` w każdym repo wyjściowym.
 - [ ] **Step 4:** Weryfikacja na kopii roboczej (`$SCRATCH/split-try2`, świeży katalog):
@@ -592,7 +609,8 @@ def scan_workshop_refs(root: Path) -> list[str]   # "plik:linia: tekst"
     weryfikacji, nie w repo);
   - `cd ../sail-genomics && uv sync --locked && uv run pytest -q` → PASS;
   - repo testowe: weryfikacja dopiero z submodułami w Task 14.
-- [ ] **Step 5:** Commit `"Etap 4: oczyszczenie komentarzy i naklady repozytoriow"`.
+- [ ] **Step 5:** Commity `"Etap 4: tlumaczenie komentarzy na angielski (<katalog>)"` i
+  `"Etap 4: naklady repozytoriow"`.
 
 ### Task 13: README z diagramami i dokumentacja techniczna
 
@@ -604,7 +622,7 @@ def scan_workshop_refs(root: Path) -> list[str]   # "plik:linia: tekst"
 
 - [ ] **Step 1:** Zebrać materiał: `bench_client --explain-analyze` (klaster P = 2, release) dla 5 operacji;
   log startu Saila i plan Spark (`df.explain(True)` przez `sail_genomics.build_query`) dla overlap i merge.
-- [ ] **Step 2: `ballista-genomics/README.md`** (po polsku) — sekcje: Co to jest; Diagram przebiegu
+- [ ] **Step 2: `ballista-genomics/README.md`** (po angielsku, jak całe Task 13) — sekcje: What it is; Diagram przebiegu
   zapytania (Mermaid `sequenceDiagram`: `dist_ops`/`bench_client` → `SessionContext` z planistą bio
   i `BioLogicalCodec` → scheduler (`ballista_node scheduler`, dekodowanie planu logicznego, reguły
   fizyczne, podział na etapy) → `BioPhysicalCodec::try_encode` → executory (`ballista_node executor`,
@@ -639,37 +657,53 @@ def scan_workshop_refs(root: Path) -> list[str]   # "plik:linia: tekst"
   albo ręcznie, jeśli brak node — wtedy zgłosić).
 - [ ] **Step 6:** Commit `"Etap 4: README z diagramami i dokumentacja techniczna repozytoriow"`.
 
-### Task 14: Publikacja: commity początkowe, submoduły, weryfikacja, wypchnięcie
+### Task 14: Publikacja przez PR: gałęzie `import`, submoduły, weryfikacja, przegląd na GitHubie
 
 **Files:**
-- Create: `/home/milosz/repos/{ballista-genomics,sail-genomics,genomics-engines-bench}` (repozytoria git)
+- Create: `/home/milosz/repos/{ballista-genomics,sail-genomics,genomics-engines-bench}` (klony z GitHuba,
+  gałąź `import`), `/home/milosz/repos-staging/` (wynik `split.py`, poza repozytoriami)
 - Modify: `README.md` monorepo (nota z linkami do nowych repozytoriów)
 
-- [ ] **Step 1:** Scalić `etap-4` do `master` w monorepo (fast-forward; za zgodą — push). Eksport:
-  `uv run python tools/split/split.py --source master --out /home/milosz/repos` → kod 0.
-- [ ] **Step 2:** W `ballista-genomics` i `sail-genomics`: `git init -b main`, `git add -A`,
-  `git commit -m "Import kodu integracji"` (autor = konfiguracja gita użytkownika; bez stopek).
-- [ ] **Step 3:** `genomics-engines-bench`: `git init -b main`;
-  `git submodule add ../ballista-genomics engines/ballista-genomics`;
-  `git submodule add ../sail-genomics engines/sail-genomics` (względne URL — lokalnie wskazują
-  sąsiednie katalogi, na GitHubie sąsiednie repozytoria); `uv lock && uv sync --locked`;
-  build Ballisty w submodule (`CARGO_TARGET_DIR` wspólny jak w Task 12, binarki na swoim miejscu
-  przez dowiązanie tylko lokalnie — albo pełny build release w tle); `uv run pytest -m "not real_data" -q` → PASS;
-  `uv run pytest -m real_data -q` → PASS; commit `"Import procedury testowej"`.
-- [ ] **Step 4:** Przegląd treści przed publikacją (spec 6.5): w każdym repo
-  `git grep -nIiE "specyfikacj|docs/superpowers|wnioski_claude|raporty/|ustalenia_zalozen|promotor|claude|Wiewi"`
-  i `git log --format=%B | grep -iE "claude|co-authored"` → oba puste; lista plików (`git ls-files`)
-  bez `docs/superpowers`, `raporty`, `wnioski_claude.md`. Wynik pokazać użytkownikowi.
-- [ ] **Step 5: ZGODA UŻYTKOWNIKA.** Poprosić o założenie trzech pustych publicznych repozytoriów
-  (bez README/licencji/.gitignore) i o zgodę na push. Po zgodzie:
-  `git remote add origin git@github.com:mkowalewski1282/<repo>.git && git push -u origin main` —
-  kolejno `ballista-genomics`, `sail-genomics`, `genomics-engines-bench`.
-- [ ] **Step 6:** CI zielone w trzech repozytoriach (publiczne API Actions). Klon kontrolny w scratchpadzie:
+Przepływ (spec, sekcja 2, wiersz „GitHub”): użytkownik zakłada repozytoria z README (prywatne do
+czasu scalenia — chyba że zdecyduje inaczej; wtedy kroki „zmiana widoczności” odpadają), kod idzie
+gałęzią `import`, użytkownik przegląda diff w PR i scala merge commitem (nie squash/rebase —
+hashe commitów muszą przetrwać dla submodułów).
+
+- [ ] **Step 1:** Scalić `etap-4` do `master` w monorepo (fast-forward; push za zgodą). Eksport:
+  `uv run python tools/split/split.py --source master --out /home/milosz/repos-staging` → kod 0.
+- [ ] **Step 2: ZGODA UŻYTKOWNIKA (1).** Upewnić się, że repozytoria `ballista-genomics`,
+  `sail-genomics`, `genomics-engines-bench` istnieją (z README; bez `.gitignore`/licencji). Dla
+  `ballista-genomics` i `sail-genomics`: `git clone git@github.com:mkowalewski1282/<repo>.git /home/milosz/repos/<repo>`,
+  `git switch -c import`, skopiować `/home/milosz/repos-staging/<repo>/` do klonu (`rsync -a --exclude .git`),
+  szybka weryfikacja (testy jak w Task 12 Step 4), `git add -A && git commit -m "Import integration code"`
+  (autor z konfiguracji gita użytkownika; bez stopek).
+- [ ] **Step 3:** Przegląd treści w obu klonach (spec 6.5):
+  `git grep -nIiE "specyfikacj|docs/superpowers|wnioski_claude|raporty/|ustalenia_zalozen|promotor|supervisor|claude|Wiewi"`,
+  `git grep -nIP "[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]" -- ':!vendor'` i `git log --format=%B | grep -iE "claude|co-authored"`
+  → wszystko puste; `git ls-files` bez `docs/superpowers`, `raporty`, `wnioski_claude.md`. Wynik pokazać
+  użytkownikowi.
+- [ ] **Step 4: ZGODA UŻYTKOWNIKA (2) na push.** `git push -u origin import` w obu repozytoriach;
+  przekazać linki „Compare & pull request”
+  (`https://github.com/mkowalewski1282/<repo>/compare/main...import?expand=1`). Użytkownik otwiera PR,
+  ogląda diff, czeka na zielone CI na PR, scala **„Create a merge commit”**, potem (jeśli prywatne)
+  Settings → Change visibility → Public. Poczekać na potwierdzenie obu.
+- [ ] **Step 5:** `genomics-engines-bench`: klon do `/home/milosz/repos/genomics-engines-bench`,
+  `git switch -c import`, `rsync` ze stagingu; `git submodule add ../ballista-genomics engines/ballista-genomics`
+  i `git submodule add ../sail-genomics engines/sail-genomics` (względne URL rozwiązywane względem
+  `origin` repo testowego — SSH lokalnie, HTTPS u kogoś, kto klonuje przez HTTPS); submoduły na `main`
+  sąsiadów **po scaleniu** (`git -C engines/<repo> checkout origin/main`); `uv lock && uv sync --locked`;
+  build Ballisty w submodule (wspólny `CARGO_TARGET_DIR` jak w Task 12 albo pełny build release w tle);
+  `uv run pytest -m "not real_data" -q` → PASS; `uv run pytest -m real_data -q` → PASS; przegląd treści
+  jak Step 3; `git commit -m "Import benchmark procedure"`.
+- [ ] **Step 6: ZGODA UŻYTKOWNIKA (3) na push.** `git push -u origin import`; link do PR; użytkownik
+  przegląda, CI zielone (submoduły publiczne), scala merge commitem, zmienia widoczność na publiczną.
+- [ ] **Step 7:** Klon kontrolny w scratchpadzie:
   `git clone --recursive https://github.com/mkowalewski1282/genomics-engines-bench $SCRATCH/clone-check`
-  → submoduły pobrane (`git -C $SCRATCH/clone-check submodule status` bez `-`).
-- [ ] **Step 7:** Monorepo: nota w `README.md` („kod rozwija się w …” + 3 linki); commit; push za zgodą.
-- [ ] **Step 8:** Przekazać użytkownikowi: linki do repozytoriów, **gdzie są diagramy** (sekcje README
-  każdego repo z nazwami sekcji) do jego przeglądu, przypomnienie o zaproszeniu współpracowników
+  → `git -C $SCRATCH/clone-check submodule status` bez `-`; CI na `main` zielone w trzech repozytoriach
+  (publiczne API Actions). Lokalne klony: `git switch main && git pull`.
+- [ ] **Step 8:** Monorepo: nota w `README.md` („kod rozwija się w …” + 3 linki); commit; push za zgodą.
+- [ ] **Step 9:** Przekazać użytkownikowi: linki do repozytoriów, **gdzie są diagramy** (sekcje README
+  każdego repo z nazwami sekcji) do jego przeglądu i uwag, przypomnienie o zaproszeniu współpracowników
   (Settings → Collaborators) w trzech repozytoriach.
 
 ## Etap D — pierwsza seria (jeśli starczy czasu)
@@ -687,4 +721,5 @@ def scan_workshop_refs(root: Path) -> list[str]   # "plik:linia: tekst"
   pominięciami); przejrzeć wykresy.
 - [ ] **Step 3:** README „Wyniki”: link do `summary.md`, 1–2 wykresy, opis maszyny walidacyjnej
   (Ryzen 5 4600H, 6 rdzeni/12 wątków, WSL2 5 GB, P = 8 z SMT) i zastrzeżenie, że to wyniki walidacyjne,
-  nie końcowe. Commit `"Wyniki serii scaling z maszyny walidacyjnej"`; push za zgodą; CI zielone.
+  nie końcowe. Gałąź `results-scaling`, commit `"Add scaling series results from the validation machine"`;
+  push za zgodą, PR do `main` (przegląd użytkownika, merge commit); CI zielone.
