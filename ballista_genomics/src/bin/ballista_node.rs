@@ -117,6 +117,11 @@ async fn run_executor(o: ExecutorOpts, grpc_limit: usize) -> Result<(), Box<dyn 
         // daje nieograniczoną pulę DataFusion (`MemoryBudget::Unbounded`). Zachowujemy
         // semantykę 53; pamięć wykonania protokół pomiarowy traktuje osobno.
         memory_pool_size: Some(0),
+        // Bez pamięci podręcznej środowiska sesji, jak w Ballistcie 53 (świeże `RuntimeEnv`
+        // na każde zadanie). Domyślne 16 w 55 współdzieli środowisko między zadaniami
+        // i zapytaniami sesji (klienci object store, cache stopek Parquetu) — pomiary nie mogą
+        // dostawać „ciepłych” pamięci podręcznych, których 53 nie miała. 0 = wyłączone.
+        session_runtime_cache_capacity: 0,
         ..ExecutorProcessConfig::default()
     };
     println!(
