@@ -1,7 +1,7 @@
 # Etap 4: aktualne wersje, trzy repozytoria i procedura 1/2/4/8 — projekt
 
 - **Data:** 15 listopada 2026
-- **Status:** zatwierdzony (15.11.2026); diagramy pokazywane użytkownikowi do przeglądu przed wypchnięciem repozytoriów
+- **Status:** zatwierdzony (15.11.2026); diagramy użytkownik sprawdza po wykonaniu (bez wstrzymywania prac)
 - **Zakres:** podbicie wersji (Ballista 55, datafusion-bio-functions v0.25.0, Sail 0.7.3,
   polars-bio 0.37.0), nowa semantyka równoległości P ∈ {1, 2, 4, 8} w narzędziu pomiarowym,
   raport z serii, podział kodu na trzy publiczne repozytoria (Ballista, Sail, procedura testowa)
