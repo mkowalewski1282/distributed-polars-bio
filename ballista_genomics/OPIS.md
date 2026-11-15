@@ -532,3 +532,14 @@ o typach prawdziwych danych, z przypadkami brzegowymi; `tests/test_real_data.py`
   wchodziły w zakres dokumentacji 3b-2).
 - Smoke na release (10.10.2026): `broadcast_bytes` dla `nearest` i `coverage` na 1-2 =
   10 709 132 × N.
+
+## Wersje po podbiciu (Etap 4, Task 3) i pula kontekstów polars-bio
+
+- Strona Pythona: polars-bio 0.37.0, pysail 0.7.3, PySpark 4.2.1, polars 2.1.0, pyarrow 24.0.0
+  (datafusion w polars-bio: 53.0.0). Crate algorytmów w polars-bio 0.37.0 to 0.24.0; vendor zostaje
+  przy 0.22.2 do portu (Task 4–5) — `tests/test_algorithm_versions.py` dopuszcza tylko jawnie
+  uzasadnione równoważności (`EQUIVALENT_RANGES`).
+- **Pula kontekstów nadal potrzebna.** Sprawdzone na 0.37.0: bez podmiany `range_operation`
+  (`sail_genomics.pb_context`) równoczesne wywołania `pb.overlap` z 8 wątków kończą się paniką
+  `The table s1 already exists`; z pulą 80/80 wywołań poprawnych. Test 5 operacji współbieżnie
+  przechodzi bez zmian w kodzie puli.

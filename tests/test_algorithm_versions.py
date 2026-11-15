@@ -17,7 +17,14 @@ CRATE = "datafusion-bio-function-ranges"
 #: Wersja crate'a algorytmów, z którą zbudowano daną wersję polars-bio — Cargo.toml polars-bio pod
 #: tagiem wydania (0.36.0: tag = "v0.22.2"). Nowa wersja polars-bio = nowy wpis tutaj i, gdy wersja
 #: crate'a się zmienia, aktualizacja vendora według vendor/PATCH.md.
-RANGES_IN_POLARS_BIO = {"0.36.0": "0.22.2"}
+RANGES_IN_POLARS_BIO = {"0.36.0": "0.22.2", "0.37.0": "0.24.0"}
+
+#: Wyjątki od równości wersji: (oczekiwana wg polars-bio, wersja vendora) -> powód równoważności.
+#: Para jest dopuszczona tylko z powodem; inne wersje (np. 0.23.0) nie są równoważne.
+EQUIVALENT_RANGES: dict[tuple[str, str], str] = {
+    ("0.24.0", "0.22.2"): "0.22.2 and 0.24.0 differ only in DataFusion version bumps; the interval algorithms are identical",
+    ("0.24.0", "0.25.0"): "0.25.0 only moves to the DataFusion 55 API; the interval algorithms are identical to 0.24.0",
+}
 
 
 def test_ballista_uses_the_ranges_crate_version_of_polars_bio():
@@ -30,4 +37,13 @@ def test_ballista_uses_the_ranges_crate_version_of_polars_bio():
     lock = tomllib.loads((BALLISTA_DIR / "Cargo.lock").read_text())
     locked = {package["name"]: package["version"] for package in lock["package"]}
     expected = RANGES_IN_POLARS_BIO[polars_bio]
-    assert (manifest["package"]["version"], locked[CRATE]) == (expected, expected)
+    for actual in (manifest["package"]["version"], locked[CRATE]):
+        assert actual == expected or (expected, actual) in EQUIVALENT_RANGES, (
+            f"{CRATE} {actual} is not {expected} and not a declared equivalent"
+        )
+
+
+def test_equivalence_exceptions_are_explicit():
+    for pair, reason in EQUIVALENT_RANGES.items():
+        assert reason.strip() and ("DataFusion" in reason or "identical" in reason), pair
+    assert ("0.24.0", "0.23.0") not in EQUIVALENT_RANGES

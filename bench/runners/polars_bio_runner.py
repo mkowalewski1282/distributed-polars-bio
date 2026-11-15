@@ -44,7 +44,8 @@ def run(op: str, left: Path, right: Path | None, cols: tuple[str, str, str], thr
     require_paths(left, right)
     import polars_bio as pb
 
-    # Ścieżki nie niosą metadanych układu współrzędnych; dane databio-8p są 0-based.
+    # Ścieżki nie niosą metadanych układu współrzędnych (w 0.37 zero_based przyjmują tylko scan_*/read_*,
+    # a te nie dają wyniku datafusion.DataFrame), więc ostrzeżenie zostaje wyciszone; dane databio-8p są 0-based.
     warnings.filterwarnings("ignore", message="Coordinate system metadata is missing")
     pb.set_option("datafusion.bio.coordinate_system_zero_based", True)
     pb.set_option(pb.POLARS_BIO_MAX_THREADS, threads)
