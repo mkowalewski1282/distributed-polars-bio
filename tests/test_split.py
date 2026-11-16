@@ -4,6 +4,7 @@ warsztatu — nie trafia do zadnego z nowych repozytoriow (patrz split.EXCLUDES_
 
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -141,3 +142,76 @@ def test_rewrites_on_real_ballista_test():
     assert '"ballista_genomics"' not in out.split("BALLISTA_DIR =")[1].split("\n")[0]
     bench_out = split.rewrite_text("genomics-engines-bench", text)
     assert '/ "engines" / "ballista-genomics"' in bench_out
+
+
+def test_columns_literal_follows_the_imports():
+    """Stala COLUMNS w Ballistcie zastepuje import, ale stoi za wszystkimi importami (bez E402)."""
+    import ast
+
+    text = (REPO / "tests" / "generic_oracle.py").read_text(encoding="utf-8")
+    tree = ast.parse(split.rewrite_text("ballista-genomics", text))
+    kinds = [
+        "import" if isinstance(node, (ast.Import, ast.ImportFrom)) else "columns"
+        for node in tree.body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        or (isinstance(node, ast.Assign) and [t.id for t in node.targets] == ["COLUMNS"])
+    ]
+    assert kinds[-1] == "columns" and kinds.count("columns") == 1, kinds
+
+
+def test_technical_doc_rewrites_resolve_per_repo():
+    text = (REPO / "tests" / "test_ballista_distribution_evidence.py").read_text(encoding="utf-8")
+    ballista = split.rewrite_text("ballista-genomics", text)
+    assert 'BALLISTA_DIR = Path(__file__).resolve().parent.parent\n' in ballista
+    assert 'TECHNICAL_DOC = BALLISTA_DIR / "TECHNICAL.md"' in ballista
+    assert "cd ballista_genomics" not in ballista
+    bench = split.rewrite_text("genomics-engines-bench", text)
+    assert '/ "engines" / "ballista-genomics"' in bench
+    assert 'TECHNICAL_DOC = BALLISTA_DIR / "TECHNICAL.md"' in bench
+    assert "cd engines/ballista-genomics && " in bench
+    for out in (ballista, bench):
+        assert "OPIS" not in out
+    assert (REPO / "tools" / "split" / "overlay" / "ballista-genomics" / "TECHNICAL.md").is_file()
+
+
+def test_technical_doc_declares_each_checked_setting_once():
+    doc = (REPO / "tools" / "split" / "overlay" / "ballista-genomics" / "TECHNICAL.md").read_text()
+    for key, value in [
+        ("ballista.planner.adaptive.enabled", "true"),
+        ("ballista.scheduler.max_partitions_per_task", "1"),
+        ("ballista.scheduler.share_file_statistics_cache", "false"),
+    ]:
+        assert re.findall(rf"`{re.escape(key)}` = `([^`]+)`", doc) == [value], key
+
+
+def test_ballista_conftest_comes_from_the_overlay():
+    assert split.map_path("ballista-genomics", "tests/conftest.py") is None
+    conftest = REPO / "tools" / "split" / "overlay" / "ballista-genomics" / "tests" / "conftest.py"
+    assert not split.BENCH_IMPORT.search(conftest.read_text(encoding="utf-8"))
+
+
+def test_overlay_guard_uses_the_split_patterns():
+    import importlib.util
+
+    path = REPO / "tools" / "split" / "overlay" / split.COMMON_OVERLAY / split.GUARD_DEFINITION_FILES[0]
+    spec = importlib.util.spec_from_file_location("overlay_guard", path)
+    guard = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard)
+    assert guard.WORKSHOP_PATTERNS == split.WORKSHOP_PATTERNS
+    assert guard.POLISH_PATTERNS == split.POLISH_PATTERNS
+    assert path.read_text(encoding="utf-8").isascii()
+
+
+def test_overlays_have_no_workshop_refs():
+    overlays = REPO / "tools" / "split" / "overlay"
+    assert {p.name for p in overlays.iterdir()} == {split.COMMON_OVERLAY, *split.REPOS}
+    hits = [h for name in sorted(p.name for p in overlays.iterdir())
+            for h in split.scan_workshop_refs(overlays / name)]
+    assert not hits, hits
+
+
+def test_export_locks_the_integration_repos(tmp_path, monkeypatch):
+    locked = []
+    monkeypatch.setattr(split, "_uv_lock", lambda target: locked.append(target.name))
+    split.export("HEAD", tmp_path / "out")
+    assert locked == list(split.LOCKED_REPOS) == ["ballista-genomics", "sail-genomics"]

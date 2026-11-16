@@ -1,0 +1,29 @@
+[project]
+name = "sail-genomics"
+version = "0.1.0"
+description = "polars-bio genomic interval operations on Sail (Spark Connect) through applyInArrow"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pysail==0.7.*",
+    "pyspark[connect]==4.2.*",
+    "polars-bio==0.37.*",
+    "pyarrow>=24,<25",
+    "polars>=2.1,<2.2",
+]
+
+[dependency-groups]
+dev = ["pytest>=9.1"]
+
+[build-system]
+requires = ["uv_build>=0.12.22,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv]
+# The same uv version locally and in CI (astral-sh/setup-uv reads it from here).
+required-version = "==0.12.22"
+package = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

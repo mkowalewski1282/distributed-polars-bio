@@ -1,0 +1,71 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      # No debug info (Cargo.toml already has debug = false; this guards against a profile change).
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v7
+
+      # Rust from rust-toolchain.toml (before the cache: the cache key includes the rustc version).
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" --profile minimal
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      # protoc for the build script of the substrait crate (a ballista-scheduler dependency);
+      # the runner does not have it.
+      - name: Install protoc
+        env:
+          PROTOC_SHA256: 0ad949f04a6a174da83cdcbdb36dee0a4925272a5b6d83f79a6bf9852076d53f
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/protoc.zip" https://github.com/protocolbuffers/protobuf/releases/download/v28.3/protoc-28.3-linux-x86_64.zip
+          echo "$PROTOC_SHA256  $RUNNER_TEMP/protoc.zip" | sha256sum -c -
+          sudo unzip -q -o "$RUNNER_TEMP/protoc.zip" -d /usr/local bin/protoc 'include/*'
+          protoc --version
+
+      - name: Build binaries
+        run: cargo build --bins --locked
+
+      # Rust unit tests (among others: the mandatory coordinate convention of the dist_* operations).
+      - name: Rust unit tests
+        run: cargo test --lib --locked
+
+      - name: Disk usage
+        run: df -h / && du -sh target
+
+      # The uv version comes from required-version in pyproject.toml.
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+          cache-python: true
+
+      - name: Python environment
+        run: uv sync --locked
+
+      # Integration tests: the binaries against polars-bio on the test data (no real data in CI).
+      # Tests marked parallelism(p) are skipped when the runner has fewer CPUs (4 vCPUs -> P <= 2).
+      - name: Tests (without real data)
+        run: uv run --locked pytest -m "not real_data" -ra

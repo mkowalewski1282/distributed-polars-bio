@@ -5,6 +5,16 @@ distributed engines). These are **visibility** fixes in a helper library
 (`datafusion-bio-function-ranges`, biodatageeks, Apache-2.0), vendored locally only
 because upstream does not have them yet.
 
+## Origin and licence
+
+`datafusion-bio-function-ranges/` is a copy of `datafusion/bio-function-ranges` from
+https://github.com/biodatageeks/datafusion-bio-functions, tag `v0.25.0` (commit
+`4e81cf5930cd4be9a0da376ba2d7b59c93db1ffe`), authors: BiodataGeeks Team. Licence: Apache
+License 2.0 (the `license` field of the upstream workspace `Cargo.toml`; the upstream `LICENSE`
+file is the Apache 2.0 text and is copied unchanged as `datafusion-bio-function-ranges/LICENSE`).
+Modified: the visibility patches listed below and the `Cargo.toml` with the upstream workspace
+inheritance expanded. The bundled `superintervals/` keeps its own licence file.
+
 ## Version of the copy
 
 The copy is `datafusion/bio-function-ranges` from tag **v0.25.0** of the

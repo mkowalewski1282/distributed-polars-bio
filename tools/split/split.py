@@ -1,8 +1,9 @@
 """Skrypt podzialu monorepo na trzy repozytoria (ballista-genomics, sail-genomics,
-genomics-engines-bench). Powtarzalny: `git archive <zrodlo>` -> mapowanie sciezek -> nakladki
-(tools/split/overlay/<repo>/, kopiowane bez zmian, na koncu) -> przepisanie importow ->
-kontrola braku importow `bench` -> straznik tresci. Zmiany niezatwierdzone nie trafiaja do
-eksportu. Warsztat: ten plik i cale tools/ nie sa eksportowane.
+genomics-engines-bench). Powtarzalny: `git archive <zrodlo>` -> mapowanie sciezek z
+przepisaniem importow (.py) i sciezek (pliki tekstowe) -> nakladki (tools/split/overlay/common/,
+potem tools/split/overlay/<repo>/, kopiowane bez zmian) -> `uv lock` (wymaga sieci) -> kontrola
+braku importow `bench` -> straznik tresci. Zmiany niezatwierdzone nie trafiaja do eksportu.
+Warsztat: ten plik i cale tools/ nie sa eksportowane.
 
 Uzycie: uv run python tools/split/split.py --source <commit> --out <katalog>
 Kod wyjscia != 0, gdy straznik tresci cos znajdzie."""
@@ -48,8 +49,9 @@ EXCLUDES: dict[str, tuple[str, ...]] = {
 }
 
 _BALLISTA_FILES = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml")
+# conftest.py Ballisty pochodzi z nakladki (bez importow `bench`, znaczniki dla tego repo).
 _BALLISTA_TESTS = (
-    "__init__.py conftest.py parquet_fixture.py generic_oracle.py overlap_oracle.py "
+    "__init__.py parquet_fixture.py generic_oracle.py overlap_oracle.py "
     "merge_oracle.py nearest_oracle.py coverage_subtract_oracle.py test_ballista_overlap.py "
     "test_ballista_distributed_ops.py test_ballista_distribution_evidence.py "
     "test_ballista_multiprocess.py test_ballista_parquet.py test_merge_correctness.py "
@@ -91,7 +93,12 @@ _POLISH_ESCAPES = r"\u0105\u0107\u0119\u0142\u0144\u00f3\u015b\u017a\u017c\u0104
 # skopiowac slowo w slowo, a straznik nie trafial sam w siebie.
 IMPORT_REWRITES: dict[str, list[tuple[str, str]]] = {
     "ballista-genomics": [
-        (r'^from bench\.data\.datasets import COLUMNS$', 'COLUMNS = ("contig", "pos_start", "pos_end")'),
+        # Stala za importami nastepujacymi po zastepowanym (inaczej E402 w tests/generic_oracle.py).
+        (
+            r"^from bench\.data\.datasets import COLUMNS\n((?:(?:from|import) [^\n(]*\n)*)",
+            "\\1\n#: Interval columns of the input files (databio-8p layout).\n"
+            'COLUMNS = ("contig", "pos_start", "pos_end")\n',
+        ),
         (r"\bfrom bench\.(ops|checksum|cpus)\b", r"from tests.support.\1"),
         (r"\bfrom bench import (ops|checksum|cpus)\b", r"from tests.support import \1"),
         (
@@ -117,6 +124,37 @@ IMPORT_REWRITES: dict[str, list[tuple[str, str]]] = {
         ),
     ],
 }
+
+#: Przepisania sciezek we wszystkich eksportowanych plikach tekstowych (poza kodem upstreamu
+#: w vendor/<crate>/): katalog crate'a `ballista_genomics/` monorepo to korzen ballista-genomics
+#: i engines/ballista-genomics w repo pomiarowym; opis techniczny OPIS.md (po polsku, tylko
+#: w monorepo) to tam TECHNICAL.md (nakladka ballista-genomics). Kopie modulow `bench` w Ballistcie
+#: leza w tests/support/.
+PATH_REWRITES: dict[str, list[tuple[str, str]]] = {
+    "ballista-genomics": [
+        (r"\bcd ballista_genomics && ", ""),
+        (r"\bthe `ballista_genomics/` directory", "the repository root"),
+        (r"\bin ballista_genomics/(?=\s)", "in the repository root"),
+        (r"\bballista_genomics/(?=[\w.])", ""),
+        (r"\bbench/(ops|checksum|cpus)\.py\b", r"tests/support/\1.py"),
+        (r"\bOPIS\.md\b", "TECHNICAL.md"),
+        (r"\bOPIS\b", "TECHNICAL_DOC"),
+    ],
+    "sail-genomics": [(r"\(bench/ops\.py\)", "(src/sail_genomics/schema.py)")],
+    "genomics-engines-bench": [
+        (r"\bcd ballista_genomics && ", "cd engines/ballista-genomics && "),
+        (r'"OPIS\.md"', '"TECHNICAL.md"'),
+        (r"\b(?:ballista_genomics/)?OPIS\.md\b", "engines/ballista-genomics/TECHNICAL.md"),
+        (r"\bOPIS\b", "TECHNICAL_DOC"),
+    ],
+}
+
+#: Nakladka wspolna (LICENSE, straznik tresci) — kopiowana do kazdego repo przed nakladka repo.
+COMMON_OVERLAY = "common"
+
+#: Repozytoria, w ktorych export tworzy uv.lock. genomics-engines-bench zalezy od
+#: engines/sail-genomics (submodul dodawany po eksporcie), wiec blokuje sie je dopiero z submodulami.
+LOCKED_REPOS = ("ballista-genomics", "sail-genomics")
 
 #: Import modulu `bench` — w ballista-genomics i sail-genomics ma ich nie byc wcale.
 BENCH_IMPORT = re.compile(r"^\s*(?:from\s+bench\b|import\s+bench\b)", re.MULTILINE)
@@ -196,11 +234,39 @@ def map_path(repo: str, path: str) -> str | None:
     return None
 
 
-def rewrite_text(repo: str, text: str) -> str:
-    """Przepisania importow repozytorium `repo` zastosowane do tresci pliku .py."""
-    for pattern, replacement in IMPORT_REWRITES[repo]:
+def rewrite_text(repo: str, text: str, python: bool = True) -> str:
+    """Przepisania repozytorium `repo` zastosowane do tresci pliku tekstowego: importy (tylko
+    pliki .py, `python`) i sciezki."""
+    rules = (IMPORT_REWRITES[repo] if python else []) + PATH_REWRITES[repo]
+    for pattern, replacement in rules:
         text = re.sub(pattern, replacement, text, flags=re.MULTILINE)
     return text
+
+
+def _is_upstream(dest: str) -> bool:
+    """Kod upstreamu w vendor/<crate>/ — kopiowany bajt w bajt (nasze notatki w vendor/ nie)."""
+    return dest.startswith("vendor/") and dest.count("/") > 1
+
+
+def _copy_rewritten(repo: str, src: Path, dest: Path, rel: str) -> None:
+    """Kopia pliku z przepisaniami importow/sciezek (pliki tekstowe UTF-8 poza kodem upstreamu)."""
+    shutil.copy2(src, dest)
+    if _is_upstream(rel):
+        return
+    raw = src.read_bytes()
+    if b"\0" in raw:
+        return
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return
+    rewritten = rewrite_text(repo, text, python=rel.endswith(".py"))
+    if rewritten != text:
+        dest.write_text(rewritten, encoding="utf-8")
+
+
+def _uv_lock(target: Path) -> None:
+    subprocess.run(["uv", "lock"], cwd=target, check=True)
 
 
 def _archive(source: str, dest: Path) -> None:
@@ -230,22 +296,18 @@ def export(source: str, out: Path) -> None:
         files = list(_relative_files(tree))
         for repo in REPOS:
             target = out / repo
+            target.mkdir(parents=True, exist_ok=True)
             for rel in files:
                 if rel.startswith("tools/split/overlay/"):
                     continue
                 dest = map_path(repo, rel)
                 if dest is not None:
                     (target / dest).parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(tree / rel, target / dest)
-            overlay = tree / "tools" / "split" / "overlay" / repo
-            if overlay.is_dir():
-                shutil.copytree(overlay, target, dirs_exist_ok=True)
-            target.mkdir(parents=True, exist_ok=True)
-            for path in target.rglob("*.py"):
-                text = path.read_text(encoding="utf-8")
-                rewritten = rewrite_text(repo, text)
-                if rewritten != text:
-                    path.write_text(rewritten, encoding="utf-8")
+                    _copy_rewritten(repo, tree / rel, target / dest, dest)
+            for name in (COMMON_OVERLAY, repo):
+                overlay = tree / "tools" / "split" / "overlay" / name
+                if overlay.is_dir():
+                    shutil.copytree(overlay, target, dirs_exist_ok=True)
     leftovers = [
         f"{repo}/{path.relative_to(out / repo).as_posix()}:{n}: {line.strip()}"
         for repo in REPOS_WITHOUT_BENCH
@@ -255,6 +317,13 @@ def export(source: str, out: Path) -> None:
     ]
     if leftovers:
         raise SystemExit("bench imports remain after rewriting:\n" + "\n".join(leftovers))
+    for repo in LOCKED_REPOS:
+        _uv_lock(out / repo)
+    print(
+        "note: genomics-engines-bench is not locked - its sail-genomics dependency lives in the "
+        "engines/ submodules; run `uv lock` there after adding them",
+        file=sys.stderr,
+    )
 
 
 def line_families(line: str) -> set[str]:

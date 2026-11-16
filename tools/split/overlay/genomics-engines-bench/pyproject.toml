@@ -1,0 +1,39 @@
+[project]
+name = "genomics-engines-bench"
+version = "0.1.0"
+description = "Benchmark of polars-bio genomic interval operations on polars-bio, Apache Ballista and Sail at equal CPU budgets"
+requires-python = ">=3.12,<3.13"
+# The engines under measurement are pinned to a minor version, so that `uv lock --upgrade` cannot
+# change them between measurements. The other dependencies have lower bounds only; the exact
+# versions are in uv.lock.
+dependencies = [
+    "polars-bio==0.37.*",
+    "pysail==0.7.*",
+    "pyspark[connect]==4.2.*",
+    # The Sail integration (applyInArrow), from the engines/sail-genomics submodule.
+    "sail-genomics",
+    "polars>=2.1,<2.2",
+    "pyarrow>=24,<25",
+    "pandas>=3.0",
+    "numpy>=2.5",
+    "pyyaml>=6.0.3",
+    "requests>=2.34",
+    "matplotlib>=3.10",
+]
+
+[dependency-groups]
+dev = ["pytest>=9.1"]
+
+[tool.uv]
+# Not a Python package: the tool runs from the repository directory (python -m bench...).
+package = false
+# The same uv version locally and in CI (astral-sh/setup-uv reads it from here).
+required-version = "==0.12.22"
+# The tool runs on Linux only (taskset, /proc, sysfs CPU topology).
+environments = ["sys_platform == 'linux'"]
+
+[tool.uv.sources]
+sail-genomics = { path = "engines/sail-genomics", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

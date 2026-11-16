@@ -1,0 +1,29 @@
+# Python environment of the integration tests: they run the compiled binaries and compare their
+# results with polars-bio. The crate itself is built with cargo.
+[project]
+name = "ballista-genomics"
+version = "0.1.0"
+description = "Integration tests of the polars-bio interval operations on Apache Ballista"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # The reference implementation; its interval algorithms match the vendored crate.
+    "polars-bio==0.37.*",
+    "polars>=2.1,<2.2",
+    "pyarrow>=24,<25",
+    "pandas>=3.0",
+    "numpy>=2.5",
+]
+
+[dependency-groups]
+dev = ["pytest>=9.1"]
+
+[tool.uv]
+# Not a Python package: the tests run from the repository directory.
+package = false
+# The same uv version locally and in CI (astral-sh/setup-uv reads it from here).
+required-version = "==0.12.22"
+# Built and tested on Linux only.
+environments = ["sys_platform == 'linux'"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
