@@ -1,0 +1,13 @@
+# Python caches and virtual environment
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Measurement series: raw JSON Lines, engine logs and temporary files (the result is runs.parquet)
+bench/results/**/runs.jsonl
+bench/results/**/logs/
+bench/results/**/tmp/
+
+# Local scratch output
+output.txt

@@ -1,0 +1,9 @@
+# Rust build output and local run results
+target/
+output/
+
+# Python caches and virtual environment
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/

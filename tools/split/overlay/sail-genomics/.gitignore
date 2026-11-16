@@ -1,0 +1,8 @@
+# Python caches, build output and virtual environment
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+dist/
+build/
+*.egg-info/
