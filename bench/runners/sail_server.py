@@ -12,12 +12,12 @@ import argparse
 import sys
 import time
 
-#: Sloty zadań na workera. Przy 2 slotach (jak w Ballistcie) Sail w trybie local-cluster sam
-#: uruchamia DODATKOWE workery, gdy etap ma więcej zadań niż slotów (2 workery przy N = 1 na
-#: danych w 8 plikach), a z limitem cluster.worker_max_count zapytanie wisi (sonda 01.10.2026).
-#: 8 slotów (wartość domyślna Saila) utrzymuje dokładnie N workerów; o równoległości i tak
-#: decyduje przypięcie procesu do 2N rdzeni.
-WORKER_TASK_SLOTS = 8
+#: Sloty zadań na workera. Sonda 2026-11-16 (Sail 0.7.3, overlap 7-0, P = 1, 2, 4 workerów × 1 slot
+#: z równoległością P): poprawna suma kontrolna, liczba workerów równa P i brak zawieszenia
+#: w każdej komórce, więc 1 slot na workera jest honorowany. Pomiar w trybie P workerów × 1 slot
+#: (równoległość P) używa tej wartości; wcześniejsza sonda 01.10.2026 (2 sloty przy N = 1) dokładała
+#: workery, a z cluster.worker_max_count zapytanie wisiło.
+WORKER_TASK_SLOTS = 1
 
 
 def sail_env(n_nodes: int) -> dict[str, str]:

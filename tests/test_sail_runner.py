@@ -62,7 +62,7 @@ def test_sail_env_for_three_nodes():
     assert sail_env(3) == {
         "SAIL_MODE": "local-cluster",
         "SAIL_CLUSTER__WORKER_INITIAL_COUNT": "3",
-        "SAIL_CLUSTER__WORKER_TASK_SLOTS": "8",
+        "SAIL_CLUSTER__WORKER_TASK_SLOTS": "1",
         "SAIL_CLUSTER__WORKER_MAX_IDLE_TIME_SECS": "86400",
         "SAIL_EXECUTION__DEFAULT_PARALLELISM": "6",
         "SAIL_EXECUTION__BATCH_SIZE": "65536",
