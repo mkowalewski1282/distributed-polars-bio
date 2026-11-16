@@ -1,24 +1,27 @@
-"""Operacje polars-bio w Sailu przez applyInArrow — ścieżka pomiarowa (specyfikacja 3b-2, 5.2).
+"""polars-bio operations in Sail through applyInArrow — the measurement path.
 
-Dane są grupowane po chromosomie: groupBy (merge) albo
-cogroup dwóch tabel (pozostałe operacje), a funkcja Pythona dostaje tabelę Arrow jednego
-chromosomu i zwraca tabelę Arrow wyniku. Znikają collect_list, LATERAL i explode, a wynik
-przechodzi przez Arrow bez zamiany na wiersze Pythona — sonda 3b-2: 10–20× szybciej niż
-UDTF z LATERAL na parze 1-2, wynik zgodny z polars-bio dla pięciu operacji.
+The data is grouped by chromosome: groupBy (merge) or a cogroup of two tables (the other
+operations), and the Python function receives an Arrow table of one chromosome and returns an
+Arrow table with the result. collect_list, LATERAL and explode are gone, and the result passes
+through Arrow without being converted to Python rows — a probe measured it 10–20× faster than a
+UDTF with LATERAL on the pair 1-2, with a result matching polars-bio for all five operations.
 
-Dostęp do polars-bio w procesie serwera Saila: kontekst polars-bio z puli, jeden na równoczesne
-wywołanie (sail_genomics.pb_context), bez blokady — chromosomy liczą się równolegle.
+Access to polars-bio in the Sail server process: a polars-bio context from a pool, one per
+concurrent call (sail_genomics.pb_context), without a lock — chromosomes are computed in
+parallel.
 
-Chromosom tylko po prawej stronie (pusta lewa) daje pusty wynik bez wołania polars-bio; tylko po
-lewej — polars-bio dostaje pustą prawą stronę i sam rozstrzyga semantykę.
+A chromosome present only on the right side (empty left) gives an empty result without calling
+polars-bio; present only on the left — polars-bio gets an empty right side and decides the
+semantics itself.
 
-Fazy: gdy podano plik faz, każde wywołanie polars-bio dopisuje do niego linię JSON
-{"pb_s": …} — czas wywołania; runner sumuje je po zapytaniu
-(read_phases). Plik leży na tej samej maszynie co serwer (lokalny klaster); dopisywanie krótkich
-linii w trybie append jest bezpieczne między wątkami.
+Phases: when a phase file is given, every polars-bio call appends a JSON line {"pb_s": …} to it
+— the duration of the call; the runner sums them after the query (read_phases). The file lives
+on the same machine as the server (a local cluster); appending short lines in append mode is
+safe between threads.
 
-Pakiet musi być importowalny po nazwie w procesie serwera (katalog roboczy = repozytorium):
-cloudpickle serializuje funkcję przekazaną do applyInArrow, a ta importuje sail_genomics.arrow."""
+The package must be importable by name in the server process (working directory = the
+repository): cloudpickle serializes the function passed to applyInArrow, and that function
+imports sail_genomics.arrow."""
 
 from __future__ import annotations
 
@@ -37,12 +40,12 @@ from sail_genomics.schema import (
     rename_polars_bio,
 )
 
-#: Nazwy kolumn przedziału, pod którymi dane trafiają do polars-bio.
+#: Names of the interval columns under which the data reaches polars-bio.
 _PB_COLS = ("chrom", "start", "end")
 
 
 def _frame(table: pa.Table):
-    """Tabela Arrow grupy → polars (bez kopii) z metadanymi układu 0-based dla polars-bio."""
+    """The group's Arrow table → polars (zero-copy) with 0-based coordinate metadata for polars-bio."""
     import polars as pl
     from polars_bio._metadata import set_coordinate_system
 
@@ -63,15 +66,15 @@ def _call_polars_bio(op: str, left, right):
 
 
 def evaluate(op: str, left: pa.Table, right: pa.Table | None, phase_log: str | None) -> pa.Table:
-    """Treść funkcji applyInArrow: jedna operacja polars-bio na jednym chromosomie."""
+    """Body of the applyInArrow function: one polars-bio operation on one chromosome."""
     schema = arrow_schema(op)
     if left.num_rows == 0:
-        return schema.empty_table()  # każda z operacji zwraca wiersze wynikające z lewej tabeli
+        return schema.empty_table()  # every operation returns rows derived from the left table
     left_df = _frame(left)
     right_df = None if right is None else _frame(right)
-    from sail_genomics import pb_context  # import polars-bio dopiero w procesie serwera
+    from sail_genomics import pb_context  # polars-bio is imported only in the server process
 
-    pb_context.install()  # idempotentne: pula kontekstów w procesie serwera
+    pb_context.install()  # idempotent: a pool of contexts in the server process
 
     t = time.perf_counter()
     result = _call_polars_bio(op, left_df, right_df)
@@ -86,8 +89,8 @@ def evaluate(op: str, left: pa.Table, right: pa.Table | None, phase_log: str | N
 
 def build_query(spark, op: str, left, right=None, cols: tuple[str, str, str] = DEFAULT_INPUT_COLUMNS, *,
                 phase_log: str | None = None):
-    """Zapytanie (leniwy DataFrame) na plikach Parquet (plik albo katalog) z wynikiem w schemacie
-    znormalizowanym (schema.OUTPUT_COLUMNS)."""
+    """A query (a lazy DataFrame) on Parquet files (a file or a directory) with the result in the
+    normalised schema (schema.OUTPUT_COLUMNS)."""
     if op not in OUTPUT_COLUMNS:
         raise ValueError(f"unknown operation {op!r}")
     if (op in UNARY_OPS) != (right is None):
@@ -121,8 +124,8 @@ def build_query(spark, op: str, left, right=None, cols: tuple[str, str, str] = D
 
 
 def read_phases(path: str | Path | None) -> tuple[float, int]:
-    """Suma czasów polars-bio i liczba wywołań z pliku faz.
-    Brak pliku albo pusty plik (żadna grupa nie wywołała polars-bio) → zera."""
+    """The sum of polars-bio times and the number of calls from the phase file.
+    A missing or empty file (no group called polars-bio) → zeros."""
     if path is None:
         return 0.0, 0
     try:

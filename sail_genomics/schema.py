@@ -1,7 +1,8 @@
-"""Schemat operacji i wyników pakietu — niezależny od reszty repozytorium.
+"""Schema of the operations and results of the package — independent of the rest of the repository.
 
-Nazwy kolumn wyniku w schemacie znormalizowanym (identyczne z bench/ops.py; zgodność pilnuje
-test tests/test_sail_arrow.py) oraz zamiana nazw kolumn polars-bio na ten schemat."""
+Result column names in the normalised schema (identical to bench/ops.py; a test,
+tests/test_sail_arrow.py, enforces the agreement) and the renaming of polars-bio columns to
+this schema."""
 
 from __future__ import annotations
 
@@ -11,10 +12,10 @@ import polars as pl
 OPS = ("overlap", "nearest", "coverage", "merge", "subtract")
 UNARY_OPS = frozenset({"merge"})
 
-#: Domyślne nazwy kolumn przedziału w plikach wejściowych.
+#: Default names of the interval columns in the input files.
 DEFAULT_INPUT_COLUMNS = ("contig", "pos_start", "pos_end")
 
-#: Kolumny wyniku w schemacie znormalizowanym, w tej kolejności.
+#: Result columns in the normalised schema, in this order.
 OUTPUT_COLUMNS: dict[str, tuple[str, ...]] = {
     "overlap": ("chrom_1", "start_1", "end_1", "chrom_2", "start_2", "end_2"),
     "nearest": ("chrom_1", "start_1", "end_1", "chrom_2", "start_2", "end_2", "distance"),
@@ -25,7 +26,7 @@ OUTPUT_COLUMNS: dict[str, tuple[str, ...]] = {
 
 
 def ddl_schema(op: str) -> str:
-    """Schemat wyniku dla applyInArrow (DDL Sparka) w schemacie znormalizowanym."""
+    """Result schema for applyInArrow (Spark DDL) in the normalised schema."""
     return ", ".join(f"{c} {'string' if c.startswith('chrom') else 'long'}" for c in OUTPUT_COLUMNS[op])
 
 
@@ -34,7 +35,7 @@ def arrow_schema(op: str) -> pa.Schema:
 
 
 def _names(op: str, cols: tuple[str, str, str]) -> dict[str, str]:
-    """Nazwy kolumn wyniku polars-bio -> schemat znormalizowany."""
+    """Column names of a polars-bio result -> the normalised schema."""
     c, s, e = cols
     if op in ("overlap", "nearest"):
         names = {
@@ -53,7 +54,7 @@ def _names(op: str, cols: tuple[str, str, str]) -> dict[str, str]:
 
 
 def rename_polars_bio(op: str, df: pl.DataFrame, pb_cols: tuple[str, str, str]) -> pl.DataFrame:
-    """Wynik polars-bio -> kolumny schematu znormalizowanego, w kolejności OUTPUT_COLUMNS."""
+    """A polars-bio result -> the columns of the normalised schema, in OUTPUT_COLUMNS order."""
     names = _names(op, pb_cols)
     missing = [src for src in names if src not in df.columns]
     if missing:

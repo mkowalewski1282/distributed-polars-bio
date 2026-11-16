@@ -1,37 +1,37 @@
-"""Pula kontekstów polars-bio — rozwiązanie pomostowe (specyfikacja 3b-2, 5.1).
+"""A pool of polars-bio contexts — a bridging solution.
 
-polars-bio 0.36 trzyma jeden globalny kontekst (BioSessionContext) i rejestruje w nim tabele
-operacji na ramkach pod stałymi nazwami s1/s2: równoczesne wywołania pb.*() w wątkach jednego
-procesu kończą się błędem „The table s1 already exists” (w 0.28 — cichym nadpisaniem tabel).
-Sail wykonuje funkcje Pythona w wątkach procesu serwera, więc bez puli trzeba by je chronić
-blokadą — kosztem liczenia jednego chromosomu naraz.
+polars-bio 0.36 keeps one global context (BioSessionContext) and registers the tables of
+operations on frames in it under the fixed names s1/s2: concurrent pb.*() calls in threads of
+one process fail with "The table s1 already exists" (in 0.28 — with a silent overwrite of the
+tables). Sail runs Python functions in threads of the server process, so without a pool they
+would have to be protected by a lock — at the cost of computing one chromosome at a time.
 
-Wszystkie pięć operacji (overlap, nearest, coverage, merge, subtract) budują RangeOptions
-i wołają polars_bio.range_op.range_operation(df1, df2, options, output_type, ctx, …). Moduł
-podmienia tę funkcję na wersję, która w miejsce ctx wstawia kontekst pobrany z puli (tworzony,
-gdy pula jest pusta, z tymi samymi opcjami co globalny) i po udanym wywołaniu go zwraca
-(po wyjątku kontekst jest porzucany). Każde równoczesne wywołanie ma więc własny kontekst:
-kontekstów jest tyle, ile wynosi szczyt liczby wywołań naraz. Pula zakłada wyniki gorliwe
-(polars.DataFrame, jak w sail_genomics.arrow): przy leniwych (polars.LazyFrame, datafusion.DataFrame)
-polars-bio używa kontekstu dopiero przy collect, po jego powrocie do puli, więc równoczesne
-wywołanie mogłoby go współdzielić. Publiczne
-pb.*() zostają bez zmian — z własnymi ustawieniami domyślnymi — a wywołania przestają dzielić
-tabele (sonda 3b-2: 0 rozbieżności, 5 operacji × 6 wątków × 3 rundy; overlap 7-0 2,4× szybciej
-na 6 wątkach).
+All five operations (overlap, nearest, coverage, merge, subtract) build RangeOptions and call
+polars_bio.range_op.range_operation(df1, df2, options, output_type, ctx, …). This module
+replaces that function with a version that substitutes a context taken from the pool for ctx
+(created when the pool is empty, with the same options as the global one) and returns it after
+a successful call (after an exception the context is discarded). Every concurrent call thus has
+its own context: there are as many contexts as the peak number of simultaneous calls. The pool
+assumes eager results (polars.DataFrame, as in sail_genomics.arrow): with lazy ones
+(polars.LazyFrame, datafusion.DataFrame) polars-bio uses the context only at collect, after it
+has returned to the pool, so a concurrent call could share it. The public pb.*() stay unchanged
+— with their own default settings — and the calls stop sharing tables (a probe found 0
+discrepancies, 5 operations × 6 threads × 3 rounds; overlap 7-0 2.4× faster on 6 threads).
 
-Dlaczego nie threading.local: Sail woła Python z wątków Rusta i przy każdym wywołaniu odtwarza
-stan wątku Pythona, więc kontekst „na wątek” stawał się kontekstem na wywołanie (sonda
-11.10.2026: 54 konteksty na zapytanie overlap 7-0, czyli po jednym na grupę chromosomową).
-Pamięć serwera Saila rosła o ok. 150 MB na zapytanie wobec ok. 75 MB w wariancie z blokadą;
-z pulą wzrost jest taki sam jak w wariancie z blokadą.
+Why not threading.local: Sail calls Python from Rust threads and recreates the Python thread
+state on every call, so a "per thread" context became a per-call context (probe of 2026-10-11:
+54 contexts per overlap 7-0 query, i.e. one per chromosome group). The Sail server's memory
+grew by ~150 MB per query versus ~75 MB in the lock variant; with the pool the growth is the
+same as in the lock variant.
 
-Zależność od wnętrza polars-bio, nie od publicznego API: wersja przypięta w pyproject.toml
-(polars-bio==0.36.*), a tests/test_sail_pb_context.py porównuje wyniki z podmianą i bez — zmiana
-wnętrza w nowej wersji wyjdzie od razu. Kodu polars-bio nie zmieniamy (decyzja 3b-2).
+This depends on polars-bio internals, not on its public API: the version is pinned in
+pyproject.toml, and tests/test_sail_pb_context.py compares results with and without the
+replacement — a change of the internals in a new version shows up at once. The polars-bio code
+itself is not modified.
 
-Podmianę włącza jawnie install() (idempotentnie; woła ją sail_genomics.arrow.evaluate w procesie
-serwera). Działa tylko w procesie, który go zaimportował — runner polars-bio
-(wzorzec, warianty A i B) go nie importuje."""
+The replacement is switched on explicitly by install() (idempotent; sail_genomics.arrow.evaluate
+calls it in the server process). It works only in the process that imported it — the polars-bio
+runner (the reference) does not import it."""
 
 from __future__ import annotations
 
@@ -41,9 +41,10 @@ import threading
 import polars_bio.range_op as _range_op
 from polars_bio.polars_bio import BioSessionContext
 
-#: Opcje kontekstu z puli: jak w globalnym kontekście polars-bio 0.36 (polars_bio/context.py,
-#: Context.__init__) oraz zapasowy układ 0-based (dane databio-8p są 0-based, półotwarte);
-#: o układzie decydują metadane współrzędnych ramki, opcja kontekstu jest tylko zapasowa.
+#: Options of a pooled context: as in the global polars-bio 0.36 context (polars_bio/context.py,
+#: Context.__init__) plus a fallback 0-based coordinate system (the databio-8p data is 0-based,
+#: half-open); the frame's coordinate metadata decides the system, the context option is only a
+#: fallback.
 OPTIONS = {
     "datafusion.execution.target_partitions": "1",
     "datafusion.execution.parquet.schema_force_view_types": "true",
@@ -60,7 +61,7 @@ _original = _range_op.range_operation
 
 
 def _new_context() -> BioSessionContext:
-    """Nowy kontekst polars-bio z OPTIONS i unikalnym ziarnem."""
+    """A new polars-bio context with OPTIONS and a unique seed."""
     global _created
     with _created_lock:
         number = _created
@@ -72,12 +73,12 @@ def _new_context() -> BioSessionContext:
 
 
 def contexts_created() -> int:
-    """Liczba kontekstów utworzonych dotąd w tym procesie (diagnostyka dla testów)."""
+    """Number of contexts created so far in this process (diagnostics for tests)."""
     return _created
 
 
 def _range_operation(*args, **kwargs):
-    """range_operation polars-bio z kontekstem z puli zamiast globalnego (5. argument)."""
+    """polars-bio's range_operation with a pooled context instead of the global one (5th argument)."""
     try:
         ctx = _pool.get_nowait()
     except queue.Empty:
@@ -87,9 +88,9 @@ def _range_operation(*args, **kwargs):
     else:
         args = (*args[:4], ctx, *args[5:])
     result = _original(*args, **kwargs)
-    # Kontekst wraca do puli tylko po udanym wywołaniu: nieudane mogło zostawić zarejestrowane
-    # s1/s2, a ponowne użycie takiego kontekstu psułoby kolejne wywołania („table s1 already
-    # exists”) aż do restartu serwera. Przy wyjątku kontekst jest porzucany.
+    # The context returns to the pool only after a successful call: a failed one may have left
+    # s1/s2 registered, and reusing such a context would break later calls ("table s1 already
+    # exists") until the server restarts. On an exception the context is discarded.
     _pool.put(ctx)
     return result
 

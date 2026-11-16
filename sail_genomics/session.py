@@ -1,4 +1,4 @@
-"""Lokalny serwer Sail i sesja Spark Connect — dla testów i skryptów jednorazowych."""
+"""A local Sail server and a Spark Connect session — for tests and one-off scripts."""
 
 from __future__ import annotations
 
@@ -7,10 +7,10 @@ from contextlib import contextmanager
 
 @contextmanager
 def local_session():
-    """Serwer Sail (local) i sesja Spark Connect; zatrzymywane przy wyjściu.
+    """A Sail server (local) and a Spark Connect session; both are stopped on exit.
 
-    `.create()`, nie `.getOrCreate()` — PySpark cachuje sesję jako singleton
-    procesu i przy kolejnym serwerze zwróciłby martwą sesję.
+    `.create()`, not `.getOrCreate()` — PySpark caches the session as a process-wide singleton
+    and would return a dead session for the next server.
     """
     from pyspark.sql import SparkSession
     from pysail.spark import SparkConnectServer

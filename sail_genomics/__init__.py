@@ -1,4 +1,4 @@
-"""Operacje na przedziałach genomowych (polars-bio) w Sailu przez applyInArrow."""
+"""Genomic interval operations (polars-bio) in Sail through applyInArrow."""
 
 from sail_genomics.arrow import build_query
 from sail_genomics.schema import OPS, OUTPUT_COLUMNS, UNARY_OPS
