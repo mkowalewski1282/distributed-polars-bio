@@ -23,7 +23,7 @@ use datafusion_bio_function_ranges::create_bio_session;
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("============================================================");
-    println!("  Phase C: merge (local, datafusion-bio-function-ranges)");
+    println!("  Local run: merge (local, datafusion-bio-function-ranges)");
     println!("============================================================\n");
 
     let ctx = create_bio_session();

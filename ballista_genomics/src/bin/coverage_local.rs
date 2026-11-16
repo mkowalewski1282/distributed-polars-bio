@@ -11,7 +11,7 @@ use datafusion_bio_function_ranges::create_bio_session;
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("============================================================");
-    println!("  Phase C: coverage (local, datafusion-bio-function-ranges)");
+    println!("  Local run: coverage (local, datafusion-bio-function-ranges)");
     println!("============================================================\n");
 
     let ctx = create_bio_session();

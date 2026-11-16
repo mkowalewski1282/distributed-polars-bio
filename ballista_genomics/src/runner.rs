@@ -149,7 +149,7 @@ pub struct OpSpec {
     pub title: &'static str,
 }
 
-pub fn spec(op: DistOp) -> OpSpec {
+pub fn op_definition(op: DistOp) -> OpSpec {
     match op {
         DistOp::Overlap => OpSpec {
             sql: "SELECT left_chrom AS chrom, \
@@ -237,7 +237,7 @@ pub fn spec(op: DistOp) -> OpSpec {
 }
 
 pub async fn run(op: DistOp) -> Result<()> {
-    let s = spec(op);
+    let s = op_definition(op);
 
     println!("============================================================");
     println!("  {}", s.title);
