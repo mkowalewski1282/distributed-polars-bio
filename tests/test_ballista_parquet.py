@@ -127,7 +127,7 @@ def test_bench_client_quotes_apostrophe_in_path(parquet_dirs, parquet_expected, 
 @pytest.fixture(scope="module")
 def cluster(tmp_path_factory):
     c = _start_cluster(
-        tmp_path_factory.mktemp("plan2_klaster"),
+        tmp_path_factory.mktemp("parquet_cluster"),
         [("executor_1", []), ("executor_2", [])],
     )
     yield c

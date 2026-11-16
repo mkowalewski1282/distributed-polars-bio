@@ -41,7 +41,7 @@ STANDALONE_HANG_TIMEOUT_S = 90
 _STANDALONE_BROADCAST_HANGS = pytest.mark.xfail(
     raises=subprocess.TimeoutExpired,
     strict=True,
-    reason="standalone: 4 MiB gRPC client limit of the executor with a broadcast (spec 9.2)",
+    reason="standalone: 4 MiB gRPC client limit of the executor with a broadcast",
 )
 STANDALONE_CASES = [
     pytest.param(op, marks=_STANDALONE_BROADCAST_HANGS) if op in ("nearest", "coverage") else op
@@ -85,7 +85,7 @@ def test_ballista_standalone_on_1_2(op, real_dirs, real_expected, tmp_path):
 @pytest.fixture(scope="module")
 def cluster(tmp_path_factory):
     c = _start_cluster(
-        tmp_path_factory.mktemp("plan2_dane_klaster"),
+        tmp_path_factory.mktemp("real_data_cluster"),
         [("executor_1", []), ("executor_2", [])],
     )
     yield c

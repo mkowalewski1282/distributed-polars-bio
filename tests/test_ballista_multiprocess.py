@@ -181,7 +181,7 @@ def _start_cluster(log_dir: Path, executors: list[tuple[str, list[str]]]) -> Clu
 @pytest.fixture(scope="module")
 def cluster(tmp_path_factory):
     c = _start_cluster(
-        tmp_path_factory.mktemp("p0_cluster"),
+        tmp_path_factory.mktemp("multiprocess_cluster"),
         [("executor_1", []), ("executor_2", [])],
     )
     yield c
@@ -390,7 +390,7 @@ def _write_evidence(op: str, pids: dict[str, int], new_jobs: dict[str, dict[str,
         },
     }
     OUTPUT_DIR.mkdir(exist_ok=True)
-    (OUTPUT_DIR / f"p0_evidence_{op}.json").write_text(
+    (OUTPUT_DIR / f"evidence_{op}.json").write_text(
         json.dumps(evidence, indent=2, ensure_ascii=False)
     )
 
