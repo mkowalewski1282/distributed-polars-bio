@@ -42,15 +42,20 @@ use prost::Message;
 
 use crate::codec_io::{has_magic, read_bytes, read_u32, write_bytes, write_u32};
 
+/// `algorithm`/`low_memory` NIE mają publicznych getterów na IntervalJoinExec
+/// (sprawdzone empirycznie) — nie da się ich odczytać z istniejącej instancji.
+/// Ale nie trzeba: to wartości pochodzące z BioConfig sesji (interval_join_algorithm/
+/// interval_join_low_memory, `runner::bio_session_config`), a SCHEDULER i EXECUTOR mają
+/// identyczną konfigurację — więc ZNAMY je z góry, tak samo jak sesja, która zbudowała
+/// ten węzeł. Jedno miejsce tego założenia dla kodeka i dla przebudowy węzła przy
+/// planowaniu (`dist_provider::collect_left_at_planning`).
+pub(crate) const INTERVAL_JOIN_ALGORITHM: Algorithm = Algorithm::Coitrees;
+pub(crate) const INTERVAL_JOIN_LOW_MEMORY: bool = false;
+
 #[derive(Debug)]
 pub struct IntervalJoinPhysicalCodec {
     inner: Arc<dyn PhysicalExtensionCodec>,
-    // `algorithm`/`low_memory` NIE mają publicznych getterów na IntervalJoinExec
-    // (sprawdzone empirycznie) — nie da się ich odczytać z istniejącej instancji.
-    // Ale nie trzeba: to wartości pochodzące z BioConfig sesji (interval_join_algorithm/
-    // interval_join_low_memory), a SCHEDULER i EXECUTOR mają identyczną konfigurację
-    // (patrz main.rs) — więc kodek po prostu ZNA je z góry, tak samo jak sesja, która
-    // zbudowała ten węzeł, zamiast je odczytywać.
+    // Patrz `INTERVAL_JOIN_ALGORITHM`/`INTERVAL_JOIN_LOW_MEMORY`.
     algorithm: Algorithm,
     low_memory: bool,
 }
@@ -59,8 +64,8 @@ impl Default for IntervalJoinPhysicalCodec {
     fn default() -> Self {
         Self {
             inner: datafusion::prelude::SessionConfig::new().ballista_physical_extension_codec(),
-            algorithm: Algorithm::Coitrees,
-            low_memory: false,
+            algorithm: INTERVAL_JOIN_ALGORITHM,
+            low_memory: INTERVAL_JOIN_LOW_MEMORY,
         }
     }
 }
@@ -261,28 +266,18 @@ impl PhysicalExtensionCodec for IntervalJoinPhysicalCodec {
             DataFusionError::Internal("IntervalJoinPhysicalCodec: truncated (partition_mode)".into())
         })?;
         pos += 1;
-        let decoded_partition_mode = byte_to_partition_mode(partition_mode_b)?;
-        // Znalezisko empiryczne: węzeł, jaki tworzy IntervalJoinPhysicalOptimizationRule,
-        // ma partition_mode=Auto (bo with_config_rt_bio() usuwa standardową regułę
-        // join_selection, która normalnie rozstrzyga Auto -> Partitioned/CollectLeft
-        // przed wykonaniem). Lokalnie (jeden proces) to nie przeszkadza, ale prawdziwy,
-        // rozproszony executor Ballisty odrzuca "Auto" w execute() błędem
-        // "unsupported PartitionMode Auto".
-        //
-        // Zamieniamy na CollectLeft, NIE na Partitioned (plan 2): przy Auto węzeł
-        // wymaga rozkładu „nieokreślonego”, więc planista nie wstawił ani
-        // repartycji po chromosomie, ani scalenia lewej strony. Partitioned
-        // połączyłby wtedy partycję i lewej tabeli tylko z partycją i prawej —
-        // przy danych z kilku plików ginęły pary (wykryte na zbiorze Parquet,
-        // tests/test_ballista_parquet.py). CollectLeft buduje indeks z CAŁEJ lewej
-        // strony (collect_left_input scala wszystkie jej partycje) w każdym
-        // zadaniu, a zadania dzielą się prawą stroną — wynik poprawny przy
-        // dowolnym partycjonowaniu wejścia.
-        let partition_mode = if decoded_partition_mode == PartitionMode::Auto {
-            PartitionMode::CollectLeft
-        } else {
-            decoded_partition_mode
-        };
+        // Tryb odtwarzamy dokładnie taki, jaki zaplanował scheduler. Węzeł z
+        // IntervalJoinPhysicalOptimizationRule ma tryb Auto (with_config_rt_bio() usuwa
+        // regułę join_selection), a executor odrzuca Auto w execute(). Dawniej (Faza A.5:
+        // Partitioned, plan 2: CollectLeft) koder zamieniał Auto dopiero tutaj, przy
+        // dekodowaniu. W Ballistcie 55 to za późno: scheduler zawęża liście planu do
+        // partycji zadania (restrict_plan_to_partitions), a przy Auto — także lewą stronę,
+        // więc tryb CollectLeft ustawiony tutaj indeksowałby tylko wycinek lewej tabeli i
+        // gubił pary bez żadnego błędu. Dlatego Auto → CollectLeft rozstrzyga się teraz przy
+        // planowaniu (`dist_provider::collect_left_at_planning`), a tu zamiany NIE ma:
+        // gdyby Auto jednak dotarło do executora, IntervalJoinExec::execute() odrzuci je
+        // błędem „unsupported PartitionMode Auto” — głośno, zamiast liczyć z wycinka.
+        let partition_mode = byte_to_partition_mode(partition_mode_b)?;
 
         let null_equals_null = *buf.get(pos).ok_or_else(|| {
             DataFusionError::Internal("IntervalJoinPhysicalCodec: truncated (null_equals_null)".into())

@@ -180,8 +180,9 @@ rozstrzyga `Auto` → `Partitioned`/`CollectLeft` przed wykonaniem) i zastępuje
 executor Ballisty odrzuca `Auto` w `execute()`. Poprawka: kodek wymusza `Partitioned` przy
 odtwarzaniu węzła (dane i tak są partycjonowane wg klucza joina między executory — to
 jedyny sensowny tryb w tym kontekście). **Nieaktualne od planu 2:** założenie o partycjonowaniu
-okazało się błędne — przy danych z kilku plików `Partitioned` gubił pary; koder zamienia teraz
-`Auto` na `CollectLeft` (patrz „Plan 2 → Znaleziska”).
+okazało się błędne — przy danych z kilku plików `Partitioned` gubił pary; koder zamieniał
+`Auto` na `CollectLeft` (patrz „Plan 2 → Znaleziska”). **Od Ballisty 55** zamiana odbywa się
+przy planowaniu w schedulerze, a koder odtwarza tryb bez zmian (sekcja „Ballista 55”).
 
 ### Zmiana architektoniczna: powrót do sesji bio-owych
 
@@ -399,7 +400,9 @@ o typach prawdziwych danych, z przypadkami brzegowymi; `tests/test_real_data.py`
   (jedna partycja). Zgodne z hipotezą P3 (indeks budowany w każdym zadaniu). Tryb jest
   zmieniany dopiero przy dekodowaniu na executorze, więc plan schedulera i `EXPLAIN ANALYZE`
   nadal pokazują `mode=Auto` bez scalenia lewej strony — a w rzeczywistości każde zadanie
-  czyta i indeksuje całą lewą tabelę (ważne przy analizie metryk w planie 3).
+  czyta i indeksuje całą lewą tabelę (ważne przy analizie metryk w planie 3). **Od Ballisty
+  55** tryb jest rozstrzygany przy planowaniu, a plan pokazuje `mode=CollectLeft` i scalenie
+  lewej strony (sekcja „Ballista 55”).
 - **Konwencja stron w `nearest`** (jak w coverage): `dist_nearest(lewa, prawa)` zwraca
   wiersz na każdy wiersz PRAWEJ tabeli z najbliższym sąsiadem z lewej (lewa jest
   indeksowana i broadcastowana), a `pb.nearest(df1, df2)` — wiersz na każdy wiersz df1.
@@ -619,16 +622,16 @@ binarki Ballisty 53 (release z 12.10.2026) na tych samych danych.
 
 | Operacja | Ballista 53 (planista statyczny) | Ballista 55 z AQE | Strategia |
 |---|---|---|---|
-| overlap | 1 etap, `IntervalJoinExec mode=Auto` nad dwoma skanami (każde zadanie indeksuje całą lewą stronę) | to samo | ta sama |
+| overlap | 1 etap, `IntervalJoinExec mode=Auto` nad dwoma skanami (każde zadanie czyta pliki całej lewej strony i ją indeksuje) | 2 etapy: lewa strona skan → shuffle, złączenie `IntervalJoinExec mode=CollectLeft` ← `CoalescePartitionsExec` ← `ShuffleReaderExec` + skan prawej (każde zadanie indeksuje całą lewą stronę) | ta sama (`CollectLeft`, cała lewa strona w każdym zadaniu); dodatkowy etap to skutek naprawy niżej, nie AQE |
 | merge | etap źródłowy `SortShuffleWriterExec Hash([contig@0], 4)` → `MergeExec` ← `ShuffleReaderExec Hash([contig@0], 4)` | to samo | ta sama (podział po chromosomie) |
 | subtract | dwa etapy źródłowe `Hash([contig@0], 4)` → `SubtractExec` ← 2 × `ShuffleReaderExec Hash` | to samo | ta sama |
 | nearest | 1 etap, `NearestExec` nad skanem prawej strony, lewa w ładunku planu | to samo | ta sama (nasz broadcast) |
 | coverage | 1 etap, `DistCoverageExec broadcast_rows=438694` nad skanem prawej strony | to samo | ta sama (nasz broadcast) |
 
 Ani w trybie zdalnym, ani w standalone AQE nie zmienił strategii, nie usunął rozproszenia ani
-broadcastu; dekodowanie naszych węzłów w executorach działa (merge, subtract, nearest, coverage —
-wyniki zgodne z polars-bio; overlap — patrz znalezisko otwarte niżej, niezależne od AQE). Zmiany
-dotyczą postaci planu:
+broadcastu; dekodowanie naszych węzłów w executorach działa (wszystkie pięć operacji — wyniki
+zgodne z polars-bio; overlap po naprawie opisanej niżej, której potrzeba nie wynikała z AQE).
+Zmiany dotyczą postaci planu:
 
 - AQE numeruje etapy od 0 (planista statyczny 55 — jak 53 — od 1);
 - końcowe scalanie posortowanego wyniku (`ORDER BY` w `dist_ops`) czyta
@@ -638,13 +641,16 @@ dotyczą postaci planu:
   UnknownPartitioning(n)` zamiast `None`, `ShuffleReaderExec: upstream_stage: N, partitioning: …`.
 
 Kontrola z AQE wyłączonym na Ballistcie 55: te same strategie, etapy od 1, `ShuffleReaderExec`
-zamiast `RangeShuffleReaderExec`. **Decyzja: AQE zostaje włączony** (ustawiony jawnie), asercje
-testów dowodów zaktualizowane do nowej postaci planu (`upstream_stage` w czytniku hash).
+zamiast `RangeShuffleReaderExec`; overlap po naprawie — ta sama postać co z AQE (etap lewej
+strony 1, złączenie 2, te same liczby wierszy). **Decyzja: AQE zostaje włączony** (ustawiony
+jawnie), asercje testów dowodów zaktualizowane do nowej postaci planu (`upstream_stage`
+w czytniku hash, `mode=CollectLeft` i osobny etap lewej strony w overlapie).
 
 Liczba zadań na executor (para 1-2; overlap / nearest / coverage / merge / subtract):
 Ballista 53 — 2/2, 2/2, 2/2, 4/4, 6/6; Ballista 55 przy domyślnym `max_partitions_per_task`
 (0) — 1/1, 1/1, 1/1, 2/2, 3/3 (każde zadanie z 2 partycjami); z wartością 1 — jak w 53
-(subtract bywa 7/5: dwa etapy źródłowe biegną równolegle). Log `bind_one` schedulera:
+(subtract bywa 7/5: dwa etapy źródłowe biegną równolegle), poza overlapem: 4/4 po naprawie
+niżej (etap lewej strony i etap złączenia, po 4 zadania). Log `bind_one` schedulera:
 `slice_len=1` dla każdego zadania.
 
 ### Zmiany w Ballistcie 54–55 a nasze dowody
@@ -683,32 +689,59 @@ Ballista 53 — 2/2, 2/2, 2/2, 4/4, 6/6; Ballista 55 przy domyślnym `max_partit
    i coverage liczą się na executorach z wynikami zgodnymi z polars-bio (P0, dane rzeczywiste).
 4. Wyrażenia `IntervalJoinExec` kodowane domyślnym konwerterem wewnątrz naszego ładunku — overlap
    z `alg=Coitrees` liczy się na executorze; wynik zgodny z wyrocznią przy jednej partycji
-   wejścia (CSV w `dist_ops`), przy kilku partycjach — znalezisko otwarte niżej (nie koder).
+   wejścia (CSV w `dist_ops`), przy kilku partycjach — po naprawie niżej (przyczyną nie był
+   koder wyrażeń).
 5. Węzły vendora żądają `Distribution::KeyPartitioned` — w planach nadal `Hash([chrom@0], 4)`
    (CSV) i `Hash([contig@0], 4)` (Parquet), żadnego `Range`.
 
-### Znalezisko otwarte: overlap gubi pary przy kilku partycjach (Ballista 55)
+### Znalezisko (naprawione): overlap gubił pary przy kilku partycjach (Ballista 55)
 
-Scheduler 55 przed wysłaniem zadania zawęża liście planu do partycji zadania
+**Przyczyna.** Scheduler 55 przed wysłaniem zadania zawęża liście planu (grupy plików skanu,
+lokalizacje czytników shuffle) do partycji tego zadania
 (`ballista-scheduler/src/state/task_builder.rs`, `restrict_plan_to_partitions`), chyba że liść
 leży pod węzłem, który całe wejście scala (`CoalescePartitionsExec`,
-`SortPreservingMergeExec` albo wejście z wymaganiem `SinglePartition`). `IntervalJoinExec`
-w trybie `Auto` deklaruje dla obu wejść rozkład nieokreślony, więc lewa (budowana) strona też
-jest zawężana — a nasz koder zamienia `Auto` na `CollectLeft` dopiero przy dekodowaniu
-w executorze, gdy zadanie ma już tylko swój wycinek lewej tabeli. Każde zadanie indeksuje więc
-1/(liczba zadań) lewej strony zamiast całej. Para 1-2 (4 partycje, 2 executory po 2 sloty):
-Ballista 53 — `output_rows` 54,25 tys., `build_input_rows` 1,75 mln (= 4 × 438,7 tys.);
-Ballista 55 przy `max_partitions_per_task` 0 — 28,95 tys. (2 zadania po 2 partycje), przy 1 —
-14,44 tys.; `build_input_rows` 438,7 tys. łącznie. AQE nie ma wpływu (z wyłączonym to samo).
-Na zbiorze testowym Parquet błąd ujawnia się przy jednej partycji na zadanie
-(`test_ballista_parquet.py` i `test_bench_client_protocol.py`, overlap); dane CSV w `dist_ops`
-mają jedną partycję, więc ich nie dotyczy. Pozostałe operacje są poprawne: `NearestExec`
+`SortPreservingMergeExec` albo wejście z wymaganiem `SinglePartition`). Ballista 53 wysyłała
+każdemu zadaniu cały plan etapu. `IntervalJoinExec` powstaje w trybie `Auto`, który deklaruje
+dla obu wejść rozkład nieokreślony, więc w 55 zawężana była też lewa (budowana) strona — a koder
+zamieniał `Auto` na `CollectLeft` dopiero przy dekodowaniu w executorze, gdy zadanie miało już
+tylko swój wycinek lewej tabeli. Każde zadanie indeksowało 1/(liczba zadań) lewej strony zamiast
+całej, bez żadnego błędu. Para 1-2 (4 partycje, 2 executory po 2 sloty): `output_rows`
+złączenia 28,95 tys. przy domyślnym `max_partitions_per_task` (2 zadania po 2 partycje)
+i 14,44 tys. przy 1, zamiast 54,25 tys.; `build_input_rows` łącznie 438,7 tys. zamiast 1,75 mln.
+AQE nie miał wpływu (z wyłączonym to samo). Pozostałe operacje nie były dotknięte: `NearestExec`
 i `DistCoverageExec` niosą lewą tabelę w węźle (nie jako dziecko), a `MergeExec`
 i `SubtractExec` czytają wyrównane partycje shuffle po chromosomie.
 
-Sprawdzona (prototyp, niezatwierdzony) naprawa: rozstrzygnąć `Auto` → `CollectLeft` już
-w schedulerze (np. w `DistBioProvider::scan` dla overlap). Wtedy planista wstawia
-`CoalescePartitionsExec` nad lewą stroną, scheduler jej nie zawęża, a wynik wraca do 54,25 tys.
-(`build_input_rows` 1,75 mln). Koszt: AQE robi z lewej strony osobny etap (skan → shuffle,
-każde zadanie złączenia czyta całość przez `ShuffleReaderExec`), zamiast czytać pliki w każdym
-zadaniu jak w 53. Decyzja (zmiana logiki operacji) — poza zakresem tego kroku.
+**Naprawa.** `Auto` → `CollectLeft` rozstrzygane jest przy planowaniu fizycznym w schedulerze
+(`DistBioProvider::scan` → `collect_left_at_planning`, `src/dist_provider.rs`): węzeł jest
+przebudowywany z tymi samymi parametrami i tym samym algorytmem (COITrees; algorytm i tryb
+pamięci z tych samych stałych co koder, bo węzeł nie ma do nich getterów). `CollectLeft` żąda
+dla lewej strony `SinglePartition`, więc planista wstawia nad nią `CoalescePartitionsExec`,
+którego scheduler nie zawęża. Algorytm i tryb są te same co wcześniej, zmienia się tylko moment
+ich ustalenia (adaptacja portu do Ballisty 55, nie zmiana logiki operacji) — strategia
+„`CollectLeft` z całą lewą stroną w każdym zadaniu” zostaje. Koder nie zamienia już trybu,
+tylko odtwarza zaplanowany; gdyby `Auto` jednak dotarło do executora, `IntervalJoinExec::execute()`
+odrzuci je błędem, zamiast liczyć z wycinka lewej strony.
+
+**Skutek: dodatkowy etap z shuffle lewej strony.** Przy kilku partycjach lewa strona staje się
+osobnym etapem (skan → `ShuffleWriterExec`), a każde zadanie złączenia czyta ją w całości przez
+`CoalescePartitionsExec` ← `ShuffleReaderExec`; prawa strona jest skanowana bezpośrednio,
+partycja na zadanie. Z AQE i bez niego plan ma tę samą postać (różni się tylko numeracja
+etapów). Para 1-2, klaster 2 executorów po 2 sloty:
+
+| | Ballista 53 | Ballista 55 po naprawie |
+|---|---|---|
+| etapy (zadania) | 1 (4) | 2 (4 + 4) |
+| lewa strona w zadaniu złączenia | każde zadanie skanuje wszystkie pliki Parquet lewej strony | lewa strona skanowana raz; każde zadanie pobiera ją całą z shuffle (łącznie 21,1 MB, ≈ 5,3 MB na zadanie) |
+| `IntervalJoinExec`: `output_rows` / `build_input_rows` | 54,25 tys. / 1,75 mln | 54,25 tys. / 1,75 mln (= 4 × 438,7 tys.) |
+| `shuffle_bytes` (przyrost katalogów roboczych executorów) | 1 214 816 B (tylko wynik etapu końcowego; smoke 10.10.2026, N = 2) | 6 237 504 B (wynik i lewa strona, ≈ 5 MB więcej) |
+
+Wynik (54 246 wierszy i suma kontrolna) zgodny z polars-bio. W seriach 55 `shuffle_bytes`
+overlapu obejmuje więc także lewą tabelę i — jak `broadcast_bytes` (wyżej) — nie jest wprost
+porównywalny z seriami 53; czas overlapu zawiera dodatkowy etap. Dane CSV w `dist_ops` mają po
+jednej partycji, więc lewa strona od razu spełnia `SinglePartition` i plan zostaje jednoetapowy
+(`mode=CollectLeft`). Testy: `test_overlap_indexes_the_whole_left_side_in_every_task`
+(`tests/test_ballista_distribution_evidence.py`, zbiór testowy Parquet z 2 partycjami) sprawdza
+postać planu i `build_input_rows` = liczba zadań złączenia × liczba wierszy lewej strony;
+poprawność — testy porównujące overlap z polars-bio (standalone i klaster, zbiór testowy i para
+1-2), bez zmian w oczekiwaniach.

@@ -18,18 +18,22 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::catalog::Session;
+use datafusion::common::tree_node::{Transformed, TransformedResult, TreeNode};
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result};
 use datafusion::logical_expr::Expr;
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion::physical_plan::joins::PartitionMode;
 use datafusion::prelude::{CsvReadOptions, ParquetReadOptions, SessionContext as DFSessionContext};
 use datafusion_bio_function_ranges::{
-    BioSessionExt, FilterOp, MergeProvider, NearestProvider, OverlapProvider, SubtractProvider,
+    BioSessionExt, FilterOp, IntervalJoinExec, MergeProvider, NearestProvider, OverlapProvider,
+    SubtractProvider,
 };
 
 use crate::broadcast::check_broadcast_fits;
 use crate::coverage_node::DistCoverageProvider;
 use crate::dist_payload::{DistPayload, TableRef};
+use crate::physical_codec::{INTERVAL_JOIN_ALGORITHM, INTERVAL_JOIN_LOW_MEMORY};
 use crate::runner::{bio_session_config, grpc_max_message_bytes};
 
 pub struct DistBioProvider {
@@ -216,6 +220,49 @@ fn is_parquet_source(path: &Path) -> bool {
     }
 }
 
+/// Rozstrzyga tryb `IntervalJoinExec` (overlap) z `Auto` na `CollectLeft` już przy planowaniu
+/// fizycznym w schedulerze.
+///
+/// Węzeł z `IntervalJoinPhysicalOptimizationRule` ma tryb `Auto` (`with_config_rt_bio()` usuwa
+/// regułę `join_selection`), a w nim oba wejścia mają rozkład nieokreślony. Scheduler Ballisty 55
+/// przed wysłaniem zadania zawęża liście planu do partycji tego zadania
+/// (`restrict_plan_to_partitions`), oszczędzając tylko wejścia, które muszą być scalone — przy
+/// `Auto` zawężał więc i lewą (budowaną) stronę, a koder, który zamieniał `Auto` na `CollectLeft`
+/// dopiero przy dekodowaniu, budował indeks z wycinka lewej tabeli (gubione pary). Ballista 53
+/// wysyłała każdemu zadaniu cały plan etapu, więc tam to wystarczało.
+///
+/// `CollectLeft` żąda dla lewej strony `SinglePartition`: planista wstawia nad nią
+/// `CoalescePartitionsExec`, którego scheduler nie zawęża, a każde zadanie złączenia indeksuje
+/// całą lewą stronę i dzieli się z innymi prawą — ten sam algorytm (COITrees) i ten sam tryb co
+/// dotąd, tylko ustalony wcześniej. Koszt: przy kilku partycjach lewa strona staje się osobnym
+/// etapem (skan → shuffle), czytanym w całości przez każde zadanie złączenia. Algorytm i tryb
+/// pamięci przyjmujemy z tych samych stałych co koder (brak getterów na węźle).
+fn collect_left_at_planning(plan: Arc<dyn ExecutionPlan>) -> Result<Arc<dyn ExecutionPlan>> {
+    plan.transform_up(|node| {
+        let Some(join) = node.downcast_ref::<IntervalJoinExec>() else {
+            return Ok(Transformed::no(node));
+        };
+        if join.mode != PartitionMode::Auto {
+            return Ok(Transformed::no(node));
+        }
+        let resolved: Arc<dyn ExecutionPlan> = Arc::new(IntervalJoinExec::try_new(
+            Arc::clone(&join.left),
+            Arc::clone(&join.right),
+            join.on.clone(),
+            join.filter.clone(),
+            join.intervals.clone(),
+            &join.join_type,
+            join.projection.clone(),
+            PartitionMode::CollectLeft,
+            join.null_equals_null,
+            INTERVAL_JOIN_ALGORITHM,
+            INTERVAL_JOIN_LOW_MEMORY,
+        )?);
+        Ok(Transformed::yes(resolved))
+    })
+    .data()
+}
+
 #[async_trait]
 impl TableProvider for DistBioProvider {
     fn schema(&self) -> SchemaRef {
@@ -234,6 +281,7 @@ impl TableProvider for DistBioProvider {
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         let plan = self.inner.scan(state, projection, filters, limit).await?;
+        let plan = collect_left_at_planning(plan)?;
         // Strażnik broadcastu (specyfikacja 3b-2, 6.2): planowanie fizyczne odbywa się
         // w schedulerze, więc błąd dociera do klienta jako błąd zapytania, zamiast zawiesić je
         // przy wysyłce zadań do executorów.

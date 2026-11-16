@@ -38,6 +38,22 @@ STAGE_RE = re.compile(r"SuccessfulStage\[stage_id=(\d+), partitions=(\d+)\]")
 HASH_READER_RE = re.compile(r"ShuffleReaderExec: upstream_stage: \d+, partitioning: Hash\(\[chrom")
 
 
+def _run_client(args: list[str], timeout: int) -> subprocess.CompletedProcess:
+    """Uruchamia `bench_client` (tryb standalone); brak binarki to błąd, nie pominięcie."""
+    if not CLIENT_BINARY.exists():
+        pytest.fail(
+            f"missing binary {CLIENT_BINARY.name} - build it: "
+            "cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bins"
+        )
+    return subprocess.run(
+        [str(CLIENT_BINARY), *args],
+        cwd=BALLISTA_DIR,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
 def _explain(op: str) -> tuple[str, list[tuple[int, int]]]:
     """Zwraca (surowy tekst planu, [(stage_id, liczba_partycji), ...])."""
     path = OUTPUT_DIR / f"dist_{op}_explain.txt"
@@ -253,13 +269,18 @@ def test_overlap_crosses_serialization_boundary():
 
     Ballista 53 dzieliła ten plan w standalone na dwa etapy (osobny etap scalania
     posortowanego wyniku, czytany przez ShuffleReaderExec); Ballista 55 z AQE sortuje
-    jedyną partycję w tym samym etapie, więc etap jest jeden.
+    jedyną partycję w tym samym etapie, więc etap jest jeden. Dane CSV mają po jednej
+    partycji, więc lewa strona spełnia już `SinglePartition` trybu CollectLeft i nie
+    dostaje osobnego etapu (por. `test_overlap_indexes_the_whole_left_side_in_every_task`).
+
+    Tryb złączenia to CollectLeft, rozstrzygnięty przy planowaniu
+    (`dist_provider::collect_left_at_planning`), a nie Auto zamieniane dopiero w koderze.
     """
     txt, stages = _explain("overlap")
     assert len(stages) >= 1, txt
     first_stage = txt[txt.index("SuccessfulStage"):]
     assert "ShuffleWriterExec" in first_stage, txt
-    assert "IntervalJoinExec" in first_stage, txt
+    assert "IntervalJoinExec: mode=CollectLeft" in first_stage, txt
     assert "alg=Coitrees" in first_stage, f"COITrees are not used on the executor side:\n{txt}"
 
 
@@ -268,16 +289,14 @@ def test_overlap_has_no_hash_partitioned_parallelism():
     ASERCJA DOKUMENTUJĄCA ZNALEZISKO (Faza H), nie życzenie.
 
     Overlap — w odróżnieniu od merge — NIE uzyskuje równoległości
-    hash-partycjonowanej. Przyczyna jest w vendorze: IntervalJoinExec powstaje
-    z `mode = PartitionMode::Auto`, a `required_input_distribution()` zwraca dla
-    trybu Auto `UnspecifiedDistribution` dla obu wejść — więc hash-repartycja
-    nigdy nie jest zażądana i EnforceDistribution nie ma czego wstawić.
-
-    Mode zostaje Auto, bo `with_config_rt_bio()` usuwa regułę `join_selection`,
-    która normalnie rozstrzygnęłaby Auto -> Partitioned/CollectLeft. To ten sam
-    korzeń co bug naprawiony w Fazie A.5 (tam objawiał się przy WYKONANIU:
-    "unsupported PartitionMode Auto in execute()"), tylko widziany o etap
-    wcześniej — przy PLANOWANIU.
+    hash-partycjonowanej. IntervalJoinExec powstaje w vendorze z
+    `mode = PartitionMode::Auto` (`with_config_rt_bio()` usuwa regułę `join_selection`,
+    która normalnie rozstrzygnęłaby Auto -> Partitioned/CollectLeft); my rozstrzygamy go
+    przy planowaniu na CollectLeft (`dist_provider::collect_left_at_planning`, Ballista 55).
+    `required_input_distribution()` zwraca wtedy `SinglePartition` dla lewej strony
+    i `UnspecifiedDistribution` dla prawej — hash-repartycja nigdy nie jest zażądana.
+    Równoległość overlapu bierze się z partycji prawej strony, a każde zadanie indeksuje
+    całą lewą (na CSV obie strony mają po jednej partycji, stąd jedna partycja w etapie).
 
     Gdy ten test zacznie padać, to znaczy że ograniczenie zostało zdjęte
     (np. własną regułą optymalizatora wymuszającą Partitioned) — wtedy należy
@@ -291,6 +310,55 @@ def test_overlap_has_no_hash_partitioned_parallelism():
         "compared with the documented state. Update this test and OPIS.md.\n"
         f"{txt}"
     )
+
+
+def _metric(block: str, name: str) -> int:
+    """Wartość licznika z metryk planu; zbiór testowy jest mały, więc liczby są całkowite
+    (bez skrótów typu `1.75 M`)."""
+    found = re.findall(rf"\b{name}=(\d+)(?=[,\]])", block)
+    assert len(found) == 1, f"expected exactly one plain integer {name}, found {found}:\n{block}"
+    return int(found[0])
+
+
+def test_overlap_indexes_the_whole_left_side_in_every_task(parquet_dirs, tmp_path):
+    """
+    Overlap na wejściu z kilku partycji (zbiór testowy Parquet, Ballista 55): każde zadanie
+    złączenia indeksuje CAŁĄ lewą stronę.
+
+    Scheduler 55 zawęża liście planu do partycji zadania (`restrict_plan_to_partitions`),
+    z wyjątkiem wejść, które muszą być scalone. Tryb CollectLeft, rozstrzygnięty przy
+    planowaniu, żąda dla lewej strony `SinglePartition`: lewa strona jest osobnym etapem
+    (skan → shuffle), a złączenie czyta ją przez `CoalescePartitionsExec` ←
+    `ShuffleReaderExec` w całości. Dowód w metrykach: `build_input_rows` (suma po zadaniach)
+    = liczba zadań złączenia × liczba wierszy lewej strony. Przy trybie Auto zamienianym
+    dopiero w koderze suma była równa liczbie wierszy lewej strony (każde zadanie miało
+    tylko swój wycinek), a overlap gubił pary.
+    """
+    left, right = parquet_dirs
+    target = tmp_path / "overlap_explain.txt"
+    r = _run_client(
+        ["--op", "overlap", "--left", str(left), "--right", str(right),
+         "--explain-analyze", str(target)],
+        timeout=180,
+    )
+    assert r.returncode == 0, r.stderr[-3000:]
+    txt = target.read_text()
+    stages = [(int(a), int(b)) for a, b in STAGE_RE.findall(txt)]
+    assert len(stages) == 2, f"expected the left-side stage and the join stage:\n{txt}"
+    (left_stage, _), (_, join_tasks) = stages
+    left_block, join_block = txt.split("=========SuccessfulStage")[1:]
+    assert "IntervalJoinExec" not in left_block, txt
+    assert join_tasks >= 2, f"the join stage is not parallel:\n{txt}"
+
+    join_lines = [line.strip() for line in join_block.splitlines()]
+    at = next(i for i, line in enumerate(join_lines) if line.startswith("IntervalJoinExec"))
+    assert join_lines[at].startswith("IntervalJoinExec: mode=CollectLeft"), txt
+    assert join_lines[at + 1].startswith("CoalescePartitionsExec"), txt
+    assert join_lines[at + 2].startswith(f"ShuffleReaderExec: upstream_stage: {left_stage},"), txt
+
+    left_rows = _metric(left_block.splitlines()[1], "output_rows")
+    assert left_rows > 0, txt
+    assert _metric(join_lines[at], "build_input_rows") == join_tasks * left_rows, txt
 
 
 # --------------------------------------------------------------------------
@@ -308,18 +376,7 @@ def _declared(key: str) -> str:
 
 def _version_info() -> dict:
     """Ustawienia Ballisty odczytane z konfiguracji klastra (`bench_client --version-info`)."""
-    if not CLIENT_BINARY.exists():
-        pytest.fail(
-            f"missing binary {CLIENT_BINARY.name} - build it: "
-            "cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bins"
-        )
-    r = subprocess.run(
-        [str(CLIENT_BINARY), "--version-info"],
-        cwd=BALLISTA_DIR,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    r = _run_client(["--version-info"], timeout=60)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
 
