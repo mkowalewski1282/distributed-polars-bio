@@ -1,23 +1,24 @@
-"""Runner polars-bio (specyfikacja 8.1, 8.3): jeden scenariusz w świeżym procesie.
+"""polars-bio runner: one scenario in a fresh process.
 
-polars-bio czyta pliki Parquet sam — ścieżka jako wzorzec `katalog/*.parquet` (gołego
-katalogu nie przyjmuje) — a wynik dostaje jako `datafusion.DataFrame` i konsumuje
-strumieniowo (`execute_stream`).
+polars-bio reads the Parquet files itself — the path is given as a `directory/*.parquet`
+pattern (a bare directory is not accepted) — and returns the result as a
+`datafusion.DataFrame`, which is consumed as a stream (`execute_stream`).
 
-Czas: od wywołania operacji do odebrania ostatniej partii; bez startu procesu, importów
-i ustawień. Partie są trzymane w pamięci, a suma kontrolna liczona PO zatrzymaniu zegara
-(specyfikacja 3b-2, 4.1) — jej czas podaje informacyjnie `extra.checksum_s`. Szczyt pamięci jest odczytywany tuż po
-zatrzymaniu zegara, przed sumą kontrolną (zawiera trzymany wynik, bez buforów sumy).
-`phases.first_batch_s`: czas do pierwszej partii (brak partii → równy t_total_s).
-Wątki: `--threads T` → `target_partitions = T` (pb.POLARS_BIO_MAX_THREADS; domyślnie
-polars-bio liczy na 1 partycji). Orkiestrator ustawia też POLARS_MAX_THREADS = T
-i przypina proces do rdzeni węzłów (taskset).
+Time: from calling the operation to receiving the last batch; excluding process startup,
+imports and settings. The batches are kept in memory and the checksum is computed AFTER the
+clock stops — its time is reported for information in `extra.checksum_s`. Peak memory is read
+right after the clock stops, before the checksum (it includes the held result, without the
+checksum buffers).
+`phases.first_batch_s`: time to the first batch (no batches → equal to t_total_s).
+Threads: `--threads T` → `target_partitions = T` (pb.POLARS_BIO_MAX_THREADS; by default
+polars-bio computes on 1 partition). The orchestrator also sets POLARS_MAX_THREADS = T and
+pins the process (taskset) to the CPUs chosen for parallelism P.
 
-UWAGA (sonda 01.10.2026): przy target_partitions > 1 polars-bio 0.28 liczy merge
-i subtract osobno w każdej partycji — wynik jest błędny, gdy przedziały chromosomu leżą
-w różnych plikach (znany błąd polars-bio #372, naprawiony w 0.29+, która wymaga Pythona
-≥ 3.11). Wynik wzorcowy serii liczy się dlatego na 1 partycji, a nieważność takich przebiegów
-wykrywa suma kontrolna.
+NOTE (probe of 2026-10-01): with target_partitions > 1, polars-bio 0.28 computes merge and
+subtract separately in each partition — the result is wrong when a chromosome's intervals lie
+in different files (the known polars-bio bug #372, fixed in 0.29+, which requires Python
+≥ 3.11). The series' reference result is therefore computed on 1 partition, and the checksum
+detects the invalidity of such runs.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ PROG = "polars_bio_runner"
 
 
 def source(path: Path) -> str:
-    """Katalog plików Parquet → wzorzec `katalog/*.parquet`; plik → bez zmian."""
+    """A directory of Parquet files → the pattern `directory/*.parquet`; a file → unchanged."""
     return str(path / "*.parquet") if path.is_dir() else str(path)
 
 
@@ -44,8 +45,8 @@ def run(op: str, left: Path, right: Path | None, cols: tuple[str, str, str], thr
     require_paths(left, right)
     import polars_bio as pb
 
-    # Ścieżki nie niosą metadanych układu współrzędnych (w 0.37 zero_based przyjmują tylko scan_*/read_*,
-    # a te nie dają wyniku datafusion.DataFrame), więc ostrzeżenie zostaje wyciszone; dane databio-8p są 0-based.
+    # Paths carry no coordinate-system metadata (in 0.37 only scan_*/read_* accept zero_based, and
+    # those do not return a datafusion.DataFrame), so the warning is silenced; the databio-8p data is 0-based.
     warnings.filterwarnings("ignore", message="Coordinate system metadata is missing")
     pb.set_option("datafusion.bio.coordinate_system_zero_based", True)
     pb.set_option(pb.POLARS_BIO_MAX_THREADS, threads)
@@ -65,7 +66,7 @@ def run(op: str, left: Path, right: Path | None, cols: tuple[str, str, str], thr
         if first_batch_s is None:
             first_batch_s = time.perf_counter() - t0
     t_total_s = time.perf_counter() - t0
-    peak_rss_bytes = peak_rss()  # przed sumą kontrolną: jej bufory nie zawyżają szczytu
+    peak_rss_bytes = peak_rss()  # before the checksum: its buffers do not inflate the peak
     t = time.perf_counter()
     checksum = Checksum(op)
     checksum.update_all(normalize_arrow(op, b, cols) for b in batches)

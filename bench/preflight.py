@@ -1,9 +1,10 @@
-"""Sprawdzenia przed pierwszym pomiarem serii (specyfikacja 3; 3b-2, pozycja 4 z przeglądu 3a;
-etap 4, 5.2): topologia CPU daje się odczytać, poza rdzeniem systemowym mieści się co najmniej
-P = 1 i przebieg kontrolny (2 CPU), są taskset i pysail, swap jest pusty (3b-2, 4.3), a binarki
-Ballisty istnieją i są świeże. Każdy błąd przerywa serię przed pierwszym pomiarem (kod 2).
-P większe niż układ CPU nie przerywa serii: preflight ostrzega, a orkiestrator pomija te bloki
-z powodem (domyślna seria ma działać na mniejszej maszynie i pokazać luki w raporcie)."""
+"""Checks before the first measurement of a series: the CPU topology can be read, at least
+P = 1 and the control run (2 CPUs) fit outside the system core, taskset and pysail are present,
+swap is empty, and the Ballista binaries exist and are fresh. Every error aborts the series
+before the first measurement (exit code 2).
+A P larger than the CPU layout does not abort the series: preflight warns and the orchestrator
+skips those blocks with a stated reason (the default series is meant to run on a smaller
+machine and show the gaps in the report)."""
 
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ from bench.engines import CONTROL_THREADS, require_ballista_binaries
 
 
 def cpu_layout(sysfs: Path = SYSFS_CPU) -> CpuLayout:
-    """Układ CPU tego procesu (maska affinity); nieczytelna topologia → ConfigError z przyczyną."""
+    """CPU layout of this process (the affinity mask); an unreadable topology → ConfigError with the reason."""
     try:
         return read_layout(sysfs)
     except TopologyError as e:
@@ -28,8 +29,8 @@ def cpu_layout(sysfs: Path = SYSFS_CPU) -> CpuLayout:
 
 
 def check_cpus(cfg: SeriesConfig, layout: CpuLayout) -> list[int]:
-    """P serii, które nie mieszczą się w układzie (zostaną pominięte). Błąd, gdy poza rdzeniem
-    systemowym nie ma ani jednego CPU (P = 1) albo dwóch CPU dla przebiegu kontrolnego."""
+    """The P values of the series that do not fit the layout (they will be skipped). An error when
+    there is not a single CPU outside the system core (P = 1) or not two CPUs for the control run."""
     available = max_parallelism(layout)
     if available < 1:
         raise ConfigError(
@@ -45,9 +46,9 @@ def check_cpus(cfg: SeriesConfig, layout: CpuLayout) -> list[int]:
 
 
 def _importable(module: str) -> bool:
-    """Czy `import module` się udaje. Import idzie w osobnym procesie, żeby orkiestrator nie
-    ładował natywnej biblioteki pysail (pamięć na maszynie 5 GB), a uszkodzone rozszerzenie
-    i tak zostało wykryte (specyfikacja 3b-2, 7.4)."""
+    """Whether `import module` succeeds. The import runs in a separate process so that the
+    orchestrator does not load the native pysail library (memory on a 5 GB machine) while a
+    broken extension is still detected."""
     try:
         done = subprocess.run(
             [sys.executable, "-c", f"import {module}"], capture_output=True, timeout=120, env=os.environ.copy()
@@ -73,7 +74,7 @@ def check_swap(used: int) -> None:
 
 
 def run(cfg: SeriesConfig, profile: str, layout: CpuLayout) -> list[int]:
-    """Wszystkie sprawdzenia; zwraca P, które orkiestrator pominie (ostrzeżenie na stderr)."""
+    """All the checks; returns the P values the orchestrator will skip (a warning on stderr)."""
     skipped = check_cpus(cfg, layout)
     check_swap(metrics.swap_used())
     check_tools(cfg.variants)

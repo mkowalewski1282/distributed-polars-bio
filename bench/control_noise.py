@@ -1,14 +1,15 @@
-"""Badanie szumu przebiegu kontrolnego (specyfikacja 3b-2, sekcja 4.2).
+"""Control-run noise study.
 
-Seria bench/conf/control_noise.yaml mierzy przebieg kontrolny (overlap 7-0, polars-bio z 2 wątkami
-na obu wątkach pierwszego rdzenia poza systemowym) 20 razy pod rząd na początku bloku. Ten moduł
-liczy z jej wyników, w jakim odsetku losowych podziałów czasów na dwie
-rozłączne grupy po `group` (jak przebiegi kontrolne z początku i końca bloku) względna różnica
-median przekracza próg — czyli odsetek fałszywych dryfów przy niezmienionej maszynie.
-Kryterium specyfikacji: ≤ 5% przy progu 10% i grupach po 10.
+The series bench/conf/control_noise.yaml measures the control run (overlap 7-0, polars-bio with
+2 threads on both hardware threads of the first core outside the system core) 20 times in a row
+at the start of a block. From its results this module computes the share of random splits of the
+times into two disjoint groups of `group` (like the control runs from the start and the end of
+a block) in which the relative difference of the medians exceeds the threshold — that is, the
+rate of false drifts on an unchanged machine.
+Acceptance criterion: ≤ 5% at a 10% threshold and groups of 10.
 
-Uruchomienie:
-    uv run python -m bench.control_noise bench/results/control-noise/<znacznik czasu>"""
+Usage:
+    uv run python -m bench.control_noise bench/results/control-noise/<timestamp>"""
 
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ from bench.validity import drift
 
 def false_drift_rate(times: Sequence[float], *, group: int, tolerance: float,
                      samples: int = 10000, seed: int = 0) -> float:
-    """Odsetek losowych podziałów (ziarno `seed`) z dryfem median powyżej `tolerance`."""
+    """Share of random splits (seeded with `seed`) whose median drift exceeds `tolerance`."""
     times = list(times)
     if len(times) < 2 * group:
         raise ValueError(f"the noise study needs at least {2 * group} times, got {len(times)}")
@@ -40,9 +41,10 @@ def false_drift_rate(times: Sequence[float], *, group: int, tolerance: float,
 
 
 def load_times(directory: Path) -> list[float]:
-    """Czasy ważnych przebiegów kontrolnych z początku bloku (runs.parquet serii) — wariant
-    kontrolny różni się od wariantów serii, więc próbką są same przebiegi kontrolne; te z końca
-    bloku pomija, żeby próbka była ciągiem pod rząd."""
+    """Times of the valid control runs from the start of a block (the series' runs.parquet) —
+    the control variant differs from the series variants, so the sample is the control runs
+    alone; those from the end of the block are skipped so that the sample is a consecutive
+    sequence."""
     df = pl.read_parquet(Path(directory) / "runs.parquet")
     controls = df.filter(
         pl.col("valid") & pl.col("is_control") & (pl.col("control_position") == "start")

@@ -1,19 +1,19 @@
-# Seria skalowania (etap 4, specyfikacja 8.2; semantyka P): warianty polars_bio, ballista i sail
-# przy P = 1, 2, 4 i 8 CPU, na parach 2-7 i 7-0 oraz zbiorach 7 i 0. Główna seria pomiarowa etapu 4
-# (smoke.yaml służy tylko do sprawdzenia poprawności):
+# Scaling series: the polars_bio, ballista and sail variants at P = 1, 2, 4 and 8 CPUs, on the
+# pairs 2-7 and 7-0 and the datasets 7 and 0. The main measurement series (smoke.yaml only checks
+# correctness):
 #   uv run python -m bench.orchestrator bench/conf/scaling.yaml
-# Raport (tabela median i wykresy od P): uv run python -m bench.report bench/results/scaling/<czas>
+# Report (median table and plots against P): uv run python -m bench.report bench/results/scaling/<time>
 #
-# Rachunek czasu (przebiegi liczone z kodu bench/orchestrator.py, run_block):
-#   blok = 2·10 kontroli (controls("start") i controls("end"), control_repeats = 10)
-#        + 1 rozgrzewka × 10 scenariuszy
-#        + 5 rund × 10 scenariuszy (repeats = 5)
-#        = 2·10 + 10 scenariuszy × 6 = 80 przebiegów
-#   12 bloków (3 warianty × 4 wartości P) × 80 = 960 przebiegów + 10 wzorców (przebiegi referencyjne
-#   polars-bio na 1 partycji, po jednym na scenariusz; przebieg kontrolny overlap 7-0 jest już
-#   wśród scenariuszy, więc nie dokłada wzorca).
-#   ~5,5 s na przebieg (czas 0,2–3 s + ~1 s startu + 3 s settle_s) ≈ 1,5 h.
-#   Z powtórzeniem każdego bloku po dryfie przebiegu kontrolnego ≤ 3 h (limit 4 h).
+# Time budget (runs counted from bench/orchestrator.py, run_block):
+#   block = 2·10 control runs (controls("start") and controls("end"), control_repeats = 10)
+#         + 1 warm-up round × 10 scenarios
+#         + 5 rounds × 10 scenarios (repeats = 5)
+#         = 2·10 + 10 scenarios × 6 = 80 runs
+#   12 blocks (3 variants × 4 values of P) × 80 = 960 runs + 10 reference results (polars-bio
+#   reference runs on 1 partition, one per scenario; the overlap 7-0 control run is already among
+#   the scenarios, so it adds no reference run).
+#   ~5.5 s per run (0.2–3 s run time + ~1 s startup + 3 s settle_s) ≈ 1.5 h.
+#   With every block repeated after a control-run drift: ≤ 3 h (limit 4 h).
 series: scaling
 scenarios:
   - {op: overlap, pair: "2-7"}
@@ -31,6 +31,6 @@ parallelism: [1, 2, 4, 8]
 repeats: 5
 warmup: 1
 control_repeats: 10
-# Przerwa przed każdym przebiegiem: zwracanie pamięci WSL2 do Hyper-V (Zadanie 27, badanie szumu).
+# Pause before every run: lets WSL2 return memory to the host, which reduces control-run noise.
 settle_s: 3.0
 seed: 20261115

@@ -1,6 +1,6 @@
-"""Wspólne elementy runnerów w Pythonie (specyfikacja 8.3): argumenty scenariusza, jedna
-linia JSON na stdout i kody wyjścia jak w bench_client — 0 sukces, 1 błąd wykonania
-(komunikat na stderr), 2 błędne argumenty (argparse)."""
+"""Shared parts of the Python runners: scenario arguments, one JSON line on stdout and exit
+codes as in bench_client — 0 success, 1 execution error (message on stderr), 2 bad arguments
+(argparse)."""
 
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ def scenario_parser(prog: str, description: str) -> argparse.ArgumentParser:
 
 
 def parse_scenario(parser: argparse.ArgumentParser, argv: list[str] | None) -> argparse.Namespace:
-    """Parsuje argumenty; niezgodność --right z operacją albo zła lista kolumn → kod 2.
-    Ścieżki stają się bezwzględne (runner może działać w innym katalogu niż wywołujący)."""
+    """Parse the arguments; --right inconsistent with the operation or a bad column list → code 2.
+    Paths become absolute (the runner may run in a different directory than its caller)."""
     args = parser.parse_args(argv)
     if args.op in UNARY_OPS and args.right is not None:
         parser.error(f"{args.op} takes a single table (no --right)")
@@ -44,7 +44,7 @@ def parse_scenario(parser: argparse.ArgumentParser, argv: list[str] | None) -> a
 
 
 def require_paths(*paths: Path | None) -> None:
-    """Brak danych → błąd wykonania (kod 1) z nazwą ścieżki, jak w bench_client."""
+    """Missing data → an execution error (code 1) naming the path, as in bench_client."""
     for path in paths:
         if path is not None and not path.exists():
             raise FileNotFoundError(f"missing data: {path}")
@@ -63,10 +63,10 @@ def report_line(*, rows: int, checksum: str, t_total_s: float, peak_rss_bytes: i
 
 
 def main_guard(prog: str, body: Callable[[], str]) -> int:
-    """Wykonuje runner: linia JSON na stdout (kod 0) albo komunikat na stderr (kod 1)."""
+    """Execute the runner: a JSON line on stdout (code 0) or a message on stderr (code 1)."""
     try:
         line = body()
-    except Exception as e:  # noqa: BLE001 — każdy błąd silnika to nieważny przebieg z przyczyną
+    except Exception as e:  # noqa: BLE001 — any engine error is an invalid run with a reason
         print(f"{prog}: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
     print(line, flush=True)

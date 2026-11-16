@@ -1,9 +1,10 @@
-# Badanie szumu przebiegu kontrolnego (specyfikacja 3b-2, 4.2): zadanie kontrolne (overlap 7-0,
-# polars-bio z 2 wątkami na obu wątkach pierwszego rdzenia poza systemowym) zmierzone 20 razy pod
-# rząd na początku jedynego bloku. Próbką są przebiegi kontrolne, bo wariant kontrolny różni się od
-# wariantów serii; blok (polars-bio, P = 1) jest tylko nośnikiem. Wynik ocenia:
-#   uv run python -m bench.control_noise bench/results/control-noise/<znacznik czasu>
-# Seria pomiarowa — tylko po checkliście RAM (zamknięty VS Code, pusty swap).
+# Control-run noise study: the control task (overlap 7-0, polars-bio with 2 threads on both
+# hardware threads of the first core outside the system core) measured 20 times in a row at the
+# start of the only block. The sample is the control runs, because the control variant differs
+# from the series variants; the (polars-bio, P = 1) block is only a carrier. The result is
+# evaluated with:
+#   uv run python -m bench.control_noise bench/results/control-noise/<timestamp>
+# A measurement series — run it only after the RAM checklist (VS Code closed, swap empty).
 series: control-noise
 scenarios:
   - {op: overlap, pair: "7-0"}
@@ -11,12 +12,12 @@ variants: [polars_bio]
 parallelism: [1]
 repeats: 1
 warmup: 1
-# 20 przebiegów kontrolnych na początku bloku to próbka badania (bench.control_noise bierze tylko
-# te z początku); tyle samo wykona się na końcu bloku.
+# The 20 control runs at the start of the block are the study sample (bench.control_noise takes
+# only those from the start); the same number is run at the end of the block.
 control_repeats: 20
-# Własny test dryfu bloku nie może odrzucić próbki szumu: badanie samo ocenia próg 10%
-# (jak w testach integracyjnych).
+# The block's own drift check must not discard the noise sample: the study itself evaluates the
+# 10% threshold (as in the integration tests).
 control_tolerance: 100.0
 seed: 20261009
-# Przerwa przed każdym przebiegiem: zwracanie pamięci WSL2 do Hyper-V (Zadanie 27, badanie szumu).
+# Pause before every run: lets WSL2 return memory to the host, which reduces control-run noise.
 settle_s: 3.0

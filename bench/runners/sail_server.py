@@ -1,10 +1,11 @@
-"""Serwer Sail dla serii pomiarowej (specyfikacja 3 i 6.2): osobny proces na czas bloku;
-runnery-klienci (bench/runners/sail_runner.py) łączą się przez Spark Connect.
+"""Sail server for a measurement series: a separate process for the duration of a block; the
+client runners (bench/runners/sail_runner.py) connect through Spark Connect.
 
-Zasoby ustawia orkiestrator: przypięcie do P CPU z układu (taskset; bench/cpus.py) i zmienne
-SAIL_* z `sail_env`. polars-bio jest importowany przed startem, żeby pierwsze wywołanie funkcji nie
-płaciło za import. Proces kończy się sygnałem SIGTERM. Katalog roboczy musi być katalogiem
-głównym repozytorium — funkcje applyInArrow z sail_genomics importują moduły po nazwie w tym procesie."""
+The orchestrator sets the resources: pinning to P CPUs from the layout (taskset; bench/cpus.py)
+and the SAIL_* variables from `sail_env`. polars-bio is imported before startup so that the
+first function call does not pay for the import. The process ends on SIGTERM. The working
+directory must be the repository root — the applyInArrow functions from sail_genomics import
+modules by name in this process."""
 
 from __future__ import annotations
 
@@ -12,32 +13,33 @@ import argparse
 import sys
 import time
 
-#: Sloty zadań na workera. Sonda 2026-11-16 (Sail 0.7.3, overlap 7-0, P = 1, 2, 4 workerów × 1 slot
-#: z równoległością P): poprawna suma kontrolna, liczba workerów równa P i brak zawieszenia
-#: w każdej komórce, więc 1 slot na workera jest honorowany. Wcześniejsza sonda 01.10.2026
-#: (1 worker, 2 sloty) dokładała workery, a z cluster.worker_max_count zapytanie wisiało.
+#: Task slots per worker: P workers × 1 slot, with the parallelism equal to the worker count P.
+#: Probe of 2026-11-16 (Sail 0.7.3, overlap 7-0, P = 1, 2, 4 workers × 1 slot with parallelism P):
+#: a correct checksum, a worker count equal to P and no hang in every cell, so 1 slot per worker
+#: is honoured. An earlier probe of 2026-10-01 (1 worker, 2 slots) made Sail add workers, and
+#: with cluster.worker_max_count the query hung.
 WORKER_TASK_SLOTS = 1
 
 
 def sail_env(parallelism: int) -> dict[str, str]:
-    """Zmienne SAIL_* serwera dla równoległości P: local-cluster, P workerów po 1 slocie bez
-    wygaszania bezczynnych, równoległość wykonania P.
+    """SAIL_* variables of the server for parallelism P: local-cluster, P workers of 1 slot each
+    without idle shutdown, execution parallelism P.
 
-    Sail tworzy driver i P workerów dla KAŻDEJ sesji Spark Connect — przy pierwszym RPC
-    sesji (w runnerze: rozgrzanie sesji, przed pomiarem czasu) — i zamyka je razem z sesją
-    (sonda 02.10.2026). Każdy przebieg ma więc własną, świeżą pulę workerów."""
+    Sail creates a driver and P workers for EVERY Spark Connect session — at the session's first
+    RPC (in the runner: the session warm-up, before the time measurement) — and closes them with
+    the session (probe of 2026-10-02). Every run therefore has its own fresh pool of workers."""
     return {
         "SAIL_MODE": "local-cluster",
         "SAIL_CLUSTER__WORKER_INITIAL_COUNT": str(parallelism),
         "SAIL_CLUSTER__WORKER_TASK_SLOTS": str(WORKER_TASK_SLOTS),
         "SAIL_CLUSTER__WORKER_MAX_IDLE_TIME_SECS": "86400",
-        # Przy 1 slocie na workera równoległość musi równać się liczbie workerów, inaczej Sail
-        # dokłada workery (sonda 2026-11-16).
+        # With 1 slot per worker the parallelism must equal the worker count, otherwise Sail
+        # adds workers (probe on Sail 0.7.3, 2026-11-16).
         "SAIL_EXECUTION__DEFAULT_PARALLELISM": str(parallelism),
-        # Rozmiar partii wykonania (sonda 3b-2, Zadanie 12): overlap 7-0, 3 workery — 273 partii
-        # wyniku zamiast 1877, odbiór wyniku przez klienta 1,59 s zamiast 2,79 s, ta sama suma
-        # kontrolna. Opcje Spark Connect (arrow.maxRecordsPerBatch, maxRecordsPerOutputBatch,
-        # connect.grpc.arrow.maxBatchSize) nie zmieniły liczby partii.
+        # Execution batch size (probe: overlap 7-0, 3 workers): 273 result batches instead of
+        # 1877, the client receiving the result in 1.59 s instead of 2.79 s, the same checksum.
+        # The Spark Connect options (arrow.maxRecordsPerBatch, maxRecordsPerOutputBatch,
+        # connect.grpc.arrow.maxBatchSize) did not change the number of batches.
         "SAIL_EXECUTION__BATCH_SIZE": "65536",
     }
 
@@ -48,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--port", type=int, required=True)
     args = parser.parse_args(argv)
-    import polars_bio  # noqa: F401 — przed startem; MPLBACKEND ustawia bench/__init__.py
+    import polars_bio  # noqa: F401 — before startup; MPLBACKEND is set by bench/__init__.py
     from pysail.spark import SparkConnectServer
 
     server = SparkConnectServer("127.0.0.1", args.port)

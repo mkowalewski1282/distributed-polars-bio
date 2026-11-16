@@ -1,8 +1,8 @@
-"""Operacje benchmarku i wspólny schemat ich wyników (specyfikacja, sekcja 8.4).
+"""Benchmark operations and the common schema of their results.
 
-Każdy silnik zwraca wynik pod innymi nazwami kolumn. Porównania (a w kolejnym
-etapie suma kontrolna) działają na schemacie znormalizowanym poniżej, na
-multizbiorze wierszy — niezależnie od kolejności wierszy i szerokości typów.
+Every engine returns its result under different column names. Comparisons (and the
+checksum) work on the normalised schema below, on a multiset of rows — independent of row
+order and type widths.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import polars as pl
 OPS = ("overlap", "nearest", "coverage", "merge", "subtract")
 UNARY_OPS = frozenset({"merge"})
 
-#: Kolumny wyniku w schemacie znormalizowanym, w tej kolejności.
+#: Result columns in the normalised schema, in this order.
 OUTPUT_COLUMNS: dict[str, tuple[str, ...]] = {
     "overlap": ("chrom_1", "start_1", "end_1", "chrom_2", "start_2", "end_2"),
     "nearest": ("chrom_1", "start_1", "end_1", "chrom_2", "start_2", "end_2", "distance"),
@@ -23,8 +23,8 @@ OUTPUT_COLUMNS: dict[str, tuple[str, ...]] = {
     "subtract": ("chrom", "start", "end"),
 }
 
-#: Kolumny wchodzące do porównania. `nearest` bez identyfikacji sąsiada: przy
-#: remisach (kilku kandydatów w tej samej odległości) silniki wybierają różnie.
+#: Columns that enter the comparison. `nearest` without the neighbour's identity: on ties
+#: (several candidates at the same distance) the engines choose differently.
 KEY_COLUMNS: dict[str, tuple[str, ...]] = {
     **OUTPUT_COLUMNS,
     "nearest": ("chrom_1", "start_1", "end_1", "distance"),
@@ -32,7 +32,7 @@ KEY_COLUMNS: dict[str, tuple[str, ...]] = {
 
 
 def polars_bio_names(op: str, cols: tuple[str, str, str]) -> dict[str, str]:
-    """Nazwy kolumn wyniku polars-bio 0.28 -> schemat znormalizowany."""
+    """Column names of a polars-bio 0.28 result -> normalised schema."""
     c, s, e = cols
     if op in ("overlap", "nearest"):
         names = {
@@ -59,9 +59,9 @@ def normalize_polars_bio(op: str, df: pl.DataFrame, cols: tuple[str, str, str]) 
 
 
 def normalize_arrow(op: str, data, cols: tuple[str, str, str]):
-    """Partia Arrow (RecordBatch albo Table) z wynikiem polars-bio -> kolumny schematu
-    znormalizowanego, w tej kolejności — odpowiednik `normalize_polars_bio` dla
-    strumienia partii."""
+    """An Arrow batch (RecordBatch or Table) with a polars-bio result -> the columns of the
+    normalised schema, in this order — the counterpart of `normalize_polars_bio` for a stream
+    of batches."""
     names = polars_bio_names(op, cols)
     missing = [src for src in names if src not in data.schema.names]
     if missing:
@@ -70,7 +70,7 @@ def normalize_arrow(op: str, data, cols: tuple[str, str, str]):
 
 
 def row_multiset(op: str, df) -> Counter:
-    """Multizbiór wierszy po kolumnach klucza (polars albo pandas; NaN = brak)."""
+    """Multiset of rows over the key columns (polars or pandas; NaN = missing)."""
     if not isinstance(df, pl.DataFrame):
         df = pl.from_pandas(df, nan_to_null=True)
     key = KEY_COLUMNS[op]
@@ -85,7 +85,7 @@ def row_multiset(op: str, df) -> Counter:
 
 
 def describe_diff(expected: Counter, actual: Counter, limit: int = 5) -> str:
-    """Krótki opis różnicy dwóch multizbiorów — liczności i kilka przykładów."""
+    """Short description of the difference of two multisets — counts and a few examples."""
     missing = expected - actual
     extra = actual - expected
     return (

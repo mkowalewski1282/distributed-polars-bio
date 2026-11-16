@@ -1,23 +1,23 @@
-"""Suma kontrolna wyniku operacji niezależna od kolejności wierszy (specyfikacja, sekcja 8.4).
+"""Row-order-independent checksum of an operation result.
 
-Definicja — wspólna z ballista_genomics/src/checksum.rs (zgodność pilnuje test na
-wartościach wzorcowych z tests/bench/checksum_vectors.py):
+Definition — shared with ballista_genomics/src/checksum.rs (agreement is enforced by a test on
+the reference values in tests/bench/checksum_vectors.py):
 
-- kolumny: `KEY_COLUMNS[op]` z bench/ops.py — te same, które porównuje `row_multiset`,
-  więc suma jest skrótem tego samego multizbioru (nearest bez tożsamości sąsiada);
-- kod wartości: kolumna chromosomu (nazwa zaczyna się od `chrom`) — CRC-32 (IEEE, jak
-  `zlib.crc32`) z UTF-8; kolumna liczbowa — wartość całkowita modulo 2⁶⁴ (U2); brak
-  wartości — 2⁶⁴ − 1 (jak −1; kolumny wyników są nieujemne);
-- skrót wiersza: `mix64(Σ_j M_j · kod_j mod 2⁶⁴)`, M_j — stałe nieparzyste niżej,
-  mix64 — finalizator splitmix64 (bijekcja na liczbach 64-bitowych);
-- suma kontrolna: Σ skrótów wierszy mod 2⁶⁴, zapisana jako `0x` + 16 cyfr szesnastkowych.
+- columns: `KEY_COLUMNS[op]` from bench/ops.py — the same ones `row_multiset` compares, so the
+  checksum is a digest of the same multiset (nearest without the neighbour's identity);
+- value code: a chromosome column (name starts with `chrom`) — CRC-32 (IEEE, as `zlib.crc32`)
+  of the UTF-8 text; a numeric column — the integer value modulo 2⁶⁴ (two's complement); a
+  missing value — 2⁶⁴ − 1 (as −1; result columns are non-negative);
+- row hash: `mix64(Σ_j M_j · code_j mod 2⁶⁴)`, M_j — the odd constants below, mix64 — the
+  splitmix64 finalizer (a bijection on 64-bit numbers);
+- checksum: Σ of row hashes mod 2⁶⁴, written as `0x` + 16 hexadecimal digits.
 
-Sama suma liniowa (bez mix64) zależałaby tylko od sum kolumn i nie wykryłaby np. zamiany
-końców przedziałów między wierszami — dlatego skrót wiersza jest nieliniowy.
+A plain linear sum (without mix64) would depend only on column sums and would not detect, for
+example, interval ends swapped between rows — hence the row hash is non-linear.
 
-`row_hash`/`checksum_rows` to definicja wzorcowa (czysty Python, wiersz po wierszu);
-`Checksum` liczy to samo wektorowo (numpy) na partiach Arrow; runnery wołają `update_all`
-po zatrzymaniu zegara, na partiach trzymanych w pamięci (specyfikacja 3b-2, 4.1).
+`row_hash`/`checksum_rows` are the reference definition (pure Python, row by row); `Checksum`
+computes the same thing vectorised (numpy) on Arrow batches; runners call `update_all` after
+stopping the clock, on batches held in memory.
 """
 
 from __future__ import annotations
@@ -32,9 +32,9 @@ import pyarrow.compute as pc
 from bench.ops import KEY_COLUMNS
 
 MASK = (1 << 64) - 1
-#: Kod braku wartości (jak −1 w U2).
+#: Code of a missing value (as −1 in two's complement).
 NULL_CODE = MASK
-#: Mnożniki kolumn klucza według pozycji: stałe pierwsze xxHash64 i złoty podział splitmix64.
+#: Key-column multipliers by position: the xxHash64 prime constants and the splitmix64 golden-ratio constant.
 MULTIPLIERS = (
     0x9E3779B185EBCA87,
     0xC2B2AE3D27D4EB4F,
@@ -45,9 +45,9 @@ MULTIPLIERS = (
 )
 _MIX1 = 0xBF58476D1CE4E5B9
 _MIX2 = 0x94D049BB133111EB
-#: Partie wyniku łączone przed liczeniem sumy kontrolnej (Checksum.update_all): koszt numpy jest
-#: stały na wywołanie, a Sail oddaje wynik w partiach po ~1,5 tys. wierszy — sonda 3b-2: 1877
-#: partii i 1,9 s sumy kontrolnej na overlap 7-0, gdy liczono ją osobno na każdej partii.
+#: Result batches are merged before the checksum is computed (Checksum.update_all): numpy has a
+#: fixed cost per call, and Sail returns results in batches of ~1.5k rows — a probe measured 1877
+#: batches and 1.9 s of checksum time on overlap 7-0 when it was computed per batch.
 GROUP_ROWS = 1 << 16
 
 
@@ -67,7 +67,7 @@ def value_code(column: str, value) -> int:
 
 
 def row_hash(op: str, row: Sequence) -> int:
-    """Skrót jednego wiersza (krotka w kolejności `KEY_COLUMNS[op]`) — definicja wzorcowa."""
+    """Hash of one row (a tuple in `KEY_COLUMNS[op]` order) — the reference definition."""
     acc = 0
     for j, (column, value) in enumerate(zip(KEY_COLUMNS[op], row, strict=True)):
         acc = (acc + MULTIPLIERS[j] * value_code(column, value)) & MASK
@@ -75,7 +75,7 @@ def row_hash(op: str, row: Sequence) -> int:
 
 
 def checksum_rows(op: str, rows: Iterable[Sequence]) -> int:
-    """Suma kontrolna krotek w kolejności `KEY_COLUMNS[op]` (np. `row_multiset(...).elements()`)."""
+    """Checksum of tuples in `KEY_COLUMNS[op]` order (e.g. `row_multiset(...).elements()`)."""
     total = 0
     for row in rows:
         total = (total + row_hash(op, row)) & MASK
@@ -101,19 +101,19 @@ def _chrom_codes(column) -> np.ndarray:
     if isinstance(encoded, pa.ChunkedArray):
         encoded = encoded.combine_chunks() if encoded.num_chunks != 1 else encoded.chunk(0)
     words = encoded.dictionary.to_pylist()
-    # Ostatnia pozycja tablicy kodów (indeks len(words)) = brak wartości.
+    # The last position of the code array (index len(words)) = missing value.
     codes = np.array([zlib.crc32(w.encode("utf-8")) for w in words] + [NULL_CODE], dtype=np.uint64)
     return codes[encoded.indices.fill_null(len(words)).to_numpy(zero_copy_only=False)]
 
 
 def _int_codes(column) -> np.ndarray:
     values = pc.cast(column, pa.int64()).fill_null(-1).to_numpy(zero_copy_only=False)
-    # -1 w U2 to 2⁶⁴ − 1 = NULL_CODE.
+    # -1 in two's complement is 2⁶⁴ − 1 = NULL_CODE.
     return np.ascontiguousarray(values, dtype=np.int64).view(np.uint64)
 
 
 class Checksum:
-    """Suma kontrolna liczona przyrostowo na kolejnych porcjach wyniku (strumień partii)."""
+    """Checksum computed incrementally over successive chunks of the result (a stream of batches)."""
 
     def __init__(self, op: str):
         if op not in KEY_COLUMNS:
@@ -123,8 +123,8 @@ class Checksum:
         self._sum = np.uint64(0)
 
     def update(self, data) -> None:
-        """Dokłada porcję: pyarrow.Table / RecordBatch albo polars.DataFrame w schemacie
-        znormalizowanym (bench/ops.py)."""
+        """Add a chunk: a pyarrow.Table / RecordBatch or a polars.DataFrame in the normalised
+        schema (bench/ops.py)."""
         if not isinstance(data, (pa.Table, pa.RecordBatch)):
             data = data.to_arrow()
         names = KEY_COLUMNS[self.op]
@@ -143,8 +143,8 @@ class Checksum:
         self.rows += data.num_rows
 
     def update_all(self, parts: Iterable) -> None:
-        """Dokłada wiele porcji (pyarrow.Table / RecordBatch w schemacie znormalizowanym),
-        łącząc kolejne partie w tabele po co najmniej GROUP_ROWS wierszy."""
+        """Add many chunks (pyarrow.Table / RecordBatch in the normalised schema), merging
+        consecutive batches into tables of at least GROUP_ROWS rows."""
         group: list[pa.RecordBatch] = []
         size = 0
         for part in parts:

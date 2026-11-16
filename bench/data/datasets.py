@@ -1,9 +1,9 @@
-"""Rejestr zbiorów databio-8p (polars-bio-bench) i rozwiązywanie identyfikatorów.
+"""Registry of the databio-8p datasets (polars-bio-bench) and identifier resolution.
 
-Identyfikatory jak w polars-bio-bench (`conf/common.yaml`): zbiór to cyfra 0–8,
-para `a-b` to df1 = zbiór a, df2 = zbiór b. Dane leżą poza repozytorium, w tym
-samym układzie co w polars-bio-bench:
-`$BENCH_DATA_ROOT/databio-8p/<katalog zbioru>/part-*.parquet`.
+Identifiers as in polars-bio-bench (`conf/common.yaml`): a dataset is a digit 0–8, a pair
+`a-b` means df1 = dataset a, df2 = dataset b. The data lives outside the repository, in the
+same layout as in polars-bio-bench:
+`$BENCH_DATA_ROOT/databio-8p/<dataset directory>/part-*.parquet`.
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ DATA_ROOT_ENV = "BENCH_DATA_ROOT"
 DEFAULT_DATA_ROOT = Path.home() / "bench_data"
 DATASET_NAME = "databio-8p"
 
-#: Kolumny przedziału w plikach databio-8p (0-based, półotwarte).
+#: Interval columns in the databio-8p files (0-based, half-open).
 COLUMNS = ("contig", "pos_start", "pos_end")
 
-#: Identyfikator -> katalog zbioru w archiwum databio-8p.zip.
+#: Identifier -> dataset directory in the databio-8p.zip archive.
 DATASETS: dict[int, str] = {
     0: "chainRn4",
     1: "fBrain-DS14718",
@@ -32,7 +32,7 @@ DATASETS: dict[int, str] = {
     8: "ex-rna",
 }
 
-#: Liczba wierszy w tysiącach (specyfikacja, sekcja 4) — do weryfikacji pobrania.
+#: Row counts in thousands — used to verify the download.
 EXPECTED_ROWS_K: dict[int, int] = {
     0: 2351,
     1: 199,
@@ -49,8 +49,8 @@ _SCENARIO = re.compile(r"([0-8])(?:-([0-8]))?")
 
 
 def data_dir(root: Path | None = None) -> Path:
-    """Katalog zbioru: `root` albo `$BENCH_DATA_ROOT` (pusta = brak) albo domyślny.
-    `~` jest rozwijane — procesy silników działają w innych katalogach niż powłoka."""
+    """Dataset directory: `root`, or `$BENCH_DATA_ROOT` (empty = unset), or the default.
+    `~` is expanded — engine processes run in different directories than the shell."""
     if root is None:
         env = os.environ.get(DATA_ROOT_ENV, "")
         root = Path(env) if env else DEFAULT_DATA_ROOT
@@ -64,7 +64,7 @@ def dataset_dir(idx: int, root: Path | None = None) -> Path:
 
 
 def resolve(scenario: str, root: Path | None = None) -> tuple[Path, Path | None]:
-    """`"a-b"` -> (katalog a, katalog b); `"a"` -> (katalog a, None)."""
+    """`"a-b"` -> (directory a, directory b); `"a"` -> (directory a, None)."""
     m = _SCENARIO.fullmatch(scenario)
     if m is None:
         raise ValueError(

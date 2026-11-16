@@ -1,11 +1,10 @@
-"""Konfiguracja serii pomiarowej (specyfikacja, sekcja 8.2; etap 4: semantyka P) i jej rozwinięcie
-w bloki (wariant × P).
+"""Configuration of a measurement series and its expansion into blocks (variant × P).
 
-Plik YAML opisuje serię: scenariusze (operacja i dane), warianty, wartości P (równoległość —
-liczba CPU bloku), liczbę rund, rozgrzewkę, limit czasu, tolerancję dryfu przebiegu kontrolnego
-i ziarno kolejności.
-Konfiguracja jest sprawdzana w całości przed pierwszym pomiarem — nieznany klucz albo brak
-danych to błąd, nie cicha wartość domyślna."""
+A YAML file describes the series: scenarios (operation and data), variants, values of P
+(parallelism — the number of CPUs of a block), number of rounds, warm-up, time limit, drift
+tolerance of the control run and the ordering seed.
+The configuration is validated in full before the first measurement — an unknown key or missing
+data is an error, not a silent default."""
 
 from __future__ import annotations
 
@@ -19,26 +18,26 @@ import yaml
 from bench.data.datasets import resolve
 from bench.ops import OPS, UNARY_OPS
 
-#: Warianty serii (etap 4, specyfikacja 5.1) — przy równych zasobach P: polars_bio — jeden proces
-#: z P wątkami na P CPU; ballista — P executorów po 1 slocie, każdy na jednym CPU; sail — jeden
-#: proces serwera z P workerami po 1 slocie na P CPU (applyInArrow z pulą kontekstów polars-bio).
+#: Series variants — compared at equal resources P: polars_bio — one process with P threads on
+#: P CPUs; ballista — P executors with 1 slot each, every one on a single CPU; sail — one server
+#: process with P workers of 1 slot each on P CPUs (applyInArrow with a pool of polars-bio
+#: contexts).
 VARIANTS = ("polars_bio", "ballista", "sail")
-#: Wartości P domyślnej serii; P większe niż liczba CPU poza rdzeniem systemowym orkiestrator
-#: pomija z powodem (bench/cpus.py).
+#: Values of P of the default series; a P larger than the number of CPUs outside the system core
+#: is skipped by the orchestrator with a stated reason (bench/cpus.py).
 DEFAULT_PARALLELISM = (1, 2, 4, 8)
-#: Wartości domyślne ze specyfikacji 8.2 i 6.3 (tolerancja dryfu przebiegu kontrolnego: 10%)
-#: oraz 3b-2, 4.2: zadanie kontrolne overlap 7-0 (~1–2 s w przebiegu kontrolnym polars-bio
-#: z 2 wątkami; para 1-2 trwała ~0,13 s i szum przekraczał próg) wykonywane po 10 razy na początku
-#: i na końcu bloku.
-#: explain: dodatkowy przebieg EXPLAIN ANALYZE każdego scenariusza w blokach Ballisty (3b-2, 6.4).
-#: settle_s: przerwa przed każdym przebiegiem w sekundach (0 = brak; powód w orchestrator.measure).
+#: Defaults: control-run drift tolerance of 10%; the control task is overlap 7-0 (~1–2 s as a
+#: polars-bio control run with 2 threads; the pair 1-2 took ~0.13 s and its noise exceeded the
+#: threshold), executed 10 times at the start and at the end of a block.
+#: explain: an extra EXPLAIN ANALYZE run of every scenario in Ballista blocks.
+#: settle_s: pause before every run, in seconds (0 = none; the reason is in orchestrator.measure).
 DEFAULTS = {
     "repeats": 5, "warmup": 1, "timeout_s": 1200, "control_tolerance": 0.10,
     "control": {"op": "overlap", "pair": "7-0"}, "control_repeats": 10, "explain": False,
     "expected_invalid": [], "settle_s": 0.0, "parallelism": list(DEFAULT_PARALLELISM),
 }
 _REQUIRED = ("series", "scenarios", "variants", "seed")
-#: Klucze zastąpione w etapie 4 — błąd ze wskazaniem nowej nazwy zamiast „unknown keys”.
+#: Keys that were renamed — an error naming the new key instead of a generic "unknown keys".
 _RENAMED = {"nodes": "parallelism"}
 _KEYS = set(_REQUIRED) | set(DEFAULTS)
 _SCENARIO_KEYS = {"op", "pair", "dataset"}
@@ -47,13 +46,13 @@ _PAIR = re.compile(r"[0-8]-[0-8]")
 
 
 class ConfigError(ValueError):
-    """Błąd konfiguracji serii — zgłaszany przed pierwszym pomiarem."""
+    """Series configuration error — raised before the first measurement."""
 
 
 @dataclass(frozen=True)
 class Scenario:
     op: str
-    #: Para "a-b" albo zbiór "a" (identyfikatory jak w polars-bio-bench).
+    #: A pair "a-b" or a dataset "a" (identifiers as in polars-bio-bench).
     data: str
 
     @property
@@ -73,14 +72,14 @@ class Block:
 
 @dataclass(frozen=True)
 class ExpectedInvalid:
-    """Oczekiwany nieważny przebieg (specyfikacja 3b-2, pozycja 17): seria z takim przebiegiem
-    nadal jest zaliczona (np. smoke z udokumentowanym ograniczeniem silnika)."""
+    """An expected invalid run: a series containing such a run still counts as passed (e.g. a
+    smoke series with a documented engine limitation)."""
 
     scenario: str
     variant: str
-    #: P bloku; None — dowolne.
+    #: P of the block; None — any.
     parallelism: int | None = None
-    #: Początek przyczyny nieważności; None — dowolna.
+    #: Beginning of the invalidity reason; None — any.
     reason: str | None = None
 
     def matches(self, row: dict) -> bool:
@@ -211,7 +210,7 @@ def _expected_invalid(raw_list, scenario_ids: set[str]) -> tuple[ExpectedInvalid
 
 
 def parse(raw) -> SeriesConfig:
-    """Słownik z YAML → SeriesConfig; każdy błąd → ConfigError z miejscem i przyczyną."""
+    """YAML mapping → SeriesConfig; every error → ConfigError with the location and the reason."""
     if not isinstance(raw, dict):
         raise ConfigError("configuration: expected a mapping at the top level")
     _renamed(raw, "")
@@ -272,21 +271,22 @@ def load(path: Path) -> SeriesConfig:
 
 
 def blocks(cfg: SeriesConfig) -> list[Block]:
-    """Bloki: każdy wariant serii dla każdego P — warianty w stałej kolejności VARIANTS, P rosnąco.
-    Bloki z P większym niż układ CPU maszyny zostają na liście; pomija je orkiestrator."""
+    """Blocks: every variant of the series for every P — variants in the fixed VARIANTS order, P
+    ascending. Blocks with a P larger than the machine's CPU layout stay in the list; the
+    orchestrator skips them."""
     return [Block(v, p) for v in VARIANTS if v in cfg.variants for p in cfg.parallelism]
 
 
 def round_order(cfg: SeriesConfig, block: Block, label: str) -> list[Scenario]:
-    """Kolejność scenariuszy w rundzie (specyfikacja 6.2): losowa, ale odtwarzalna z ziarna
-    serii — ta sama dla tego samego bloku i rundy, niezależnie od reszty serii (powtórzony
-    blok dostaje tę samą kolejność)."""
+    """Order of scenarios in a round: random but reproducible from the series seed — the same for
+    the same block and round, independent of the rest of the series (a repeated block gets the
+    same order)."""
     rng = random.Random(f"{cfg.seed}/{block.variant}/{block.parallelism}/{label}")
     return rng.sample(list(cfg.scenarios), len(cfg.scenarios))
 
 
 def check_data(cfg: SeriesConfig, root: Path) -> None:
-    """Każdy zbiór serii — i zadania kontrolnego — ma mieć pliki part-*.parquet."""
+    """Every dataset of the series — and of the control task — must have part-*.parquet files."""
     missing: set[str] = set()
     for scenario in (*cfg.scenarios, cfg.control):
         for path in resolve(scenario.data, root):

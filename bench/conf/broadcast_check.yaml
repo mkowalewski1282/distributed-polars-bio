@@ -1,8 +1,8 @@
-# Sprawdzenie komórek z broadcastem (specyfikacja 3b-2, sekcja 9, punkt 5): nearest i coverage
-# na 2-7 i 7-0 w Ballistcie przy P = 1, 2, 4, 8 — ukończenie przy limicie gRPC 512 MiB,
-# broadcast_bytes i szczyt pamięci (dane wejściowe także dla kalibracji w 3b-3). Każdy z P
-# executorów trzyma własną kopię tabeli rozsyłanej, więc przy P = 8 pamięć jest najciaśniejsza.
-# Seria pomiarowa — tylko po checkliście RAM (zamknięty VS Code, pusty swap).
+# Check of the broadcast cells: nearest and coverage on 2-7 and 7-0 in Ballista at
+# P = 1, 2, 4, 8 — completion under the 512 MiB gRPC limit, broadcast_bytes and peak memory.
+# Each of the P executors holds its own copy of the broadcast table, so memory is tightest at
+# P = 8.
+# A measurement series — run it only after the RAM checklist (VS Code closed, swap empty).
 series: broadcast-check
 scenarios:
   - {op: nearest, pair: "2-7"}
@@ -14,12 +14,12 @@ parallelism: [1, 2, 4, 8]
 repeats: 1
 warmup: 0
 control_repeats: 3
-# Seria sprawdza ukończenie, broadcast_bytes i pamięć, nie czas; dryf tylko powtarzałby drogie bloki 7-0.
+# The series checks completion, broadcast_bytes and memory, not time; a drift check would only repeat the expensive 7-0 blocks.
 control_tolerance: 100.0
-# Zawieszenie ma kosztować 10 minut, nie 20.
+# A hang should cost 10 minutes, not 20.
 timeout_s: 600
-# Plany EXPLAIN ANALYZE z metrykami operatorów (spec 3b-2, 6.4) — czas budowy indeksu na zadanie.
+# EXPLAIN ANALYZE plans with operator metrics — index build time per task.
 explain: true
 seed: 20261009
-# Przerwa przed każdym przebiegiem: zwracanie pamięci WSL2 do Hyper-V (Zadanie 27, badanie szumu).
+# Pause before every run: lets WSL2 return memory to the host, which reduces control-run noise.
 settle_s: 3.0

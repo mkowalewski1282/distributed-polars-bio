@@ -1,6 +1,6 @@
-"""Raport serii: tabela median i wykresy czasu od P (etap 4, specyfikacja 5.3).
+"""Series report: a table of medians and plots of time against P.
 
-Użycie: python -m bench.report <katalog serii>
+Usage: python -m bench.report <series directory>
 """
 
 from __future__ import annotations
@@ -11,14 +11,14 @@ from pathlib import Path
 
 import matplotlib
 
-matplotlib.use("Agg")  # bez ekranu; musi być przed importem pyplot
+matplotlib.use("Agg")  # no display; must come before importing pyplot
 import matplotlib.pyplot as plt  # noqa: E402
 import polars as pl  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 
 from bench.results import SCHEMA, to_parquet  # noqa: E402
 
-#: Stały kolor i kształt znacznika na wariant (paleta dataviz: sloty 1-3; kolor idzie za bytem).
+#: A fixed colour and marker shape per variant (the colour follows the entity).
 VARIANT_STYLE = {
     "polars_bio": ("#2a78d6", "o"),
     "ballista": ("#eb6834", "s"),
@@ -29,13 +29,13 @@ SURFACE, INK, INK_MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3df"
 
 
 def load_runs(series_dir: Path) -> pl.DataFrame:
-    """Wczytuje runs.parquet; przy przerwanej serii (sam runs.jsonl) przepisuje go schematem results."""
+    """Load runs.parquet; for an interrupted series (runs.jsonl only) convert it using the results schema."""
     parquet = series_dir / "runs.parquet"
     jsonl = series_dir / "runs.jsonl"
     if not parquet.exists():
         if not jsonl.exists():
             raise FileNotFoundError(f"no runs.parquet or runs.jsonl in {series_dir}")
-        # Polars po cichu pomija nieznane pola, więc stary schemat (n_nodes) sprawdzamy sami.
+        # Polars silently drops unknown fields, so we check for the old schema (n_nodes) ourselves.
         for line in jsonl.read_text(encoding="utf-8").splitlines():
             unknown = set(json.loads(line)) - set(SCHEMA) if line.strip() else set()
             if unknown:
@@ -50,7 +50,7 @@ def load_runs(series_dir: Path) -> pl.DataFrame:
 
 
 def summarize(runs: pl.DataFrame) -> pl.DataFrame:
-    """Mediany ważnych przebiegów pomiarowych na komórkę (op, pair, variant, P)."""
+    """Medians of the valid measured runs per cell (op, pair, variant, P)."""
     measured = runs.filter(~pl.col("is_warmup") & ~pl.col("is_control") & ~pl.col("is_reference"))
     keys = ["op", "pair", "variant", "parallelism"]
     valid_t = pl.col("t_total_s").filter(pl.col("valid"))
@@ -173,7 +173,7 @@ def _plot(part: pl.DataFrame, op: str, pair: str, path: Path) -> None:
 
 
 def write_report(series_dir: Path) -> list[Path]:
-    """Zapisuje summary.md, summary.csv i plots/<op>_<pair>.png; zwraca listę plików."""
+    """Write summary.md, summary.csv and plots/<op>_<pair>.png; return the list of files."""
     summary = summarize(load_runs(series_dir))
     md, csv = series_dir / "summary.md", series_dir / "summary.csv"
     md.write_text(_markdown(summary), encoding="utf-8")

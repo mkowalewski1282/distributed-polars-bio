@@ -1,9 +1,8 @@
-"""Metryki systemowe z /proc (specyfikacja, sekcje 5 i 6): szczyt pamięci procesu (VmHWM)
-i jego zerowanie (clear_refs), przypięcie do rdzeni, dostępna pamięć (MemAvailable), zajęty swap,
-wypchnięcia do swapu i wczytania z niego (pswpout, pswpin) oraz rozmiar katalogu (wolumen
-shuffle Ballisty).
+"""System metrics from /proc: a process's peak memory (VmHWM) and resetting it (clear_refs),
+CPU pinning, available memory (MemAvailable), used swap, swap-outs and swap-ins (pswpout,
+pswpin), and a directory's size (Ballista's shuffle volume).
 
-Każda funkcja przyjmuje katalog `proc` — testy podają pliki wzorcowe."""
+Every function takes the `proc` directory — tests pass fixture files."""
 
 from __future__ import annotations
 
@@ -31,22 +30,22 @@ def _kib_field(path: Path, key: str) -> int:
 
 
 def peak_rss(pid: int | str = "self", proc: Path = PROC) -> int:
-    """Szczyt pamięci rezydentnej procesu (VmHWM) w bajtach."""
+    """Peak resident memory of a process (VmHWM) in bytes."""
     return _kib_field(proc / str(pid) / "status", "VmHWM")
 
 
 def rss(pid: int | str = "self", proc: Path = PROC) -> int:
-    """Bieżąca pamięć rezydentna procesu (VmRSS) w bajtach."""
+    """Current resident memory of a process (VmRSS) in bytes."""
     return _kib_field(proc / str(pid) / "status", "VmRSS")
 
 
 def reset_peak_rss(pid: int | str = "self", proc: Path = PROC) -> None:
-    """Zeruje licznik szczytu: VmHWM := bieżący RSS (`echo 5 > clear_refs`)."""
+    """Reset the peak counter: VmHWM := current RSS (`echo 5 > clear_refs`)."""
     (proc / str(pid) / "clear_refs").write_text("5")
 
 
 def cpus_allowed(pid: int | str = "self", proc: Path = PROC) -> str:
-    """Rdzenie, na których proces może działać (np. '2-3')."""
+    """CPUs the process is allowed to run on (e.g. '2-3')."""
     return _field(proc / str(pid) / "status", "Cpus_allowed_list")
 
 
@@ -55,7 +54,7 @@ def mem_available(proc: Path = PROC) -> int:
 
 
 def swap_used(proc: Path = PROC) -> int:
-    """Zajęty swap w bajtach: SwapTotal − SwapFree z /proc/meminfo."""
+    """Used swap in bytes: SwapTotal − SwapFree from /proc/meminfo."""
     meminfo = proc / "meminfo"
     return _kib_field(meminfo, "SwapTotal") - _kib_field(meminfo, "SwapFree")
 
@@ -69,24 +68,24 @@ def _vmstat(key: str, proc: Path) -> int:
 
 
 def pswpout(proc: Path = PROC) -> int:
-    """Licznik stron wypchniętych do swapu od startu systemu."""
+    """Counter of pages swapped out since system boot."""
     return _vmstat("pswpout", proc)
 
 
 def pswpin(proc: Path = PROC) -> int:
-    """Licznik stron wczytanych ze swapu od startu systemu."""
+    """Counter of pages swapped in since system boot."""
     return _vmstat("pswpin", proc)
 
 
 def dir_size(path: Path) -> int:
-    """Suma rozmiarów plików regularnych w drzewie (bez dowiązań); brak katalogu → 0."""
+    """Sum of the sizes of regular files in the tree (symlinks excluded); a missing directory → 0."""
     total = 0
     for root, _dirs, files in os.walk(path):
         for name in files:
             try:
                 st = os.lstat(os.path.join(root, name))
             except FileNotFoundError:
-                continue  # plik usunięty w trakcie przeglądania
+                continue  # file removed during the walk
             if stat.S_ISREG(st.st_mode):
                 total += st.st_size
     return total

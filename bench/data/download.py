@@ -1,24 +1,23 @@
-"""Pobranie i weryfikacja zbioru databio-8p (polars-bio-bench).
+"""Download and verification of the databio-8p dataset (polars-bio-bench).
 
-Źródło i układ katalogów jak w polars-bio-bench (`conf/common.yaml`,
-`src/utils.py::prepare_datatests`): archiwum `databio-8p.zip` z Google Drive,
-rozpakowane do `$BENCH_DATA_ROOT/databio-8p/<zbiór>/part-*.parquet`.
-Świadome różnice względem tamtego mechanizmu:
+The source and directory layout follow polars-bio-bench (`conf/common.yaml`,
+`src/utils.py::prepare_datatests`): the `databio-8p.zip` archive from Google Drive,
+extracted to `$BENCH_DATA_ROOT/databio-8p/<dataset>/part-*.parquet`.
+Deliberate differences from that mechanism:
 
-- `requests` z bezpośrednim adresem pobierania zamiast `gdown` — bez nowej
-  zależności. Gdy Google zwróci stronę HTML (limit pobrań), błąd z instrukcją
-  pobrania ręcznego; archiwum położone ręcznie jako
-  `$BENCH_DATA_ROOT/databio-8p.zip` jest używane bez ponownego pobierania.
-- Rozpakowywane są TYLKO pliki danych. Archiwum zawiera też `__MACOSX/`
-  z plikami `._part-*.parquet` (rozszerzenie .parquet, ale to nie Parquet),
-  sumy `.crc` i znaczniki `_SUCCESS` Sparka.
-- Rozpakowanie do katalogu tymczasowego i podmiana dopiero po sukcesie —
-  przerwane rozpakowanie nie zostawia katalogu, który wygląda na kompletny,
-  i nie niszczy poprzedniej kopii.
-- Weryfikacja: 8 plików na zbiór, schemat, liczba wierszy zgodna ze
-  specyfikacją (sekcja 4).
+- `requests` with a direct download URL instead of `gdown` — no new dependency. When Google
+  returns an HTML page (download quota), the error carries manual download instructions; an
+  archive placed by hand as `$BENCH_DATA_ROOT/databio-8p.zip` is used without downloading again.
+- ONLY the data files are extracted. The archive also contains `__MACOSX/` with
+  `._part-*.parquet` files (a .parquet extension, but not Parquet), `.crc` checksums and
+  Spark's `_SUCCESS` markers.
+- Extraction goes to a temporary directory and is swapped in only after success — an
+  interrupted extraction does not leave a directory that looks complete, and does not destroy
+  the previous copy.
+- Verification: 8 files per dataset, the schema, and the row count matching the expected one
+  (bench.data.datasets.EXPECTED_ROWS_K).
 
-Użycie: python -m bench.data.download [--root KATALOG]
+Usage: python -m bench.data.download [--root DIRECTORY]
 """
 
 from __future__ import annotations
@@ -52,12 +51,12 @@ _PART = re.compile(r"databio-8p/([^/]+)/(part-[^/]+\.parquet)")
 
 
 def expected_rows() -> dict[str, int]:
-    """Oczekiwane liczby wierszy (nazwa katalogu -> wiersze), ze specyfikacji."""
+    """Expected row counts (directory name -> rows), from EXPECTED_ROWS_K."""
     return {DATASETS[i]: k * 1000 for i, k in EXPECTED_ROWS_K.items()}
 
 
 def extract_parts(zip_path: Path, dest: Path) -> None:
-    """Rozpakowuje wyłącznie `databio-8p/<zbiór>/part-*.parquet` do `dest/<zbiór>/`."""
+    """Extract only `databio-8p/<dataset>/part-*.parquet` to `dest/<dataset>/`."""
     names = set(DATASETS.values())
     tmp = dest.with_name(dest.name + ".tmp")
     shutil.rmtree(tmp, ignore_errors=True)
@@ -85,7 +84,7 @@ def _schema_text(schema: pa.Schema) -> str:
 def verify(
     dest: Path, expected: Mapping[str, int], tolerance: int = ROW_TOLERANCE
 ) -> list[str]:
-    """Lista problemów (pusta = zbiór kompletny). Czyta tylko stopki plików."""
+    """List of problems (empty = the dataset is complete). Reads only the file footers."""
     problems: list[str] = []
     for name, rows_expected in expected.items():
         d = dest / name
@@ -99,7 +98,7 @@ def verify(
         for p in parts:
             try:
                 pf = pq.ParquetFile(p)
-            except Exception as e:  # uszkodzony albo nie-Parquet
+            except Exception as e:  # corrupted or not Parquet
                 problems.append(f"{name}/{p.name}: unreadable Parquet ({e})")
                 break
             if not pf.schema_arrow.equals(EXPECTED_SCHEMA):
@@ -118,7 +117,7 @@ def verify(
 
 
 def summarize(dest: Path) -> list[tuple[int, str, int, int]]:
-    """(id, zbiór, liczba plików, liczba wierszy) dla każdego zbioru."""
+    """(id, dataset, file count, row count) for every dataset."""
     out = []
     for idx, name in DATASETS.items():
         files = sorted((dest / name).glob("part-*.parquet"))
@@ -128,7 +127,7 @@ def summarize(dest: Path) -> list[tuple[int, str, int, int]]:
 
 
 def download(url: str, target: Path, expected_bytes: int, timeout: float = 60) -> None:
-    """Pobiera strumieniowo do `target.part`; nazwa docelowa dopiero po sprawdzeniu rozmiaru."""
+    """Stream the download to `target.part`; the final name is set only after the size check."""
     part = target.with_name(target.name + ".part")
     with requests.get(url, stream=True, timeout=timeout) as r:
         r.raise_for_status()
@@ -157,7 +156,7 @@ def ensure_dataset(
     expected_bytes: int = ZIP_BYTES,
     expected: Mapping[str, int] | None = None,
 ) -> Path:
-    """Zapewnia kompletny zbiór w `data_dir(root)`; zwraca jego katalog."""
+    """Ensure a complete dataset in `data_dir(root)`; return its directory."""
     expected = expected_rows() if expected is None else expected
     dest = data_dir(root)
     if dest.is_dir() and not verify(dest, expected):

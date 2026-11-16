@@ -1,4 +1,4 @@
-"""Procesy silników: wolne porty, sprawdzanie, czy proces żyje, i oczekiwanie na port."""
+"""Engine processes: free ports, checking that a process is alive, and waiting for a port."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 class EngineError(RuntimeError):
-    """Silnik nie wystartował albo padł — komunikat wskazuje proces i jego log."""
+    """An engine failed to start or died — the message names the process and its log."""
 
 
 def free_port() -> int:
@@ -26,7 +26,7 @@ def check_alive(name: str, proc: subprocess.Popen, log: Path) -> None:
 def wait_for_port(
     port: int, proc: subprocess.Popen, *, name: str, log: Path, timeout: float = 60.0
 ) -> None:
-    """Czeka, aż proces zacznie przyjmować połączenia TCP na porcie (albo padnie)."""
+    """Wait until the process accepts TCP connections on the port (or dies)."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         check_alive(name, proc, log)

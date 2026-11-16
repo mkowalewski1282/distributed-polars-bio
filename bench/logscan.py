@@ -1,8 +1,8 @@
-"""Liczniki z logów procesów silników z czasu jednego przebiegu (specyfikacja 3b-2, 5.6 i 6.3).
+"""Counters taken from the engine process logs for the duration of one run.
 
-Orkiestrator zapamiętuje rozmiary logów przed przebiegiem (`mark`) i po przebiegu czyta tylko
-dopisany tekst (`text_since`): liczbę workerów sesji Saila i rozmiar ładunków broadcastu
-odebranych przez executory Ballisty."""
+The orchestrator records the log sizes before a run (`mark`) and after the run reads only the
+appended text (`text_since`): the number of Sail session workers and the size of the broadcast
+payloads received by Ballista executors."""
 
 from __future__ import annotations
 
@@ -10,20 +10,20 @@ import re
 from pathlib import Path
 from typing import Iterable
 
-#: Start workera sesji w logu serwera Saila 0.7.2 (tests/test_sail_runner.py).
+#: Session worker start in the Sail 0.7.2 server log (tests/test_sail_runner.py).
 WORKER_READY = re.compile(r"worker (\d+) server is ready")
-#: Linia executora Ballisty przy dekodowaniu węzła z broadcastem (bio_phys_codec.rs, plan 3b-2).
+#: Ballista executor line logged when decoding a node with a broadcast (bio_phys_codec.rs).
 BROADCAST_DECODED = re.compile(r"broadcast payload decoded: (\d+) bytes")
 
 
 def mark(paths: Iterable[Path]) -> dict[Path, int]:
-    """Bieżące rozmiary plików (brak pliku → 0)."""
+    """Current file sizes (a missing file → 0)."""
     return {Path(p): (Path(p).stat().st_size if Path(p).exists() else 0) for p in paths}
 
 
 def text_since(mark: dict[Path, int]) -> str:
-    """Tekst dopisany do plików od `mark`; plik krótszy niż zapamiętany offset (zastąpiony albo
-    skrócony) jest czytany od początku."""
+    """Text appended to the files since `mark`; a file shorter than the recorded offset (replaced
+    or truncated) is read from the start."""
     parts = []
     for path, offset in mark.items():
         if not path.exists():

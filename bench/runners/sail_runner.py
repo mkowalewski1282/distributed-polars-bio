@@ -1,19 +1,21 @@
-"""Runner Saila (specyfikacja 8.1, 8.3): klient Spark Connect łączący się z serwerem bloku
-(bench/runners/sail_server.py); jeden scenariusz w świeżym procesie.
+"""Sail runner: a Spark Connect client connecting to the block's server
+(bench/runners/sail_server.py); one scenario in a fresh process.
 
-Zawsze applyInArrow z kontekstem polars-bio na wątek (sail_genomics.arrow, wariant `sail`). Funkcja
-zapisuje fazy z wnętrza (czas wywołań polars-bio) do pliku tymczasowego, który runner sumuje po
-zapytaniu: `phases.pb_s`, `extra.udf_groups`.
+Always applyInArrow with pooled polars-bio contexts (sail_genomics.arrow, the `sail` variant).
+The function records phases from the inside (the time of the polars-bio calls) to a temporary
+file, which the runner sums after the query: `phases.pb_s`, `extra.udf_groups`.
 
-Czas: od budowy zapytania (wczytanie Parquet, grupowanie, widok, SQL) do ostatniej partii
-wyniku; bez startu sesji i rozgrzewki. Pierwsze RPC sesji to zawsze `warm_up` (przed zegarem) —
-wtedy Sail uruchamia driver i workery sesji, więc start „klastra” sesji też jest przed pomiarem.
+Time: from building the query (reading Parquet, grouping, view, SQL) to the last result batch;
+excluding session startup and warm-up. The first RPC of a session is always `warm_up` (before
+the clock) — that is when Sail starts the session's driver and workers, so the startup of the
+session's "cluster" is also before the measurement.
 
-Wynik jest odbierany jako tabele Arrow przez `client.to_table_as_iterator` — to samo, czego
-używa publiczne toLocalIterator, ale bez zamiany na obiekty Row — i trzymany w pamięci; zegar
-staje po ostatniej partii, a suma kontrolna jest liczona potem (specyfikacja 3b-2, 4.1; jej czas:
-`extra.checksum_s`). `phases.first_batch_s`: czas do pierwszej partii. Szczyt pamięci: proces
-klienta (z trzymanym wynikiem), odczytany przed sumą kontrolną; szczyt serwera mierzy orkiestrator."""
+The result is received as Arrow tables through `client.to_table_as_iterator` — the same thing
+the public toLocalIterator uses, but without converting to Row objects — and kept in memory;
+the clock stops after the last batch and the checksum is computed afterwards (its time:
+`extra.checksum_s`). `phases.first_batch_s`: time to the first batch. Peak memory: the client
+process (with the held result), read before the checksum; the server's peak is measured by the
+orchestrator."""
 
 from __future__ import annotations
 
@@ -31,7 +33,7 @@ PROG = "sail_runner"
 
 
 def iter_arrow(spark, df):
-    """Wynik zapytania jako kolejne tabele Arrow (po jednej na partię z serwera)."""
+    """The query result as consecutive Arrow tables (one per batch from the server)."""
     import pyarrow as pa
 
     client = spark.client
@@ -41,8 +43,8 @@ def iter_arrow(spark, df):
 
 
 def warm_up(spark) -> None:
-    """Pierwsze zapytanie sesji, przed zegarem: Sail uruchamia driver i workery sesji przy
-    pierwszym RPC (sonda 02.10.2026)."""
+    """The session's first query, before the clock: Sail starts the session's driver and workers
+    at the first RPC (probe of 2026-10-02)."""
     spark.range(1).count()
 
 
@@ -68,7 +70,7 @@ def run(op: str, left: Path, right: Path | None, cols: tuple[str, str, str], rem
                 if first_batch_s is None:
                     first_batch_s = time.perf_counter() - t0
             t_total_s = time.perf_counter() - t0
-            peak_rss_bytes = peak_rss()  # przed sumą kontrolną: jej bufory nie zawyżają szczytu
+            peak_rss_bytes = peak_rss()  # before the checksum: its buffers do not inflate the peak
         finally:
             spark.stop()
         t = time.perf_counter()

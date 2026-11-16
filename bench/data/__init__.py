@@ -1,1 +1,1 @@
-"""Dane benchmarku: rejestr zbiorów databio-8p i ich pobieranie."""
+"""Benchmark data: the databio-8p dataset registry and its download."""

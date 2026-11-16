@@ -1,4 +1,4 @@
-"""Reguły ważności przebiegu (specyfikacja 6.4–6.5) i dryfu przebiegów kontrolnych (6.3; 3b-2, 4.2)."""
+"""Rules for the validity of a run and for the drift of control runs."""
 
 from __future__ import annotations
 
@@ -7,14 +7,14 @@ import re
 import statistics
 from dataclasses import dataclass
 
-#: Pola linii JSON runnera (specyfikacja 8.3).
+#: Fields of the runner's JSON line.
 REPORT_KEYS = ("rows", "checksum", "t_total_s", "phases", "extra", "peak_rss_bytes")
 _CHECKSUM = re.compile(r"0x[0-9a-f]{16}")
 
 
 @dataclass(frozen=True)
 class Expected:
-    """Wynik wzorcowy scenariusza: liczba wierszy i suma kontrolna."""
+    """Reference result of a scenario: row count and checksum."""
 
     rows: int
     checksum: str
@@ -25,7 +25,7 @@ def _is_int(value) -> bool:
 
 
 def parse_report(stdout: str) -> dict:
-    """Jedna niepusta linia JSON zgodna z protokołem 8.3; inaczej ValueError z opisem."""
+    """A single non-empty JSON line conforming to the runner protocol; otherwise ValueError with a description."""
     lines = [line for line in stdout.splitlines() if line.strip()]
     if len(lines) != 1:
         raise ValueError(f"runner stdout: expected one JSON line, got {len(lines)}")
@@ -53,7 +53,7 @@ def parse_report(stdout: str) -> dict:
 
 
 def stderr_tail(stderr: str, limit: int = 300) -> str:
-    """Ostatnia niepusta linia stderr (komunikat błędu runnera), skrócona do `limit` znaków."""
+    """The last non-empty stderr line (the runner's error message), truncated to `limit` characters."""
     lines = [line.strip() for line in stderr.splitlines() if line.strip()]
     return lines[-1][-limit:] if lines else "(empty stderr)"
 
@@ -62,14 +62,14 @@ def invalid_reasons(
     *, returncode: int, killed: str | None, report: dict | None, report_error: str | None,
     expected: Expected | None, pswpout_delta: int | None, pswpin_delta: int | None, stderr: str,
 ) -> list[str]:
-    """Przyczyny nieważności przebiegu (pusta lista = ważny), w kolejności:
+    """Reasons a run is invalid (an empty list = valid), in order:
 
-    - zabicie przez orkiestrator (timeout, strażnik pamięci) — przyczyna wprost;
-    - niezerowy kod wyjścia — z ostatnią linią stderr;
-    - brak poprawnej linii JSON;
-    - liczba wierszy albo suma kontrolna różna od wzorca;
-    - przyrost pswpout albo pswpin (specyfikacja 6.5; 3b-2, 4.3: seria startuje od pustego swapu,
-      więc każde wczytanie pochodzi z pomiaru)."""
+    - killed by the orchestrator (timeout, memory guard) — the reason as is;
+    - a non-zero exit code — with the last stderr line;
+    - no valid JSON line;
+    - a row count or checksum different from the reference;
+    - an increase of pswpout or pswpin (a series starts from empty swap, so every swap-in
+      comes from the measurement)."""
     reasons: list[str] = []
     if killed is not None:
         reasons.append(killed)
@@ -90,16 +90,17 @@ def invalid_reasons(
 
 
 def drift(t_start: float, t_end: float) -> float:
-    """Względna zmiana czasu przebiegu kontrolnego między początkiem a końcem bloku."""
+    """Relative change of the control-run time between the start and the end of a block."""
     return abs(t_end - t_start) / max(t_start, 1e-9)
 
 
 def control_drift(start: list[float], end: list[float], *, repeats: int, tolerance: float) -> str | None:
-    """Przyczyna unieważnienia bloku po przebiegach kontrolnych albo None (specyfikacja 3b-2, 4.2).
+    """The reason a block is invalidated after its control runs, or None.
 
-    `start`, `end` — czasy WAŻNYCH przebiegów kontrolnych z początku i z końca bloku. Mniej niż
-    połowa ważnych na którymś końcu → „control run invalid”; względna różnica median powyżej
-    tolerancji → „control drift N%”. Mediana z kilku przebiegów odcina pojedyncze wyskoki."""
+    `start`, `end` — times of the VALID control runs from the start and the end of the block.
+    Fewer than half valid at either end → "control run invalid"; a relative difference of the
+    medians above the tolerance → "control drift N%". The median of several runs cuts off
+    single outliers."""
     if not start or not end or 2 * len(start) < repeats or 2 * len(end) < repeats:
         return "control run invalid"
     d = drift(statistics.median(start), statistics.median(end))

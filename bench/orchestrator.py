@@ -1,13 +1,14 @@
-"""Orkiestrator serii pomiarowej (specyfikacja 6 i 8; etap 4: semantyka P): przebieg wzorcowy,
-potem bloki (wariant × P) — przebiegi kontrolne, rozgrzewka, rundy w losowej kolejności z ziarna,
-przebiegi kontrolne — z walidacją każdego przebiegu i zapisem wiersza na przebieg. CPU bloków
-pochodzą z układu maszyny (bench/cpus.py); blok z P większym niż liczba CPU poza rdzeniem
-systemowym jest pomijany z powodem (wiersz na scenariusz) i nie psuje kodu wyjścia.
+"""Orchestrator of a measurement series: the reference run, then blocks (variant × P) — control
+runs, warm-up, rounds in a random order derived from the seed, control runs — with validation of
+every run and one result row per run. Block CPUs come from the machine layout (bench/cpus.py);
+a block with a P larger than the number of CPUs outside the system core is skipped with a stated
+reason (one row per scenario) and does not spoil the exit code.
 
-Uruchomienie (seria pomiarowa: z Windows Terminal, VS Code zamknięty — checklista RAM):
+Usage (a measurement series: from Windows Terminal, VS Code closed — the RAM checklist):
     uv run python -m bench.orchestrator bench/conf/smoke.yaml [--ballista-profile debug]
-Kody wyjścia: 0 — seria zaliczona (każdy nieważny przebieg jest na liście expected_invalid);
-1 — nieoczekiwane nieważne przebiegi albo przerwane bloki; 2 — błąd konfiguracji, brak danych albo binarek (przed pierwszym pomiarem)."""
+Exit codes: 0 — the series passed (every invalid run is on the expected_invalid list);
+1 — unexpected invalid runs or interrupted blocks; 2 — a configuration error, missing data or
+missing binaries (before the first measurement)."""
 
 from __future__ import annotations
 
@@ -43,18 +44,18 @@ from bench.procutil import EngineError
 from bench.results import ResultsWriter, to_parquet
 from bench.validity import Expected, control_drift, invalid_reasons, parse_report, stderr_tail
 
-#: Co ile sekund orkiestrator sprawdza runner (limit czasu, strażnik pamięci).
+#: How often, in seconds, the orchestrator checks the runner (time limit, memory guard).
 POLL_S = 0.2
-#: Strażnik pamięci: przy MemAvailable poniżej tej wartości przebieg jest przerywany, zanim
-#: system zacznie intensywnie swapować albo wywróci WSL.
+#: Memory guard: when MemAvailable falls below this value the run is aborted, before the system
+#: starts swapping heavily or brings WSL down.
 MEM_FLOOR_BYTES = 300 * 2**20
-#: Blok z dryfem przebiegu kontrolnego powtarzany jest raz (specyfikacja 6.3).
+#: A block with control-run drift is repeated once.
 MAX_BLOCK_ATTEMPTS = 2
-#: Po timeoucie, strażniku pamięci albo śmierci procesu silnik jest restartowany; proces, który
-#: nie zakończy się w tym czasie po SIGTERM, dostaje SIGKILL (przegląd 3a).
+#: After a timeout, the memory guard or a process death the engine is restarted; a process that
+#: does not exit within this time after SIGTERM gets SIGKILL.
 HARD_STOP_GRACE_S = 3.0
-#: Przyczyna w wierszach bloku z P większym niż liczba CPU poza rdzeniem systemowym (specyfikacja
-#: etapu 4, 5.2) — wiersze oczekiwane: seria trwa dalej i jest zaliczona, raport pokazuje lukę.
+#: Reason in the rows of a block whose P exceeds the number of CPUs outside the system core —
+#: these rows are expected: the series goes on and passes, and the report shows the gap.
 SKIPPED_P_REASON = "skipped: P exceeds available CPUs"
 
 _METRIC_KEYS = (
@@ -65,7 +66,7 @@ _METRIC_KEYS = (
 
 @dataclass
 class Probe:
-    """Źródła metryk systemowych (bench/metrics.py) — w testach podmieniane."""
+    """Sources of system metrics (bench/metrics.py) — replaced in tests."""
 
     mem_available: Callable[[], int] = metrics.mem_available
     pswpout: Callable[[], int] = metrics.pswpout
@@ -78,7 +79,7 @@ class Probe:
 
 @dataclass
 class Outcome:
-    """Wynik jednego wykonania runnera."""
+    """Result of one runner execution."""
 
     returncode: int
     stdout: str
@@ -93,9 +94,10 @@ class SeriesSummary:
     parquet: Path
     rows: int = 0
     invalid: int = 0
-    #: Nieważne przebiegi z listy expected_invalid konfiguracji.
+    #: Invalid runs that are expected: those matching the configuration's expected_invalid list,
+    #: and the rows of P values skipped because P exceeds the available CPUs.
     expected: int = 0
-    #: Pozostałe nieważne przebiegi: „wariant P=p scenariusz: przyczyna”.
+    #: Remaining invalid runs: "variant P=p scenario: reason".
     unexpected: list[str] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
 
@@ -105,19 +107,19 @@ class SeriesSummary:
 
 
 class SeriesError(RuntimeError):
-    """Seria przerwana: scenariusz bez wyniku wzorcowego."""
+    """Series aborted: a scenario without a reference result."""
 
 
 def _settle(seconds: float) -> None:
-    """Pauza przed przebiegiem (osobna funkcja, żeby testy mogły ją podmienić)."""
+    """Pause before a run (a separate function so that tests can replace it)."""
     time.sleep(seconds)
 
 
 def execute(command: Command, *, timeout_s: float, mem_floor: int, probe: Probe, scratch: Path,
             dead: Callable[[], list[str]] = lambda: []) -> Outcome:
-    """Uruchamia runner z wyjściem do plików — potoki mogłyby zakleszczyć runner zalewający
-    stderr — pilnując limitu czasu, strażnika pamięci i procesów silnika (`dead`: nazwy procesów,
-    które padły); zabija całą grupę procesów runnera."""
+    """Run the runner with its output going to files — pipes could deadlock a runner that floods
+    stderr — while watching the time limit, the memory guard and the engine processes (`dead`:
+    names of processes that died); kills the runner's whole process group."""
     out_path, err_path = scratch / "stdout.txt", scratch / "stderr.txt"
     killed: str | None = None
     t0 = time.monotonic()
@@ -161,7 +163,7 @@ def execute(command: Command, *, timeout_s: float, mem_floor: int, probe: Probe,
 
 
 def git_commit() -> str:
-    """HEAD repozytorium; sufiks -dirty, gdy śledzone pliki mają zmiany."""
+    """The repository HEAD; the suffix -dirty when tracked files have changes."""
 
     def git(*args: str) -> str:
         return subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True).stdout.strip()
@@ -171,9 +173,10 @@ def git_commit() -> str:
 
 
 def engine_versions(profile: str, *, ballista: bool) -> dict[str, str]:
-    """Wersje silników i bibliotek przebiegu; dla serii z Ballistą — sumy SHA-256 binarek
-    (dokładnie wiadomo, czym mierzono; przegląd 3a). Bez Cargo.lock (niezainicjowany submoduł
-    Ballisty) wersje Ballisty są „unknown” — seria bez Ballisty nie potrzebuje jej źródeł."""
+    """Versions of the engines and libraries of a run; for a series with Ballista, the SHA-256
+    sums of the binaries (so it is known exactly what was measured). Without Cargo.lock (an
+    uninitialised Ballista submodule) the Ballista versions are "unknown" — a series without
+    Ballista does not need its sources."""
     lock_file = BALLISTA_DIR / "Cargo.lock"
     lock = lock_file.read_text() if lock_file.is_file() else ""
 
@@ -211,7 +214,7 @@ def _invalidate(rows: list[dict], reason: str) -> list[dict]:
 
 
 def _print(line: str) -> None:
-    """Postęp serii na bieżąco — także przy przekierowaniu do pliku (przegląd 3a)."""
+    """Series progress as it happens — also when redirected to a file (hence flush)."""
     print(line, flush=True)
 
 
@@ -237,7 +240,7 @@ def _progress(row: dict) -> str:
 
 
 class _Series:
-    """Stan jednej serii: konfiguracja, silniki, źródła metryk, zapis i podsumowanie."""
+    """State of one series: configuration, engines, metric sources, output and summary."""
 
     def __init__(self, cfg, factory, probe, mem_floor, directory, scratch, writer, out, summary, profile,
                  layout: CpuLayout):
@@ -250,14 +253,14 @@ class _Series:
         self.versions = json.dumps(engine_versions(profile, ballista="ballista" in cfg.variants))
 
     def record_env(self, label: str, engine) -> None:
-        """Zmienne środowiska ustawione przez narzędzie dla bloku → env.json serii (przegląd 3a)."""
+        """Environment variables set by the tool for a block → the series' env.json."""
         self.env_records[label] = engine.env_record()
         (self.directory / "env.json").write_text(json.dumps(self.env_records, indent=2, sort_keys=True))
 
     def row(self, scenario: Scenario, variant: str, parallelism: int, cpus: tuple[int, ...] | None,
             rep: int, attempt: int, measured: dict, *, warmup=False,
             control_position: str | None = None, reference=False) -> dict:
-        """Wiersz wyniku; `cpus` — CPU silnika, None — blok pominięty (cpus "[]", smt null)."""
+        """A result row; `cpus` — the engine's CPUs, None — a skipped block (cpus "[]", smt null)."""
         return {
             "timestamp": dt.datetime.now().isoformat(timespec="seconds"),
             "git_commit": self.git_commit,
@@ -298,8 +301,9 @@ class _Series:
                 )
 
     def skip_block(self, block: Block) -> None:
-        """Blok z P większym niż układ CPU: silnik nie startuje, każdy scenariusz dostaje jeden
-        wiersz z przyczyną SKIPPED_P_REASON (raport pokaże lukę zamiast pustego miejsca)."""
+        """A block with a P larger than the CPU layout: the engine does not start, every scenario
+        gets one row with the reason SKIPPED_P_REASON (the report shows a gap instead of
+        silence)."""
         available = max_parallelism(self.layout)
         self.out(f"{block.label}: {SKIPPED_P_REASON} ({available} CPUs outside the system core)")
         self.write([
@@ -308,11 +312,11 @@ class _Series:
         ])
 
     def explain_pass(self, engine, block: Block, skipped: dict[str, str]) -> None:
-        """Dodatkowy, niemierzony przebieg EXPLAIN ANALYZE każdego scenariusza (specyfikacja 3b-2,
-        6.4): plan z metrykami operatorów do pliku; nie trafia do wyników. Niepowodzenie →
-        podsumowanie serii (seria kończy się kodem 1). Scenariusze pominięte w pomiarach bloku
-        (`skipped`: id → przyczyna) nie są uruchamiane i nie dodają porażki — wiersze pomiarowe
-        niosą już przyczynę. Po zabitym przebiegu silnik jest restartowany."""
+        """An extra, unmeasured EXPLAIN ANALYZE run of every scenario: the plan with operator
+        metrics goes to a file; it does not enter the results. A failure → the series summary
+        (the series exits with code 1). Scenarios skipped in the block's measurements
+        (`skipped`: id → reason) are not run and add no failure — the measurement rows already
+        carry the reason. After a killed run the engine is restarted."""
         for scenario in self.cfg.scenarios:
             if scenario.id in skipped:
                 self.out(f"{block.label}: EXPLAIN ANALYZE {scenario.id} skipped ({skipped[scenario.id]})")
@@ -336,11 +340,11 @@ class _Series:
 
     def measure(self, engine, scenario: Scenario, expected: Expected | None,
                 label: str) -> tuple[dict, bool]:
-        """Jeden przebieg z metrykami (specyfikacja 5). Drugi element: czy silnik trzeba
-        uruchomić od nowa (runner zabity albo padł proces silnika)."""
-        # WSL2: pamięć zwolniona przez poprzedni przebieg wraca do Hyper-V po ok. 2 s, więc
-        # przebiegi startowane w różnych odstępach trafiają na przemian na strony ciepłe i zimne.
-        # Pauza daje każdemu przebiegowi ten sam stan startowy; poza WSL decyduje badanie szumu.
+        """One run with metrics. The second element: whether the engine must be restarted (the
+        runner was killed or an engine process died)."""
+        # WSL2: memory freed by the previous run returns to the host after ~2 s, so runs started
+        # at different intervals alternately hit warm and cold pages. The pause gives every run
+        # the same starting state; outside WSL, a noise study decides whether it is needed.
         if self.cfg.settle_s > 0:
             _settle(self.cfg.settle_s)
         pids = engine.server_pids()
@@ -350,7 +354,7 @@ class _Series:
                 self.probe.reset_peak_rss(pid)
                 base[name] = self.probe.rss(pid)
             except (OSError, KeyError):
-                pass  # martwy proces wykryje odczyt szczytu po przebiegu
+                pass  # a dead process will be detected when the peak is read after the run
         dirs = engine.shuffle_dirs()
         shuffle_before = sum(self.probe.dir_size(d) for d in dirs)
         swap_before, swap_in_before = self.probe.pswpout(), self.probe.pswpin()
@@ -410,7 +414,7 @@ class _Series:
         return measured, bool(outcome.killed or dead)
 
     def reference_pass(self) -> dict[str, Expected]:
-        """Wynik wzorcowy każdego scenariusza i przebiegu kontrolnego: polars-bio na 1 partycji."""
+        """The reference result of every scenario and of the control run: polars-bio on 1 partition."""
         engine = self.factory(REFERENCE_VARIANT, 1)
         expected: dict[str, Expected] = {}
         engine.start()
@@ -431,9 +435,9 @@ class _Series:
         return expected
 
     def run_block(self, block: Block, attempt: int, expected: dict[str, Expected], rows: list[dict]) -> bool:
-        """Blok (specyfikacja 6.2; 3b-2, 4.2): przebiegi kontrolne → rozgrzewka → rundy →
-        przebiegi kontrolne. Wiersze trafiają do `rows` na bieżąco (wołający zapisuje je także
-        po przerwaniu). True = dryf albo nieważne przebiegi kontrolne."""
+        """A block: control runs → warm-up → rounds → control runs. Rows go to `rows` as they
+        are produced (the caller saves them also after an interruption). True = drift or
+        invalid control runs."""
         engine = self.factory(block.variant, block.parallelism)
         control = self.factory(CONTROL_VARIANT, CONTROL_THREADS)
         self.record_env("control", control)
@@ -463,7 +467,7 @@ class _Series:
             return row
 
         def controls(position: str) -> list[float]:
-            """Czasy ważnych przebiegów kontrolnych z jednego końca bloku."""
+            """Times of the valid control runs from one end of the block."""
             times = []
             for rep in range(1, self.cfg.control_repeats + 1):
                 row = run(self.cfg.control, rep, position=position)
@@ -536,9 +540,10 @@ def run_series(
     mem_floor: int = MEM_FLOOR_BYTES,
     out: Callable[[str], None] = _print,
 ) -> SeriesSummary:
-    """Seria: przebieg wzorcowy, potem bloki (blok z dryfem powtarzany raz; blok z P większym niż
-    układ CPU — pominięty z powodem). Wiersze trafiają do runs.jsonl po każdym bloku, a na końcu —
-    także po przerwaniu — do runs.parquet. `layout`: układ CPU (domyślnie odczytany z tej maszyny)."""
+    """A series: the reference run, then blocks (a block with drift is repeated once; a block
+    with a P larger than the CPU layout is skipped with a stated reason). Rows go to runs.jsonl
+    after every block, and at the end — also after an interruption — to runs.parquet. `layout`:
+    the CPU layout (by default read from this machine)."""
     if layout is None:
         layout = read_layout()
     directory = _new_directory(results_dir, cfg.series)
@@ -573,25 +578,26 @@ def _interrupt(signum, frame) -> None:
 
 
 def handle_termination_signals() -> dict:
-    """SIGTERM (`kill`) i SIGHUP (zamknięcie terminala) działają jak Ctrl-C: przerywają serię tą
-    samą ścieżką — zabicie grupy runnera, zatrzymanie silnika, zapis wierszy przerwanego bloku
-    i runs.parquet. Domyślnie oba sygnały kończą proces natychmiast, bez sprzątania, a runner
-    (osobna sesja) i procesy silnika zostają na CPU bloku. Zwraca poprzednie obsługi."""
+    """SIGTERM (`kill`) and SIGHUP (closing the terminal) act like Ctrl-C: they interrupt the
+    series along the same path — killing the runner's group, stopping the engine, saving the rows
+    of the interrupted block and runs.parquet. By default both signals end the process at once,
+    without cleanup, and the runner (a separate session) and the engine processes stay on the
+    block's CPUs. Returns the previous handlers."""
     return {sig: signal.signal(sig, _interrupt) for sig in (signal.SIGTERM, signal.SIGHUP)}
 
 
 def preflight(cfg: SeriesConfig, profile: str, layout: CpuLayout) -> list[int]:
-    """Sprawdzenia przed pierwszym pomiarem (bench/preflight.py); zwraca P, które seria pominie."""
+    """Checks before the first measurement (bench/preflight.py); returns the P values the series will skip."""
     return preflight_checks.run(cfg, profile, layout)
 
 
-#: Ile nieoczekiwanych nieważnych przebiegów wypisać w podsumowaniu.
+#: How many unexpected invalid runs to list in the summary.
 SHOWN_UNEXPECTED = 20
 
 
 def summary_lines(series: str, summary: SeriesSummary) -> list[str]:
-    """Podsumowanie serii: zaliczona (OK) albo nie (FAILED) i lista przyczyn (specyfikacja 3b-2,
-    pozycja 17 — automatyczne zaliczenie smoke)."""
+    """Series summary: passed (OK) or not (FAILED) and a list of reasons (this lets a smoke
+    series be accepted automatically)."""
     status = "OK" if summary.ok else "FAILED"
     lines = [
         f"{series} {status}: runs {summary.rows}, invalid {summary.invalid} (expected "
@@ -622,7 +628,7 @@ def main(argv: list[str] | None = None) -> int:
         root = args.data_root if args.data_root is not None else data_dir().parent
         root = root.expanduser().resolve()
         check_data(cfg, root)
-        # Układ przed zawężeniem affinity orkiestratora do rdzenia systemowego (niżej).
+        # The layout is read before the orchestrator's affinity is narrowed to the system core (below).
         layout = preflight_checks.cpu_layout()
         preflight(cfg, args.ballista_profile, layout)
     except (ConfigError, EngineError, OSError) as e:

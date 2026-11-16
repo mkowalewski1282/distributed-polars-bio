@@ -1,4 +1,4 @@
-"""Układ CPU wyliczany z topologii maszyny: rdzeń systemowy i kolejność przydziału CPU dla P."""
+"""CPU layout derived from the machine topology: the system core and the CPU allocation order for P."""
 
 from __future__ import annotations
 
@@ -11,18 +11,18 @@ SYSFS_CPU = Path("/sys/devices/system/cpu")
 
 
 class TopologyError(RuntimeError):
-    """Topologii CPU nie da się odczytać z sysfs."""
+    """The CPU topology cannot be read from sysfs."""
 
 
 class NotEnoughCpus(ValueError):
-    """Żądane P przekracza liczbę CPU dostępnych poza rdzeniem systemowym."""
+    """The requested P exceeds the number of CPUs available outside the system core."""
 
 
 @dataclass(frozen=True)
 class CpuLayout:
-    system: tuple[int, ...]  # wszystkie dozwolone wątki pierwszego rdzenia
-    order: tuple[int, ...]  # kolejność przydziału CPU dla P (bez rdzenia systemowego)
-    siblings: tuple[frozenset[int], ...]  # rdzenie poza systemowym: zbiory dozwolonych wątków
+    system: tuple[int, ...]  # all allowed threads of the first core
+    order: tuple[int, ...]  # CPU allocation order for P (without the system core)
+    siblings: tuple[frozenset[int], ...]  # cores other than the system core: sets of allowed threads
 
 
 def _read(path: Path) -> str:
@@ -33,7 +33,7 @@ def _read(path: Path) -> str:
 
 
 def _parse_list(text: str) -> set[int]:
-    """Format listy jądra: '0-1', '0,4', '0-2,8'."""
+    """Kernel list format: '0-1', '0,4', '0-2,8'."""
     out: set[int] = set()
     for part in text.split(","):
         part = part.strip()
@@ -59,7 +59,7 @@ def read_layout(sysfs: Path = SYSFS_CPU, affinity: set[int] | None = None) -> Cp
         topo = entry / "topology"
         try:
             key = (int(_read(topo / "physical_package_id")), int(_read(topo / "core_id")))
-            # wątki rodzeństwa czytamy dla walidacji formatu; grupowanie idzie po (pakiet, rdzeń)
+            # sibling threads are read only to validate the format; grouping is by (package, core)
             _parse_list(_read(topo / "thread_siblings_list"))
         except ValueError as exc:
             raise TopologyError(f"malformed topology of cpu{cpu}: {exc}") from exc
@@ -84,13 +84,13 @@ def cpus_for(layout: CpuLayout, p: int) -> tuple[int, ...]:
 
 
 def uses_smt(layout: CpuLayout, cpus) -> bool:
-    """Czy wybrane CPU zawierają dwa wątki tego samego rdzenia."""
+    """Whether the chosen CPUs include two threads of the same core."""
     chosen = set(cpus)
     return any(len(core & chosen) > 1 for core in layout.siblings)
 
 
 def control_cpus(layout: CpuLayout) -> tuple[int, ...]:
-    """Wątki pierwszego rdzenia z order; bez SMT dwa pierwsze CPU z order."""
+    """Threads of the first core in `order`; without SMT, the first two CPUs of `order`."""
     if not layout.order:
         return ()
     first = layout.order[0]
