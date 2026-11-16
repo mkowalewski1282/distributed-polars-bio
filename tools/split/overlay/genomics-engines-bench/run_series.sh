@@ -11,7 +11,8 @@ Before a measurement series:
   2. On WSL2: check the memory limit in .wslconfig (memory=...) and start from an empty swap
      (`free -h`: Swap used 0B; if not, run `wsl --shutdown` in Windows and start again).
      Runs that touch swap are marked invalid.
-  3. The scaling series takes about 1.5 hours.
+  3. The scaling series takes about 1.5 hours, up to about 3 hours when blocks are repeated after
+     control-run drift (limit 4 hours).
 Press Enter to start (Ctrl+C to cancel).
 TEXT
 read -r
