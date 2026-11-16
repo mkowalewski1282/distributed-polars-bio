@@ -18,7 +18,9 @@ te same pola co w 0.18.0 i 0.22.2 (Etap 4, 15.11.2026).
 kopią v0.25.0 (DataFusion 55.2). v0.24.x → v0.25.0 to wyłącznie przeniesienie na API DataFusion 55
 (plus deterministyczna zmiana funkcji haszującej klucze równościowe w `IntervalJoinExec`), bez zmian
 algorytmów przedziałowych — tę równoważność jawnie dopuszcza `tests/test_algorithm_versions.py`
-(`EQUIVALENT_RANGES`). Asymetria znika z polars-bio 0.38 (DataFusion 55.2, v0.25.0).
+(`EQUIVALENT_RANGES`). Asymetria ma zniknąć z polars-bio 0.38 (gałąź główna polars-bio ma już
+DataFusion 55.2 i v0.25.0; wydania jeszcze nie ma — może dostać v0.26.0, która nie zmienia crate'a
+ranges).
 
 Obie łatki mają tę samą naturę: **zero linii logiki, wyłącznie słowa `pub` i re-eksporty**.
 Regułę utrzymaniową sprawdza się względem czystego tagu upstreamu:
@@ -115,8 +117,11 @@ edycję tych kilku funkcji, nic więcej.
 
 Nie zmienia `cache: Arc<PlanProperties>` w nic serializowalnego — i nie musi.
 `with_new_children()` przelicza `cache` deterministycznie ze `schema` i liczby partycji
-dziecka, więc kodek po zdekodowaniu od razu je wywołuje i dostaje dokładnie to, co
-policzyłby vendor (włącznie z właściwym `EmissionType`).
+dziecka, więc kodek po zdekodowaniu od razu je przelicza i dostaje dokładnie to, co
+policzyłby vendor (włącznie z właściwym `EmissionType`). Od DataFusion 55 wołanie
+`with_new_children()` wprost jest przestarzałe: kodek woła `recompute_with_children`
+(`src/bio_phys_codec.rs`) → `replace_children(..., ChildrenPropertiesMode::Recompute)`, a ta
+domyślnie kończy się w `with_new_children()` węzła vendora.
 
 ### Czego łatka NIE wystarczyła załatwić
 

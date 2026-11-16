@@ -38,21 +38,24 @@ PROFILES = ("release", "debug")
 SYSTEM_CPUS = (0, 1)
 #: Sloty zadań i wątki na węzeł: 1 rdzeń fizyczny = 2 wątki SMT.
 SLOTS_PER_NODE = 2
-#: Limit wiadomości gRPC Ballisty (specyfikacja 3b-2, 6.2): w nearest i coverage plan etapu z całą
-#: tabelą rozsyłaną (~29 MiB dla 2-7, ~56 MiB dla 7-0) jest wysyłany raz na executor i etap
-#: (MultiTaskDefinition), więc tabela podróżuje raz na wiadomość startową; domyślne 16 MiB
-#: Ballisty nie wystarcza (strażnik stosuje jeszcze margines MESSAGE_SIZE_MARGIN = 2).
+#: Limit wiadomości gRPC Ballisty (specyfikacja 3b-2, 6.2): w nearest i coverage plan etapu niesie
+#: całą tabelę rozsyłaną (~29 MiB dla 2-7, ~56 MiB dla 7-0). Ballista 55 koduje plan osobno dla
+#: każdego zadania, a zadania przydzielone executorowi w jednej rundzie wysyła jedną wiadomością,
+#: więc wiadomość niesie do SLOTS_PER_NODE kopii tabeli (Ballista 53: jedną na executor i etap);
+#: domyślne 16 MiB Ballisty nie wystarcza (strażnik: margines MESSAGE_SIZE_MARGIN = 2 kopie).
 GRPC_MAX_MESSAGE_BYTES = 512 * 2**20
 #: Wynik wzorcowy: polars-bio na 1 partycji — przy większej liczbie partycji polars-bio 0.28
 #: psuje merge i subtract (bench/runners/polars_bio_runner.py).
 REFERENCE_VARIANT = "polars_bio_ref"
 #: Przebieg kontrolny (specyfikacja 6.3): polars-bio A.
 CONTROL_VARIANT = "polars_bio_a"
-#: Próby startu klastra Ballisty. Ballista 53 rejestruje executor w schedulerze, zanim jego
-#: serwer gRPC przyjmuje połączenia (ballista_executor::executor_server: „TODO the executor
-#: registration should happen only after the executor grpc server started”), a scheduler
-#: w trybie push od razu łączy się z executorem. Przy obciążonym CPU rejestracja bywa
-#: odrzucona („Connection refused”) i executor kończy się kodem 1 (smoke 02.10.2026).
+#: Próby startu klastra Ballisty — zabezpieczenie, nie obejście znanego błędu. Ballista 53
+#: rejestrowała executor w schedulerze, zanim jego serwer gRPC przyjmował połączenia, a scheduler
+#: w trybie push od razu się z nim łączył: przy obciążonym CPU rejestracja bywała odrzucona
+#: („Connection refused”) i executor kończył się kodem 1 (smoke 02.10.2026). Ballista 55 wiąże port
+#: gRPC executora przed rejestracją (#2225; ballista_executor::executor_server, krok 1 przed
+#: krokiem 2), więc ta przyczyna znikła; ponawianie zostaje na inne nieudane starty (zajęty port,
+#: przekroczony czas oczekiwania na rejestrację).
 BALLISTA_START_ATTEMPTS = 3
 #: Czas na zakończenie po SIGTERM przy zwykłym zatrzymaniu silnika (potem SIGKILL).
 BALLISTA_STOP_GRACE_S = 10.0

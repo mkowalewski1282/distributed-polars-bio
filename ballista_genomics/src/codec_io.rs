@@ -140,14 +140,17 @@ pub fn read_schema(buf: &[u8], pos: &mut usize) -> Result<SchemaRef> {
 // --- RecordBatch przez Arrow IPC -------------------------------------------
 //
 // Uzywane przez operacje o wzorcu BROADCAST (nearest, coverage): lewa,
-// indeksowana tabela jedzie w calosci w ladunku planu fizycznego do kazdego
-// executora, ktory odbudowuje z niej indeks lokalnie.
+// indeksowana tabela jedzie w calosci w ladunku planu fizycznego kazdego
+// zadania (Ballista 55 koduje plan osobno dla kazdego zadania), a executor
+// odbudowuje z niej indeks lokalnie.
 //
-// GRANICA SKALOWALNOSCI: ladunek planu idzie przez gRPC, a Ballista ustawia
-// max_message_size = 16 MB (ballista-core/src/utils.rs). Przekroczenie tego
-// limitu w trybie push nie konczy zapytania bledem: Ballista 53 uznaje executor
-// za utracony i ponawia, wiec zapytanie wisi. To jest wlasciwe ograniczenie
-// tego podejscia i nalezy je raportowac jako takie, a nie obchodzic.
+// GRANICA SKALOWALNOSCI: ladunek planu idzie przez gRPC, a domyslny limit
+// wiadomosci Ballisty to 16 MiB (`ballista.client.grpc_max_message_size`,
+// ballista-core/src/config.rs; serwery gRPC schedulera i executora tak samo).
+// Przekroczenie tego limitu w trybie push nie konczy zapytania bledem: Ballista
+// (53 i 55) uznaje executor za utracony i ponawia, wiec zapytanie wisi. To jest
+// wlasciwe ograniczenie tego podejscia i nalezy je raportowac jako takie, a nie
+// obchodzic.
 // Od planu 3b-2 limit podnosi `BALLISTA_GRPC_MAX_MESSAGE_BYTES` (512 MiB), a przekroczenie
 // wykrywa przy planowaniu `broadcast.rs`.
 

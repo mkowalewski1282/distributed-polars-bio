@@ -125,7 +125,7 @@ def _wait_for_executors(cluster: Cluster, expected: int, timeout: float = 60.0) 
 
 
 def _wait_for_scheduler(cluster: Cluster, timeout: float = 30.0) -> None:
-    """Executor Ballisty 53 łączy się ze schedulerem tylko raz przy starcie
+    """Executor Ballisty (53 i 55) łączy się ze schedulerem tylko raz przy starcie
     (scheduler_connect_timeout_seconds = 0 oznacza jedną próbę), więc executory
     wolno uruchomić dopiero, gdy scheduler już nasłuchuje."""
     deadline = time.monotonic() + timeout
@@ -274,6 +274,9 @@ INTERVALS_B = [
 
 #: Operacje czytające KATALOGI dwóch plików (data/parts_*): etap źródłowy ma
 #: ≥ 2 zadania, więc przy rozdziale round-robin musi trafić na oba executory.
+#: W Ballistcie 55 tylko przy jednej partycji na zadanie
+#: (`ballista.scheduler.max_partitions_per_task` = 1, `cluster.rs`) — przy domyślnym
+#: 0 oba pliki szły jednym zadaniem na jeden executor (nearest, coverage).
 #: `overlap` czyta pojedyncze pliki (data/intervals_*.csv) i nie ma równoległości
 #: hash (znane ograniczenie — sprawozdanie, sekcja 6); dla niego wymagamy ≥ 1
 #: executora, a faktyczny rozkład trafia do pliku dowodów.
@@ -483,8 +486,9 @@ def test_scheduler_accepts_ballista_settings_from_client(tmp_path, monkeypatch):
 
 
 #: Okno obserwacji kontroli negatywnej. Odrzucenie planu przez executor następuje
-#: w pierwszych sekundach (zaraz po etapie 1), a z koderami całe zapytanie trwa
-#: ~2 s — 45 s z dużym zapasem rozdziela oba przypadki.
+#: w pierwszych sekundach (zaraz po etapie 1; Ballista 55 kończy wtedy zapytanie błędem
+#: w ułamku sekundy), a z koderami całe zapytanie trwa ~2 s — 45 s z dużym zapasem
+#: rozdziela przypadki „błąd”, „wynik” i „wisi” (zachowanie Ballisty 53).
 NEGATIVE_WINDOW_S = 45
 
 
@@ -494,12 +498,12 @@ def test_executor_without_codecs_cannot_run_bio_plan(tmp_path):
     ale etapu z węzłem MergeExec nie umie zdekodować — plan jest więc dekodowany
     w executorze, a nie gdzie indziej.
 
-    Ballista 53 w trybie push nie zgłasza tego jako błędu zapytania: executor
-    odrzuca zadanie przy dekodowaniu („Could not deserialize ...”), a scheduler
-    uznaje go za utraconego, wyrejestrowuje i po ponownej rejestracji próbuje
-    od nowa — zapytanie wisi zamiast się wywrócić. Dowodem jest więc brak wyniku
-    w oknie obserwacji oraz komunikat dekodowania, który executor zwrócił
-    schedulerowi (log schedulera)."""
+    Executor odrzuca zadanie przy dekodowaniu („Could not deserialize ...” w jego
+    logu). Ballista 53 w trybie push nie zgłaszała tego jako błędu zapytania (uznawała
+    executor za utraconego i ponawiała — zapytanie wisiało). Ballista 55 zwraca
+    odrzucone zadanie schedulerowi, który kończy zapytanie błędem („Job failed”), a klient
+    dostaje „rejected by executor”. Dowodem jest więc szybki błąd klienta bez wyniku
+    oraz komunikat dekodowania w logu executora."""
     _require(DIST_BINARY)
     c = _start_cluster(tmp_path, [("executor_no_codecs", ["--no-codecs"])])
     output_dir = tmp_path / "results"
@@ -514,17 +518,21 @@ def test_executor_without_codecs_cannot_run_bio_plan(tmp_path):
     )
     try:
         try:
-            client.communicate(timeout=NEGATIVE_WINDOW_S)
-            client_succeeded = client.returncode == 0
+            _, client_stderr = client.communicate(timeout=NEGATIVE_WINDOW_S)
+            timed_out = False
         except subprocess.TimeoutExpired:
             client.kill()
-            client.communicate()
-            client_succeeded = False
+            _, client_stderr = client.communicate()
+            timed_out = True
         scheduler_log = (tmp_path / "scheduler.log").read_text()
+        executor_log = (tmp_path / "executor_no_codecs.log").read_text()
     finally:
         c.stop()
-    assert not client_succeeded, "the query succeeded despite an executor without codecs"
+    assert not timed_out, f"the query hung for {NEGATIVE_WINDOW_S} s instead of failing"
+    assert client.returncode != 0, "the query succeeded despite an executor without codecs"
     assert not out_csv.exists(), "result written despite missing codecs"
-    assert "Could not deserialize" in scheduler_log, (
-        f"no trace of the executor rejecting the plan; log: {tmp_path / 'scheduler.log'}"
+    assert "rejected by executor" in client_stderr, client_stderr
+    assert "Job failed" in scheduler_log, f"log: {tmp_path / 'scheduler.log'}"
+    assert "Could not deserialize" in executor_log, (
+        f"no trace of the executor rejecting the plan; log: {tmp_path / 'executor_no_codecs.log'}"
     )

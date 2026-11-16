@@ -20,13 +20,18 @@
 //! `--checksum PLIK --op OP` liczy samą sumę kontrolną pliku Parquet w schemacie
 //! znormalizowanym, bez silnika — test zgodności z `bench/checksum.py`.
 //!
+//! `--version-info` wypisuje wersje Ballisty i DataFusion oraz ustawienia Ballisty odczytane
+//! z konfiguracji klastra (`cluster::bio_ballista_config`) — jedno źródło dla testów i opisu.
+//!
 //! Kody wyjścia: 0 — sukces, 1 — błąd wykonania, 2 — błędne argumenty lub środowisko.
 
 use std::fs::File;
 use std::time::{Duration, Instant};
 
+use ballista_core::extension::SessionConfigExt;
 use ballista_genomics::checksum::Checksum;
 use ballista_genomics::cli::{optional, parse_flags, required};
+use ballista_genomics::cluster::bio_ballista_config;
 use ballista_genomics::runner::{connect_from_env, extract_text, grpc_max_message_bytes, target_partitions};
 use ballista_genomics::scenario::Scenario;
 use ballista_genomics::DistOp;
@@ -41,11 +46,14 @@ const USAGE: &str = "usage:
   bench_client --op <OPERATION> --checksum <FILE.parquet>
   bench_client --op <OPERATION> --left <PATH> [--right <PATH>] [--cols <contig,start,end>]
                --explain-analyze <FILE.txt>
+  bench_client --version-info
   PATH: a Parquet (or CSV) file or a directory of them; --right for operations other than merge.
   Default --cols: contig,pos_start,pos_end (databio-8p datasets).
   --checksum: checksum of a file in the normalized schema, without running an operation.
   --explain-analyze: write the EXPLAIN ANALYZE plan (with operator metrics) to a file instead of
   measuring; stdout: {\"explain_bytes\": N}.
+  --version-info: Ballista and DataFusion versions and the Ballista settings of the cluster
+  configuration, as one JSON line.
   Environment: BALLISTA_SCHEDULER_URL (cluster), BIO_TARGET_PARTITIONS (≥ 2, default 4),
   BALLISTA_GRPC_MAX_MESSAGE_BYTES (16 MiB .. 4 GiB - 1, default 512 MiB).";
 
@@ -58,14 +66,25 @@ enum Mode {
     Checksum { op: DistOp, file: String },
     /// Plan EXPLAIN ANALYZE scenariusza do pliku (dodatkowy, niemierzony przebieg; plan 3b-2).
     Explain { scenario: Scenario, file: String },
+    /// Wersje i ustawienia Ballisty z konfiguracji klastra, bez łączenia się z klastrem.
+    VersionInfo,
 }
 
 fn parse(args: &[String]) -> std::result::Result<Mode, String> {
     let flags = parse_flags(
         args,
         &["--op", "--left", "--right", "--cols", "--output", "--checksum", "--explain-analyze"],
-        &[],
+        &["--version-info"],
     )?;
+    if flags.contains_key("--version-info") {
+        if let Some(other) = flags.keys().find(|f| f.as_str() != "--version-info") {
+            return Err(format!("--version-info cannot be combined with {other}"));
+        }
+        // Konfiguracja klastra czyta zmienne środowiskowe: błąd = kod 2, jak w pozostałych trybach.
+        target_partitions()?;
+        grpc_max_message_bytes()?;
+        return Ok(Mode::VersionInfo);
+    }
     let op_name: String = required(&flags, "--op")?;
     let op = DistOp::from_cli(&op_name).ok_or_else(|| format!("unknown operation: {op_name}"))?;
     if let Some(file) = optional::<String>(&flags, "--checksum")? {
@@ -197,6 +216,24 @@ async fn explain(scenario: &Scenario, file: &str) -> Result<usize> {
     Ok(text.len())
 }
 
+/// Wersje i ustawienia Ballisty odczytane z tej samej konfiguracji, którą dostają klient,
+/// scheduler i executory (`bio_ballista_config`), a nie ze stałych — test porównuje je z OPIS.md.
+fn version_info() -> String {
+    let config = bio_ballista_config();
+    let ballista = config.ballista_config();
+    format!(
+        "{{\"ballista\": \"{}\", \"datafusion\": \"{}\", \"adaptive_query_planner\": {}, \
+         \"max_partitions_per_task\": {}, \"share_file_statistics_cache\": {}, \
+         \"grpc_client_max_message_size\": {}}}",
+        ballista_core::BALLISTA_VERSION,
+        datafusion::DATAFUSION_VERSION,
+        config.ballista_adaptive_query_planner_enabled(),
+        ballista.max_partitions_per_task(),
+        ballista.share_file_statistics_cache(),
+        config.ballista_grpc_client_max_message_size(),
+    )
+}
+
 async fn checksum_file(op: DistOp, file: &str) -> Result<Checksum> {
     let ctx = SessionContext::new();
     let mut stream = ctx
@@ -227,6 +264,7 @@ async fn main() {
         Mode::Explain { scenario, file } => explain(&scenario, &file)
             .await
             .map(|bytes| format!("{{\"explain_bytes\": {bytes}}}")),
+        Mode::VersionInfo => Ok(version_info()),
         Mode::Run { scenario, output } => run(&scenario, output.as_deref()).await.map(|r| {
             format!(
                 "{{\"rows\": {}, \"checksum\": \"{}\", \"t_total_s\": {:.6}, \

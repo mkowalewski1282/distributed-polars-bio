@@ -328,22 +328,28 @@ poza domyślny `output/`.
        message: invalid tag value: 0 ..." }
 
    Plan jest więc dekodowany w executorze. Ballista 53 w trybie push nie
-   zgłasza tego jako błędu zapytania: uznaje executor za utraconego
-   („Removing executor …”), a po jego ponownej rejestracji ponawia — zapytanie
-   wisi. Test sprawdza brak wyniku w oknie 45 s i powyższy komunikat w logu
+   zgłaszała tego jako błędu zapytania: uznawała executor za utraconego
+   („Removing executor …”), a po jego ponownej rejestracji ponawiała — zapytanie
+   wisiało. Test sprawdzał brak wyniku w oknie 45 s i powyższy komunikat w logu
    schedulera; z koderami to samo zapytanie kończy się w mniej niż sekundę (sprawdzone
-   mutacyjnie).
+   mutacyjnie). **Ballista 55:** executor zwraca odrzucone zadanie, a scheduler kończy
+   zapytanie błędem w ułamku sekundy („Job failed”; klient: „task could not be prepared or
+   was rejected by executor”); komunikat dekodowania jest w logu executora. Test sprawdza
+   teraz to zachowanie (sekcja „Ballista 55”).
 
 ### Znaleziska
 
 - Tryb zdalny planuje końcowe sortowanie `overlap` w jednym etapie, standalone
-  w dwóch (osobny etap `SortPreservingMergeExec`); złączenie `IntervalJoinExec`
+  w dwóch (osobny etap `SortPreservingMergeExec`; Ballista 53 — w 55 z AQE oba tryby
+  w jednym etapie); złączenie `IntervalJoinExec`
   w obu trybach wykonuje się w etapie na executorze. Pozostałe cztery operacje
   mają w obu trybach tę samą liczbę etapów (merge 3, subtract 4, nearest 2,
   coverage 2).
-- Odporność Ballisty: błąd dekodowania planu przy uruchamianiu zadania
+- Odporność Ballisty 53: błąd dekodowania planu przy uruchamianiu zadania
   traktowany jest jak utrata executora, a nie jak błąd zadania — zapytanie
-  nie kończy się błędem, tylko czeka.
+  nie kończy się błędem, tylko czeka. Ballista 55 kończy wtedy zapytanie błędem, ale
+  zbyt duża wiadomość z zadaniami nadal kończy się „utratą” executora i zawieszeniem
+  (sprawdzone; sekcja „Ballista 55”).
 
 Znane ryzyko poza zakresem P0: procesy muszą współdzielić system plików (ładunek
 planu zawiera ścieżki) — w kontenerach i w chmurze potrzebny wspólny magazyn.
@@ -459,7 +465,9 @@ o typach prawdziwych danych, z przypadkami brzegowymi; `tests/test_real_data.py`
   połączenia (`ballista_executor::executor_server`, TODO w kodzie). W trybie push scheduler
   od razu łączy się z executorem, więc rejestracja bywa odrzucona („Connection refused”),
   a executor kończy się kodem 1 (smoke 02.10.2026: raz na 11 startów). `bench/engines.py`
-  ponawia wtedy start klastra (do 3 razy, na nowych portach).
+  ponawia wtedy start klastra (do 3 razy, na nowych portach). Ballista 55 wiąże port gRPC
+  executora przed rejestracją (#2225) — ta przyczyna znikła, ponawianie zostaje jako
+  zabezpieczenie (sekcja „Ballista 55”).
 
 ## Plan 3b-1 — wersja algorytmów v0.22.2 (październik 2026)
 
@@ -504,20 +512,27 @@ o typach prawdziwych danych, z przypadkami brzegowymi; `tests/test_real_data.py`
   schedulera i executorów) oraz w `ballista_node` (scheduler: dekodowanie i kodowanie wiadomości
   serwera gRPC, executor: `grpc_max_decoding_message_size` i `grpc_max_encoding_message_size`).
   Orkiestrator przekazuje tę samą wartość wszystkim procesom.
-- **Strażnik broadcastu** (`src/broadcast.rs`). Ballista 53 w trybie push, gdy wiadomość do
-  executora przekracza limit, nie zgłasza błędu zapytania: uznaje executor za utraconego
-  i ponawia, więc zapytanie wisi do timeoutu. Dlatego rozmiar sprawdzamy przy planowaniu
+- **Strażnik broadcastu** (`src/broadcast.rs`). Ballista 53 (i, sprawdzone, 55) w trybie push,
+  gdy wiadomość do executora przekracza limit, nie zgłasza błędu zapytania: uznaje executor za
+  utraconego i ponawia, więc zapytanie wisi do timeoutu. Dlatego rozmiar sprawdzamy przy planowaniu
   fizycznym w schedulerze (`DistCoverageProvider::scan` i odpowiednik w `nearest`), gdzie tabela
   rozsyłana jest zmaterializowana: jeśli jej rozmiar w IPC razy `MESSAGE_SIZE_MARGIN` (= 2)
   przekracza limit, planowanie kończy się błędem z rozmiarem i limitem, który dociera do klienta
   jako błąd zapytania. Margines 2 wynika z tego, że Ballista 53 wysyła plan etapu raz na
-  executor i etap (`MultiTaskDefinition`), a nie raz na zadanie. Strażnik koduje tabelę do IPC
+  executor i etap (`MultiTaskDefinition`), a nie raz na zadanie. Ballista 55 koduje plan
+  osobno dla każdego zadania i wysyła zadania przydzielone executorowi w jednej rundzie jedną
+  wiadomością, więc przy 2 slotach wiadomość niesie do 2 kopii tabeli: margines 2 = kopia na
+  slot (założenie specyfikacji 3b-2, 6.2), bez zapasu na resztę planu (dziesiątki KB; sekcja
+  „Ballista 55”). Strażnik koduje tabelę do IPC
   (`ipc_len`) jeszcze raz w schedulerze — w mierzonym `t_total_s` `nearest` i `coverage`;
   chwilowo ≈ 2× ładunek (29–57 MB na planowanych parach), koszt niemierzony osobno.
 - **`broadcast payload decoded: N bytes`.** Dekoder naszych węzłów w executorze
   (`bio_phys_codec.rs`) loguje rozmiar odebranego ładunku broadcastu. Orkiestrator sumuje wpisy
   z logów executorów z czasu przebiegu (`bench/logscan.py`) → kolumna `broadcast_bytes`:
-  ładunek × liczba wiadomości startowych (jedna na executor i etap w trybie push).
+  ładunek × liczba wiadomości startowych (jedna na executor i etap w trybie push). Od Ballisty
+  55: ładunek × liczba zadań etapu z broadcastem (plan dekodowany osobno w każdym zadaniu),
+  czyli przy 2N partycjach i partycji na zadanie 2N zamiast N — serie 53 i 55 nie są w tej
+  kolumnie wprost porównywalne.
 - **`bench_client --explain-analyze <plik>`.** Zamiast pomiaru zapisuje plan `EXPLAIN ANALYZE`
   z metrykami operatorów do pliku (stdout: `{"explain_bytes": N}`); nie łączy się z `--output`.
   Orkiestrator woła go w dodatkowym, niemierzonym przebiegu po rundach bloku (`explain: true`).
@@ -526,10 +541,11 @@ o typach prawdziwych danych, z przypadkami brzegowymi; `tests/test_real_data.py`
 - **Wynik `broadcast-check`** (`broadcast-check/20261011-185454`): `nearest` i `coverage` na
   2-7 i 7-0 przy N = 1, 2, 3 wykonują się poprawnie (sumy zgodne z polars-bio, 0 nieważnych);
   `broadcast_bytes` liniowo z N: 2-7 = 29 198 988 × N, 7-0 = 57 383 884 × N.
-- **Znany nieaktualny komentarz:** `src/runner.rs` (przy `GRPC_MAX_MESSAGE_ENV`, ok. linii 65)
-  mówi, że ładunek niesie tabelę „w każdym zadaniu”; ściślej: w każdej wiadomości startowej
-  (raz na executor i etap). Do poprawienia przy najbliższej zmianie Rusta (zmiany w `*.rs` nie
-  wchodziły w zakres dokumentacji 3b-2).
+- **Nieaktualny komentarz (poprawiony w Etapie 4):** `src/runner.rs` (przy
+  `GRPC_MAX_MESSAGE_ENV`) mówił, że ładunek niesie tabelę „w każdym zadaniu”, a w Ballistcie 53
+  było to raz na wiadomość startową (executor i etap). W Ballistcie 55 plan znów jest kodowany
+  osobno dla każdego zadania; komentarz opisuje teraz kopię na zadanie i wiadomość z zadaniami
+  executora (najwyżej tyle kopii, ile slotów).
 - Smoke na release (10.10.2026): `broadcast_bytes` dla `nearest` i `coverage` na 1-2 =
   10 709 132 × N.
 
@@ -543,3 +559,156 @@ o typach prawdziwych danych, z przypadkami brzegowymi; `tests/test_real_data.py`
   (`sail_genomics.pb_context`) równoczesne wywołania `pb.overlap` z 8 wątków kończą się paniką
   `The table s1 already exists`; z pulą 80/80 wywołań poprawnych. Test 5 operacji współbieżnie
   przechodzi bez zmian w kodzie puli.
+
+## Ballista 55 (Etap 4, listopad 2026)
+
+Wersje: Ballista **55.0.0**, DataFusion **55.2.0**, zwendorowany `datafusion-bio-function-ranges`
+**v0.25.0** z łatkami widoczności (`vendor/PATCH.md`; okres przejściowy z polars-bio 0.37 —
+`tests/test_algorithm_versions.py`). Port API (Task 4): `as_any` usunięte, `vcores` zamiast
+`concurrent_tasks`, `replace_children(..., Recompute)` zamiast `with_new_children`, metody
+rozkładu i statystyk DataFusion 55 w `DistCoverageExec`, dodatkowy argument kodera planu.
+
+### Konfiguracja Ballisty 55 (jawna)
+
+Ustawienia, których wartości domyślne zmieniły się między 53 a 55, są ustawiane jawnie
+(`src/cluster.rs`, `src/bin/ballista_node.rs`). Wartości z konfiguracji klastra drukuje
+`bench_client --version-info`; testy `test_aqe_setting_is_explicit`
+i `test_scheduling_settings_are_explicit` (`tests/test_ballista_distribution_evidence.py`)
+porównują je z deklaracjami poniżej.
+
+- `ballista.planner.adaptive.enabled` = `true` — AQE (planista adaptacyjny) włączony; w 55
+  domyślnie włączony (#2315), w 53 domyślnie wyłączony. Decyzja i dowody — niżej.
+- `ballista.scheduler.max_partitions_per_task` = `1` — jedna partycja wejściowa na zadanie, jak
+  w 53. Domyślne 0 (bez limitu) każe schedulerowi pakować do jednego zadania tyle partycji, ile
+  executor ma wolnych slotów (`vcores`): przy 2 slotach etap 2 partycji szedł jako JEDNO zadanie
+  na JEDEN executor (nearest, coverage w `test_ballista_multiprocess.py`). Ustawiane
+  w `bio_ballista_config`, czyli w konfiguracji klienta i schedulera (scheduler czyta je
+  z konfiguracji zadania, `bind_one`). Semantyka pomiarów: zadanie = partycja, executor ma
+  `--concurrent-tasks` slotów.
+- `ballista.scheduler.share_file_statistics_cache` = `false` — wspólna dla sesji pamięć
+  statystyk plików w schedulerze (nowa w 55, domyślnie włączona) wyłączona; w 53 każda sesja
+  miała własną, zimną. Zabezpieczenie: skany naszych operacji planują sesje wewnętrzne
+  providerów (własne `RuntimeEnv`), których ta pamięć nie obejmuje.
+- Ustawienia DataFusion pod Ballistę (`ballista_restricted_configuration`, m.in.
+  `enable_round_robin_repartition = false`): Ballista 55 nakłada je tylko przy pierwszym
+  `upgrade_for_ballista()` konfiguracji bez rozszerzenia `ballista`, a nasze settery Ballisty
+  (kodery, limit gRPC) to rozszerzenie dodają — bez zmian w kodzie nie trafiłyby do żadnej
+  sesji. `bio_ballista_config` woła więc `upgrade_for_ballista()` przed setterami (jak 53,
+  która nakładała je zawsze). Objaw przed poprawką: standalone wstawiał
+  `RepartitionExec: partitioning=RoundRobinBatch(4)` przed `IntervalJoinExec` (obie strony),
+  `NearestExec` i `DistCoverageExec`, a scheduler zdalny ostrzegał „session manager will override
+  `datafusion.optimizer.enable_round_robin_repartition` to `false`”.
+- Executor (`ballista_node`, Task 4): pula pamięci bez limitu (`memory_pool_size: Some(0)`; log
+  startu: „Executor memory pool: unbounded (--memory-pool-size 0)”) i bez pamięci podręcznej
+  środowiska sesji (`session_runtime_cache_capacity: 0` — świeże `RuntimeEnv` na zadanie), jak w 53.
+- Bez zmian nazw: tryb push (`TaskSchedulingPolicy::PushStaged` w schedulerze i executorze),
+  rozdział round-robin (`TaskDistributionPolicy::RoundRobin`), `target_partitions`
+  (`BIO_TARGET_PARTITIONS`), limit gRPC (`BALLISTA_GRPC_MAX_MESSAGE_BYTES` →
+  `ballista.client.grpc_max_message_size` klienta; klient gRPC schedulera do executorów bierze
+  go w 55 z `override_config_producer`; serwer schedulera `grpc_server_max_*_message_size`,
+  serwer executora `grpc_max_*_message_size`, serwer Flight executora też 512 MiB — log startu).
+  Sloty executora: pole `vcores` (flaga `--concurrent-tasks` bez zmian). Usunięty klucz
+  `ballista.shuffle.sort_based.enabled` nie był przez nas ustawiany.
+
+### AQE: decyzja i dowody (reguła specyfikacji Etapu 4, 4.1)
+
+Porównanie `EXPLAIN ANALYZE` dla każdej operacji: klaster z osobnych procesów (scheduler
++ 2 executory po 2 sloty, `target_partitions` = 4, `bench_client --explain-analyze`, para 1-2,
+merge: zbiór 1) oraz dane testowe CSV (`dist_ops`, zdalnie i standalone); punkt odniesienia —
+binarki Ballisty 53 (release z 12.10.2026) na tych samych danych.
+
+| Operacja | Ballista 53 (planista statyczny) | Ballista 55 z AQE | Strategia |
+|---|---|---|---|
+| overlap | 1 etap, `IntervalJoinExec mode=Auto` nad dwoma skanami (każde zadanie indeksuje całą lewą stronę) | to samo | ta sama |
+| merge | etap źródłowy `SortShuffleWriterExec Hash([contig@0], 4)` → `MergeExec` ← `ShuffleReaderExec Hash([contig@0], 4)` | to samo | ta sama (podział po chromosomie) |
+| subtract | dwa etapy źródłowe `Hash([contig@0], 4)` → `SubtractExec` ← 2 × `ShuffleReaderExec Hash` | to samo | ta sama |
+| nearest | 1 etap, `NearestExec` nad skanem prawej strony, lewa w ładunku planu | to samo | ta sama (nasz broadcast) |
+| coverage | 1 etap, `DistCoverageExec broadcast_rows=438694` nad skanem prawej strony | to samo | ta sama (nasz broadcast) |
+
+Ani w trybie zdalnym, ani w standalone AQE nie zmienił strategii, nie usunął rozproszenia ani
+broadcastu; dekodowanie naszych węzłów w executorach działa (merge, subtract, nearest, coverage —
+wyniki zgodne z polars-bio; overlap — patrz znalezisko otwarte niżej, niezależne od AQE). Zmiany
+dotyczą postaci planu:
+
+- AQE numeruje etapy od 0 (planista statyczny 55 — jak 53 — od 1);
+- końcowe scalanie posortowanego wyniku (`ORDER BY` w `dist_ops`) czyta
+  `RangeShuffleReaderExec` (z zachowaniem porządku) zamiast `ShuffleReaderExec:
+  UnknownPartitioning(n)`; `overlap` w standalone sortuje w jednym etapie (53: w dwóch);
+- niezależnie od AQE (zmiana wyświetlania w 55): `ShuffleWriterExec: partitioning:
+  UnknownPartitioning(n)` zamiast `None`, `ShuffleReaderExec: upstream_stage: N, partitioning: …`.
+
+Kontrola z AQE wyłączonym na Ballistcie 55: te same strategie, etapy od 1, `ShuffleReaderExec`
+zamiast `RangeShuffleReaderExec`. **Decyzja: AQE zostaje włączony** (ustawiony jawnie), asercje
+testów dowodów zaktualizowane do nowej postaci planu (`upstream_stage` w czytniku hash).
+
+Liczba zadań na executor (para 1-2; overlap / nearest / coverage / merge / subtract):
+Ballista 53 — 2/2, 2/2, 2/2, 4/4, 6/6; Ballista 55 przy domyślnym `max_partitions_per_task`
+(0) — 1/1, 1/1, 1/1, 2/2, 3/3 (każde zadanie z 2 partycjami); z wartością 1 — jak w 53
+(subtract bywa 7/5: dwa etapy źródłowe biegną równolegle). Log `bind_one` schedulera:
+`slice_len=1` dla każdego zadania.
+
+### Zmiany w Ballistcie 54–55 a nasze dowody
+
+- **Shuffle oparty na sortowaniu** (#2106, usunięty zapis hash-shuffle): w planach bez zmian —
+  `SortShuffleWriterExec: partitioning=Hash([chrom@0], 4)` był już w 53, podział po chromosomie
+  zostaje.
+- **Plan kodowany osobno dla każdego zadania.** Scheduler 55 tworzy jedną `MultiTaskDefinition`
+  na zadanie (plan zawężony do partycji zadania) i wysyła zadania przydzielone executorowi
+  w jednej rundzie jedną wiadomością `launch_multi_task`. Ładunek broadcastu jedzie więc raz na
+  zadanie (w 53: raz na executor i etap). Para 1-2: `broadcast_bytes` na executor 21 089 176 =
+  2 × 10 544 588 (53: 10 709 132; ładunek mniejszy o 1,5% — przyczyny nie badano), wiadomość do
+  executora 21 113 832 B. Kolumna `broadcast_bytes` w seriach 55 = ładunek × liczba zadań etapu.
+- **Zbyt duża wiadomość z zadaniami nadal zawiesza zapytanie** (sprawdzone: executory z limitem
+  16 MiB, scheduler i klient 512 MiB, nearest 1-2): „Failed to launch new task … decoded message
+  length too large: found 21113832 bytes, the limit is: 16777216 bytes”, „Removing executor”,
+  ponowienie po ok. 60 s, klient bez odpowiedzi do timeoutu. Strażnik broadcastu zostaje.
+- **Błąd dekodowania planu kończy zapytanie błędem** (kontrola negatywna P0): w 53 zapytanie
+  wisiało.
+- **Wyścig rejestracji executora naprawiony** (#2225): executor wiąże port gRPC przed rejestracją
+  (log: „Executor Grpc Server listening” przed „Executor registration succeed”). Ponawianie startu
+  (`BALLISTA_START_ATTEMPTS`) zostaje jako zabezpieczenie; zajęty port gRPC kończy teraz executor
+  przy wiązaniu („Address already in use”), a nie przy rejestracji („Connection refused”).
+- **Executor łączy się ze schedulerem raz** (`scheduler_connect_timeout_seconds = 0`), jak w 53.
+- **Nowe pamięci podręczne i pule** (pula pamięci, środowisko sesji executora, statystyki plików
+  w schedulerze) — wyłączone, jak wyżej.
+
+### Weryfikacja wyborów z portu (Task 4)
+
+1. `vcores` zamiast `concurrent_tasks` — sloty bez zmian, ale pakowanie partycji w zadania
+   zmieniło rozkład pracy; przywrócone `max_partitions_per_task` = 1 (wyżej).
+2. `DistCoverageExec` deleguje `input_distribution_requirements`, `child_stats_requests`
+   i `statistics_from_inputs` do węzła vendora — plan coverage bez dodatkowej repartycji
+   (`DistCoverageExec` bezpośrednio nad skanem, liczba partycji = liczba grup plików), jak w 53.
+3. `replace_children(..., Recompute)` przy dekodowaniu w executorze — merge, subtract, nearest
+   i coverage liczą się na executorach z wynikami zgodnymi z polars-bio (P0, dane rzeczywiste).
+4. Wyrażenia `IntervalJoinExec` kodowane domyślnym konwerterem wewnątrz naszego ładunku — overlap
+   z `alg=Coitrees` liczy się na executorze; wynik zgodny z wyrocznią przy jednej partycji
+   wejścia (CSV w `dist_ops`), przy kilku partycjach — znalezisko otwarte niżej (nie koder).
+5. Węzły vendora żądają `Distribution::KeyPartitioned` — w planach nadal `Hash([chrom@0], 4)`
+   (CSV) i `Hash([contig@0], 4)` (Parquet), żadnego `Range`.
+
+### Znalezisko otwarte: overlap gubi pary przy kilku partycjach (Ballista 55)
+
+Scheduler 55 przed wysłaniem zadania zawęża liście planu do partycji zadania
+(`ballista-scheduler/src/state/task_builder.rs`, `restrict_plan_to_partitions`), chyba że liść
+leży pod węzłem, który całe wejście scala (`CoalescePartitionsExec`,
+`SortPreservingMergeExec` albo wejście z wymaganiem `SinglePartition`). `IntervalJoinExec`
+w trybie `Auto` deklaruje dla obu wejść rozkład nieokreślony, więc lewa (budowana) strona też
+jest zawężana — a nasz koder zamienia `Auto` na `CollectLeft` dopiero przy dekodowaniu
+w executorze, gdy zadanie ma już tylko swój wycinek lewej tabeli. Każde zadanie indeksuje więc
+1/(liczba zadań) lewej strony zamiast całej. Para 1-2 (4 partycje, 2 executory po 2 sloty):
+Ballista 53 — `output_rows` 54,25 tys., `build_input_rows` 1,75 mln (= 4 × 438,7 tys.);
+Ballista 55 przy `max_partitions_per_task` 0 — 28,95 tys. (2 zadania po 2 partycje), przy 1 —
+14,44 tys.; `build_input_rows` 438,7 tys. łącznie. AQE nie ma wpływu (z wyłączonym to samo).
+Na zbiorze testowym Parquet błąd ujawnia się przy jednej partycji na zadanie
+(`test_ballista_parquet.py` i `test_bench_client_protocol.py`, overlap); dane CSV w `dist_ops`
+mają jedną partycję, więc ich nie dotyczy. Pozostałe operacje są poprawne: `NearestExec`
+i `DistCoverageExec` niosą lewą tabelę w węźle (nie jako dziecko), a `MergeExec`
+i `SubtractExec` czytają wyrównane partycje shuffle po chromosomie.
+
+Sprawdzona (prototyp, niezatwierdzony) naprawa: rozstrzygnąć `Auto` → `CollectLeft` już
+w schedulerze (np. w `DistBioProvider::scan` dla overlap). Wtedy planista wstawia
+`CoalescePartitionsExec` nad lewą stroną, scheduler jej nie zawęża, a wynik wraca do 54,25 tys.
+(`build_input_rows` 1,75 mln). Koszt: AQE robi z lewej strony osobny etap (skan → shuffle,
+każde zadanie złączenia czyta całość przez `ShuffleReaderExec`), zamiast czytać pliki w każdym
+zadaniu jak w 53. Decyzja (zmiana logiki operacji) — poza zakresem tego kroku.

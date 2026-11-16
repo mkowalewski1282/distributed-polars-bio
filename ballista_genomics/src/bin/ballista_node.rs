@@ -82,7 +82,14 @@ async fn run_scheduler(port: u16, grpc_limit: usize) -> Result<(), Box<dyn Error
 
     let addr: SocketAddr = format!("127.0.0.1:{port}").parse()?;
     let cluster = BallistaCluster::new_from_config(&config).await?;
-    println!("ballista_node: scheduler listening on {addr}, grpc max message {grpc_limit} B");
+    // Ustawienia planowania z konfiguracji, którą scheduler dostaje od `override_config_producer`.
+    let planning = bio_ballista_config();
+    println!(
+        "ballista_node: scheduler listening on {addr}, grpc max message {grpc_limit} B, \
+         adaptive query planner {}, max partitions per task {}",
+        planning.ballista_adaptive_query_planner_enabled(),
+        planning.ballista_config().max_partitions_per_task()
+    );
     start_server(cluster, addr, Arc::new(config)).await?;
     Ok(())
 }

@@ -104,13 +104,13 @@ def test_ballista_cluster_is_pinned_and_configured(tmp_path):
 
 @pytest.mark.nodes(1)
 def test_ballista_start_retries_when_executor_registration_fails(tmp_path, monkeypatch):
-    """Ballista 53 rejestruje executor, zanim jego serwer gRPC przyjmuje połączenia (TODO
-    w ballista_executor::executor_server), a scheduler w trybie push od razu łączy się
-    z executorem: rejestracja bywa odrzucona („Connection refused”) i executor kończy się
-    kodem 1 (smoke 02.10.2026, blok N = 3). Ten sam objaw daje zajęty port gRPC executora —
-    start klastra ma się wtedy powtórzyć na nowych portach."""
+    """Nieudany start executora (kod 1) ma powtórzyć start klastra na nowych portach.
+    Ballista 53 rejestrowała executor, zanim jego serwer gRPC przyjmował połączenia, i przy
+    zajętym porcie gRPC rejestracja była odrzucona („Connection refused”; ten sam objaw dawał
+    wyścig ze smoke 02.10.2026, blok N = 3). Ballista 55 wiąże port przed rejestracją (#2225),
+    więc zajęty port kończy executor już przy wiązaniu („Address already in use”)."""
     blocker = socket.socket()
-    blocker.bind(("127.0.0.1", 0))  # zajęty, ale bez listen(): połączenie → Connection refused
+    blocker.bind(("127.0.0.1", 0))  # zajęty (bez listen()): wiązanie przez executor się nie uda
     taken = blocker.getsockname()[1]
     real_free_port = engines.free_port
     calls = itertools.count(1)
@@ -120,7 +120,7 @@ def test_ballista_start_retries_when_executor_registration_fails(tmp_path, monke
     try:
         engine.start()
         assert set(engine.server_pids()) == {"scheduler", "executor_1"}
-        assert "Connection refused" in (tmp_path / "logs" / "executor_1.log").read_text()
+        assert "Address already in use" in (tmp_path / "logs" / "executor_1.log").read_text()
     finally:
         engine.stop()
         blocker.close()

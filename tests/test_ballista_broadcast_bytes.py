@@ -1,6 +1,7 @@
 """broadcast_bytes (plan 3b-2, Zadanie 15; specyfikacja 6.3): executory logują rozmiar każdego
 odebranego ładunku broadcastu, a silnik sumuje te wpisy z czasu przebiegu — bajty, które
-faktycznie dotarły (ładunek × liczba wiadomości z zadaniami; Ballista 53 wysyła plan etapu raz na executor). Wymaga binarek debug."""
+faktycznie dotarły: ładunek × liczba zadań etapu z broadcastem (Ballista 55 koduje plan osobno dla
+każdego zadania; Ballista 53 wysyłała plan etapu raz na executor). Wymaga binarek debug."""
 
 from __future__ import annotations
 

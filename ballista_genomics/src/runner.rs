@@ -62,8 +62,11 @@ pub fn target_partitions() -> std::result::Result<usize, String> {
 }
 
 /// Limit wiadomości gRPC (bajty) klienta, schedulera i executorów (specyfikacja 3b-2, 6.2).
-/// Ładunek planu z broadcastem (nearest, coverage) niesie całą tabelę rozsyłaną w każdym zadaniu,
-/// a domyślne 16 MiB Ballisty nie mieści par 2-7 i 7-0 (zapytanie wisiało). Orkiestrator
+/// Plan etapu z broadcastem (nearest, coverage) niesie całą tabelę rozsyłaną. Ballista 55 koduje
+/// plan osobno dla każdego zadania, a zadania przydzielone executorowi w jednej rundzie wysyła
+/// jedną wiadomością (`launch_multi_task`), więc wiadomość niesie po kopii tabeli na każde z tych
+/// zadań — najwyżej tyle kopii, ile executor ma slotów (Ballista 53: jedna kopia na executor
+/// i etap). Domyślne 16 MiB Ballisty nie mieści par 2-7 i 7-0 (zapytanie wisiało). Orkiestrator
 /// przekazuje tę samą wartość wszystkim procesom klastra i klientowi.
 pub const GRPC_MAX_MESSAGE_ENV: &str = "BALLISTA_GRPC_MAX_MESSAGE_BYTES";
 pub const DEFAULT_GRPC_MAX_MESSAGE_BYTES: usize = 512 * 1024 * 1024;

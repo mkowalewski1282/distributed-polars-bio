@@ -20,15 +20,22 @@ Uruchomienie: pytest tests/test_ballista_distribution_evidence.py -v
 
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
 
 BALLISTA_DIR = Path(__file__).resolve().parent.parent / "ballista_genomics"
 OUTPUT_DIR = BALLISTA_DIR / "output"
+OPIS = BALLISTA_DIR / "OPIS.md"
+CLIENT_BINARY = BALLISTA_DIR / "target" / "debug" / "bench_client"
 
 STAGE_RE = re.compile(r"SuccessfulStage\[stage_id=(\d+), partitions=(\d+)\]")
+#: Czytnik shuffle po kluczu w Ballistcie 55: `ShuffleReaderExec: upstream_stage: N,
+#: partitioning: Hash([chrom@0], 4)` (w 53 bez `upstream_stage`).
+HASH_READER_RE = re.compile(r"ShuffleReaderExec: upstream_stage: \d+, partitioning: Hash\(\[chrom")
 
 
 def _explain(op: str) -> tuple[str, list[tuple[int, int]]]:
@@ -77,7 +84,7 @@ def test_merge_operator_reads_from_network():
     assert "ShuffleReaderExec" in after, (
         f"MergeExec does not read from ShuffleReaderExec - no real shuffle:\n{txt}"
     )
-    assert re.search(r"ShuffleReaderExec: partitioning: Hash\(\[chrom", after), after
+    assert HASH_READER_RE.search(after), after
 
 
 def test_merge_source_stage_is_parallel():
@@ -125,7 +132,7 @@ def test_subtract_operator_reads_both_sides_from_network():
     # obcinamy do konca tego stage'a, zeby nie liczyc czytnikow z nastepnych
     stage_end = after.find("=========SuccessfulStage")
     block = after if stage_end == -1 else after[:stage_end]
-    readers = len(re.findall(r"ShuffleReaderExec: partitioning: Hash\(\[chrom", block))
+    readers = len(HASH_READER_RE.findall(block))
     assert readers == 2, (
         f"SubtractExec should read from 2 ShuffleReaderExec (Hash by chrom), "
         f"found {readers}:\n{block}"
@@ -214,11 +221,16 @@ def test_coverage_compute_stage_is_parallel():
 def test_coverage_roundrobin_is_absent():
     """
     ASERCJA DOKUMENTUJĄCA ZNALEZISKO: `CountOverlapsProvider::scan()` w vendorze
-    wstawia RepartitionExec(RoundRobinBatch), ale Ballista USUWA z planu
-    rozproszonego każdą repartycję inną niż hash
+    wstawia RepartitionExec(RoundRobinBatch), a statyczny planista Ballisty 53
+    usuwał z planu rozproszonego każdą repartycję inną niż hash
     (ballista-scheduler/src/planner.rs). Nasz DistCoverageProvider celowo jej
     więc nie wstawia — dzięki temu plan lokalny i rozproszony mają ten sam
     kształt, a równoległość bierze się z partycjonowania źródła.
+
+    Ballista 55 z AQE takich repartycji nie usuwa; nie powstają, bo sesje mają
+    `datafusion.optimizer.enable_round_robin_repartition = false`
+    (`cluster::bio_ballista_config`: `upgrade_for_ballista()` przed setterami Ballisty;
+    bez tego standalone dostawał RoundRobinBatch(4) przed DistCoverageExec).
     """
     txt, _ = _explain("coverage")
     assert "RoundRobinBatch" not in txt, (
@@ -234,16 +246,21 @@ def test_coverage_roundrobin_is_absent():
 
 def test_overlap_crosses_serialization_boundary():
     """
-    Overlap przechodzi przez granicę serializacji: plan jest pocięty na stage'e,
-    a IntervalJoinExec z algorytmem COITrees wykonuje się po stronie executora
-    (czyli LogicalExtensionCodec i PhysicalExtensionCodec faktycznie zadziałały).
-    To jest to, co osiągnęły Fazy A.4 i A.5.
+    Overlap przechodzi przez granicę serializacji: IntervalJoinExec z algorytmem
+    COITrees wykonuje się w etapie po stronie executora, który zapisuje wynik etapu
+    (ShuffleWriterExec) — czyli LogicalExtensionCodec i PhysicalExtensionCodec
+    faktycznie zadziałały. To jest to, co osiągnęły Fazy A.4 i A.5.
+
+    Ballista 53 dzieliła ten plan w standalone na dwa etapy (osobny etap scalania
+    posortowanego wyniku, czytany przez ShuffleReaderExec); Ballista 55 z AQE sortuje
+    jedyną partycję w tym samym etapie, więc etap jest jeden.
     """
     txt, stages = _explain("overlap")
-    assert len(stages) >= 2, txt
-    assert "IntervalJoinExec" in txt, txt
-    assert "alg=Coitrees" in txt, f"COITrees are not used on the executor side:\n{txt}"
-    assert "ShuffleReaderExec" in txt, txt
+    assert len(stages) >= 1, txt
+    first_stage = txt[txt.index("SuccessfulStage"):]
+    assert "ShuffleWriterExec" in first_stage, txt
+    assert "IntervalJoinExec" in first_stage, txt
+    assert "alg=Coitrees" in first_stage, f"COITrees are not used on the executor side:\n{txt}"
 
 
 def test_overlap_has_no_hash_partitioned_parallelism():
@@ -274,3 +291,70 @@ def test_overlap_has_no_hash_partitioned_parallelism():
         "compared with the documented state. Update this test and OPIS.md.\n"
         f"{txt}"
     )
+
+
+# --------------------------------------------------------------------------
+# Ustawienia Ballisty 55 — jawne i zgodne z OPIS.md
+# --------------------------------------------------------------------------
+
+
+def _declared(key: str) -> str:
+    """Wartość klucza Ballisty zadeklarowana w OPIS.md w postaci `klucz` = `wartość`
+    (dokładnie jedna deklaracja)."""
+    found = re.findall(rf"`{re.escape(key)}` = `([^`]+)`", OPIS.read_text())
+    assert len(found) == 1, f"OPIS.md must declare `{key}` = `...` exactly once, found: {found}"
+    return found[0]
+
+
+def _version_info() -> dict:
+    """Ustawienia Ballisty odczytane z konfiguracji klastra (`bench_client --version-info`)."""
+    if not CLIENT_BINARY.exists():
+        pytest.fail(
+            f"missing binary {CLIENT_BINARY.name} - build it: "
+            "cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bins"
+        )
+    r = subprocess.run(
+        [str(CLIENT_BINARY), "--version-info"],
+        cwd=BALLISTA_DIR,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def test_aqe_setting_is_explicit():
+    """
+    AQE (planista adaptacyjny) Ballista 55 domyślnie włącza (#2315), a 53 domyślnie
+    wyłączała — ustawienie jest więc jawne (`cluster::ADAPTIVE_QUERY_PLANNER`), a decyzja
+    opisana w OPIS.md. Jedno źródło: wartość z konfiguracji klastra (`--version-info`)
+    musi być tą, którą deklaruje OPIS.md, a plan musi pochodzić z tego planisty:
+    AQE numeruje etapy od 0 (`AdaptivePlanner`: `stage_id_generator: 0`), planista
+    statyczny od 1 (jak Ballista 53).
+    """
+    declared = _declared("ballista.planner.adaptive.enabled")
+    assert declared in ("true", "false"), declared
+    assert _version_info()["adaptive_query_planner"] == (declared == "true")
+    _, stages = _explain("merge")
+    first_stage = min(stage_id for stage_id, _ in stages)
+    assert first_stage == (0 if declared == "true" else 1), stages
+
+
+def test_scheduling_settings_are_explicit():
+    """
+    Ustawienia Ballisty 55 przywracające semantykę 53 — wartości z konfiguracji klastra
+    muszą być tymi z OPIS.md:
+    - `ballista.scheduler.max_partitions_per_task`: 55 domyślnie (0, bez limitu) pakuje
+      do jednego zadania tyle partycji, ile executor ma wolnych slotów — przy 2 slotach etap
+      dwóch partycji szedł jako jedno zadanie na jeden executor; 1 = partycja na zadanie;
+    - `ballista.scheduler.share_file_statistics_cache`: wspólna dla sesji pamięć statystyk
+      plików w schedulerze (nowa w 55) — wyłączona, jak w 53 (każda sesja z zimną).
+    """
+    info = _version_info()
+    partitions = _declared("ballista.scheduler.max_partitions_per_task")
+    assert partitions == "1", partitions
+    assert info["max_partitions_per_task"] == int(partitions)
+    shared = _declared("ballista.scheduler.share_file_statistics_cache")
+    assert shared == "false", shared
+    assert info["share_file_statistics_cache"] is False

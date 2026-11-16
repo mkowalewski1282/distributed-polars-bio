@@ -1,6 +1,7 @@
 """Strażnik broadcastu (plan 3b-2, Zadanie 14; specyfikacja 6.2): gdy ładunki z tabelą rozsyłaną
 nie mieszczą się w limicie wiadomości gRPC, zapytanie kończy się czytelnym błędem — zamiast
-wisieć do timeoutu, jak robi to Ballista 53 w trybie push (uznaje executor za utraconego i ponawia).
+wisieć do timeoutu, jak robi to Ballista w trybie push (53 i, sprawdzone, 55: uznaje executor za
+utraconego i ponawia).
 
 Tabela rozsyłana w coverage to prawa strona (df2): 1,2 mln przedziałów ≈ 23 MiB w Arrow IPC
 (string + int32; po odczycie w Ballisście Utf8View/Int64 ≈ 37 MiB), czyli ponad domyślne 16 MiB
