@@ -1,10 +1,10 @@
-//! Faza H: jedna binarka dla wszystkich operacji rozproszonych.
+//! One binary for all distributed operations.
 //!
-//! Jedna zamiast czterech, bo na tej maszynie (3.5 GB RAM, CARGO_BUILD_JOBS=1)
-//! dominującym kosztem iteracji jest LINKOWANIE — cztery binarki to cztery
-//! linkowania po każdej zmianie w bibliotece.
+//! One instead of four, because on the development machine (3.5 GB RAM,
+//! CARGO_BUILD_JOBS=1) the dominant cost of an iteration is LINKING - four binaries
+//! mean four links after every change to the library.
 //!
-//! Użycie: `dist_ops <overlap|merge|subtract|nearest|coverage>`
+//! Usage: `dist_ops <overlap|merge|subtract|nearest|coverage>`
 
 use ballista_genomics::{runner, DistOp};
 use datafusion::error::Result;

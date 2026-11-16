@@ -1,23 +1,23 @@
-//! Faza H: `PhysicalExtensionCodec` dla wezlow operacji zakresowych
-//! (`MergeExec`, dalej: `SubtractExec`, `NearestExec`, coverage).
+//! A `PhysicalExtensionCodec` for the range-operation nodes
+//! (`MergeExec`, `SubtractExec`, `NearestExec`, coverage).
 //!
-//! Osobny kodek, a nie rozszerzenie `physical_codec.rs`, celowo: tamten jest
-//! ZWERYFIKOWANYM artefaktem Fazy A.5 (wisi na nim test overlapa), wiec
-//! ustawiamy sie PRZED nim w lancuchu delegacji i zostawiamy jego sciezke
-//! bajt w bajt nietknieta:
+//! A separate codec, not an extension of `physical_codec.rs`, deliberately: that one is
+//! a VERIFIED artifact (the overlap test depends on it), so
+//! we sit BEFORE it in the delegation chain and leave its path
+//! byte-for-byte untouched:
 //!
 //! ```text
-//! BioRangesPhysicalCodec   (MAGIC 0xD1570003 + tag operacji)
-//!   -> nie moje? -> IntervalJoinPhysicalCodec (0xD1570002)
-//!        -> nie moje? -> domyslny kodek Ballisty
+//! BioRangesPhysicalCodec   (MAGIC 0xD1570003 + operation tag)
+//!   -> not mine? -> IntervalJoinPhysicalCodec (0xD1570002)
+//!        -> not mine? -> Ballista's default codec
 //! ```
 //!
-//! W przeciwienstwie do `IntervalJoinExec`, zadna z tych operacji nie ma pol
-//! typu `Arc<dyn PhysicalExpr>` - wiec kodek nie potrzebuje w ogole
-//! `serialize_physical_expr`/`parse_physical_expr` i jest istotnie prostszy.
+//! Unlike `IntervalJoinExec`, none of these operations has fields of type
+//! `Arc<dyn PhysicalExpr>` - so the codec does not need
+//! `serialize_physical_expr`/`parse_physical_expr` at all and is much simpler.
 //!
-//! Wezly buduje sie literalem struktury (dzieki latce widocznosci, patrz
-//! vendor/PATCH.md, Latka 2), bo vendor nie daje dla nich zadnych konstruktorow.
+//! The nodes are built with a struct literal (thanks to the visibility patch, see
+//! vendor/PATCH.md, Patch 2), because the vendored crate provides no constructors for them.
 
 use std::sync::Arc;
 
@@ -57,13 +57,13 @@ impl Default for BioRangesPhysicalCodec {
     }
 }
 
-/// `PlanProperties` z atrapa partycjonowania. Nigdy nie trafia do gotowego
-/// wezla: zaraz po zbudowaniu literalu wolamy `recompute_with_children()`, ktore
-/// przelicza `cache` DOKLADNIE tak, jak zrobilby to vendor (wlacznie z
-/// wlasciwym `EmissionType`). Dzieki temu nie musimy nawet wiedziec, czy dana
-/// operacja jest `Incremental` czy `Final` - i eliminujemy cala klase bledow
-/// typu "wezel zbudowany lokalnie ma stan, ktory rozproszony executor odrzuca"
-/// (bug `PartitionMode::Auto` z Fazy A.5).
+/// `PlanProperties` with a dummy partitioning. It never ends up in a finished
+/// node: right after building the literal we call `recompute_with_children()`, which
+/// recomputes `cache` EXACTLY as the vendored code would (including the
+/// correct `EmissionType`). Thanks to this we do not even need to know whether an
+/// operation is `Incremental` or `Final` - and we eliminate a whole class of bugs of the
+/// kind "a locally built node has a state that a distributed executor rejects"
+/// (the `PartitionMode::Auto` bug in IntervalJoinExec).
 pub fn placeholder_props(schema: datafusion::arrow::datatypes::SchemaRef) -> Arc<PlanProperties> {
     Arc::new(PlanProperties::new(
         EquivalenceProperties::new(schema),
@@ -73,9 +73,10 @@ pub fn placeholder_props(schema: datafusion::arrow::datatypes::SchemaRef) -> Arc
     ))
 }
 
-/// Podmiana dzieci z przeliczeniem `cache` — odpowiednik dawnego `with_new_children()`
-/// (w DataFusion 55 przestarzalego): `replace_children` z `ChildrenPropertiesMode::Recompute`
-/// dla wezlow vendora konczy sie w ich `with_new_children()`, wiec wynik jest ten sam.
+/// Replacing the children with a recomputation of `cache` - the counterpart of the former
+/// `with_new_children()` (deprecated in DataFusion 55): `replace_children` with
+/// `ChildrenPropertiesMode::Recompute` ends up in the vendored nodes' `with_new_children()`
+/// for them, so the result is the same.
 pub fn recompute_with_children(
     plan: Arc<dyn ExecutionPlan>,
     children: Vec<Arc<dyn ExecutionPlan>>,
@@ -104,9 +105,9 @@ fn build_merge_exec(
     recompute_with_children(Arc::new(exec), vec![input])
 }
 
-/// Wezel BINARNY - pierwszy z dwojgiem dzieci. DataFusion serializuje oba
-/// poddrzewa rekurencyjnie PRZED wywolaniem kodeka i podaje je w `inputs`,
-/// wiec my zapisujemy wylacznie wlasne parametry wezla.
+/// A BINARY node - the first with two children. DataFusion serializes both
+/// subtrees recursively BEFORE calling the codec and passes them in `inputs`,
+/// so we write only the node's own parameters.
 fn build_subtract_exec(
     left: Arc<dyn ExecutionPlan>,
     right: Arc<dyn ExecutionPlan>,
@@ -139,10 +140,10 @@ fn encode_subtract(sx: &SubtractExec, buf: &mut Vec<u8>) -> Result<()> {
     write_cols(buf, sx.left_columns.as_ref());
     write_cols(buf, sx.right_columns.as_ref());
     write_u32(buf, sx.left_contig_col_idx as u32);
-    // `has_extra_cols` zapisujemy JAWNIE, mimo ze dalo by sie je wyprowadzic ze
-    // schematu (`fields().len() > 3`). Wyprowadzanie powielaloby logike
-    // SubtractProvider::new i rozjechaloby sie przy tabeli o dokladnie trzech
-    // kolumnach o innej semantyce.
+    // We write `has_extra_cols` EXPLICITLY, even though it could be derived from the
+    // schema (`fields().len() > 3`). Deriving it would duplicate the logic of
+    // SubtractProvider::new and would drift apart for a table with exactly three
+    // columns of different semantics.
     write_bool(buf, sx.has_extra_cols);
     Ok(())
 }
@@ -197,15 +198,15 @@ fn byte_to_filter_op(b: u8) -> Result<FilterOp> {
     })
 }
 
-/// Wzorzec BROADCAST: indeksu nie da sie zserializowac (COITree bez serde,
-/// prywatne pola), ale jest w 100% ODTWARZALNY z `left_batch`. Wysylamy wiec
-/// dane wejsciowe zamiast wyniku i przeliczamy indeks po stronie executora —
-/// dokladnie ta sama sztuczka co `parse_intervals()` przy IntervalJoinExec.
+/// The BROADCAST pattern: the index cannot be serialized (a COITree without serde,
+/// private fields), but it is 100% RECONSTRUCTIBLE from `left_batch`. So we send
+/// the input data instead of the result and recompute the index on the executor side -
+/// exactly the same trick as `parse_intervals()` for IntervalJoinExec.
 ///
-/// `build_nearest_indexes` to TA SAMA funkcja, ktorej uzyl NearestProvider::scan(),
-/// wiec `position` w IntervalRecord wskazuje ten sam wiersz tego samego batcha.
-/// Typu indeksu celowo nigdzie nie nazywamy — inferencja dopasowuje go
-/// nominalnie, dzieki czemu nasz Cargo.toml nie potrzebuje ahash ani coitrees.
+/// `build_nearest_indexes` is THE SAME function that NearestProvider::scan() used,
+/// so `position` in IntervalRecord points to the same row of the same batch.
+/// We deliberately never name the index type - inference matches it
+/// nominally, so our Cargo.toml needs neither ahash nor coitrees.
 #[allow(clippy::too_many_arguments)]
 fn build_nearest_exec(
     right: Arc<dyn ExecutionPlan>,
@@ -238,8 +239,8 @@ fn build_nearest_exec(
     recompute_with_children(Arc::new(exec), vec![right])
 }
 
-/// Rozmiar odebranego ładunku broadcastu: orkiestrator sumuje te linie z logów executorów
-/// w kolumnę `broadcast_bytes` (specyfikacja 3b-2, 6.3; wzorzec w `bench/logscan.py`).
+/// The size of the received broadcast payload: the orchestrator sums these lines from the
+/// executor logs into the `broadcast_bytes` column (the pattern is in `bench/logscan.py`).
 fn log_broadcast_decoded(bytes: usize) {
     tracing::info!("broadcast payload decoded: {bytes} bytes");
 }
@@ -295,8 +296,8 @@ fn encode_coverage(c: &DistCoverageExec, buf: &mut Vec<u8>) -> Result<()> {
     write_u8(buf, TAG_COVERAGE);
     write_u8(buf, filter_op_to_byte(&c.filter_op));
     write_schema(buf, c.inner.schema().as_ref())?;
-    // columns_1 i flaga coverage NIE ISTNIEJA w CountOverlapsExec - to wlasnie
-    // po to jest nasz wezel-nosnik (patrz coverage_node.rs).
+    // columns_1 and the coverage flag do NOT EXIST in CountOverlapsExec - that is
+    // exactly why our carrier node exists (see coverage_node.rs).
     write_cols(buf, c.columns_1.as_ref());
     write_cols(buf, c.columns_2.as_ref());
     write_bool(buf, c.coverage);

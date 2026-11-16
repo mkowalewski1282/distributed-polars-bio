@@ -5,20 +5,19 @@ use datafusion::prelude::CsvReadOptions;
 use datafusion_bio_function_ranges::create_bio_session;
 
 // ---------------------------------------------------------------------------
-// Faza C: operacja merge, poziom "lokalny w DataFusion" (odpowiednik Fazy A.2
-// dla overlap) — rejestracja prawdziwego silnika (MergeProvider z
-// bio-function-ranges) i weryfikacja poprawności.
+// The merge operation at the "local in DataFusion" level (the counterpart of the local
+// overlap check) - registers the real engine (MergeProvider from bio-function-ranges)
+// and verifies correctness.
 //
-// WAŻNE (odkrycie z tej sesji): w przeciwieństwie do OverlapProvider,
-// MergeProvider::scan() NIE deleguje do session.sql() — buduje własny,
-// customowy, PRYWATNY MergeExec bezpośrednio. To oznacza, że w pełni
-// rozproszony wariant (jak Faza A.4 dla overlap, z LogicalExtensionCodec)
-// NIE MA tu tej samej furtki: nie da się "podmienić" sesji na zwykłą, żeby
-// uniknąć customowego węzła fizycznego — MergeExec pojawi się zawsze.
-// Pełna dystrybucja merge wymagałaby PhysicalExtensionCodec dla MergeExec,
-// co przy prywatnych polach oznacza współpracę z autorami crate'a albo
-// reimplementację od zera (patrz ballista_genomics/OPIS.md).
-// Ten binarz weryfikuje więc tylko poprawność LOKALNĄ (bez Ballisty).
+// IMPORTANT: unlike OverlapProvider, MergeProvider::scan() does NOT delegate to
+// session.sql() - it builds its own custom, PRIVATE MergeExec directly. This means the
+// fully distributed variant (as for overlap, with a LogicalExtensionCodec) does NOT have
+// the same loophole here: the session cannot be "swapped" for a plain one to avoid the
+// custom physical node - MergeExec always appears. Distributing merge fully needs a
+// PhysicalExtensionCodec for MergeExec, which with private fields means either working
+// with the crate's authors or reimplementing it from scratch (the vendored copy makes
+// the fields public, see vendor/PATCH.md).
+// This binary therefore verifies only LOCAL correctness (without Ballista).
 // ---------------------------------------------------------------------------
 
 #[tokio::main]

@@ -1,28 +1,28 @@
-//! Faza A.5 (plan pracy magisterskiej): PhysicalExtensionCodec dla IntervalJoinExec —
-//! ostatni brakujący element do prawdziwej dystrybucji `overlap` z COITrees w Ballistrze.
+//! A PhysicalExtensionCodec for IntervalJoinExec - the last missing piece for a truly
+//! distributed `overlap` with COITrees in Ballista.
 //!
-//! Wymagało to lokalnej łatki widoczności w datafusion-bio-function-ranges
-//! (patrz vendor/PATCH.md) — bez niej ColIntervals (wymagany argument
-//! IntervalJoinExec::try_new()) był całkowicie nienazywalny spoza crate'a.
+//! This required a local visibility patch in datafusion-bio-function-ranges
+//! (see vendor/PATCH.md) - without it ColIntervals (a required argument of
+//! IntervalJoinExec::try_new()) could not be named at all from outside the crate.
 //!
-//! Strategia kodeka: NIE serializujemy gotowego drzewa fizycznego węzła wprost
-//! (jak przy DistOverlapProvider) — IntervalJoinExec to węzeł BINARNY
-//! (join), którego dzieci (left/right) DataFusion serializuje samo,
-//! rekurencyjnie, przed wywołaniem naszego kodeka (patrz
-//! datafusion-proto::physical_plan::mod.rs — `PhysicalExtensionNode { node, inputs }`,
-//! `inputs` to już zserializowane/zdeserializowane poddrzewa). My serializujemy
-//! tylko WŁASNE parametry węzła: `on`, `filter`, `join_type`, `partition_mode`,
+//! The codec's strategy: we do NOT serialize the node's ready-made physical tree directly
+//! (as DistOverlapProvider does for the logical side) - IntervalJoinExec is a BINARY
+//! node (a join) whose children (left/right) DataFusion serializes itself,
+//! recursively, before calling our codec (see
+//! datafusion-proto::physical_plan::mod.rs - `PhysicalExtensionNode { node, inputs }`,
+//! where `inputs` are already serialized/deserialized subtrees). We serialize
+//! only the node's OWN parameters: `on`, `filter`, `join_type`, `partition_mode`,
 //! `null_equals_null`, `algorithm`, `low_memory`.
 //!
-//! `on`/`filter.expression()` to `Arc<dyn PhysicalExpr>` — używamy publicznych
-//! funkcji datafusion-proto (`serialize_physical_expr`/`parse_physical_expr`),
-//! które już umieją serializować dowolne standardowe wyrażenia fizyczne
-//! (Column, BinaryExpr, CastExpr, Literal — dokładnie to, z czego zbudowany
-//! jest warunek overlap, patrz Debug z Fazy A.4).
+//! `on`/`filter.expression()` are `Arc<dyn PhysicalExpr>` - we use the public
+//! functions of datafusion-proto (`serialize_physical_expr`/`parse_physical_expr`),
+//! which already know how to serialize any standard physical expression
+//! (Column, BinaryExpr, CastExpr, Literal - exactly what the overlap condition
+//! is built from).
 //!
-//! `filter`'s schema NIE jest serializowany osobno — odtwarzamy go z
-//! `column_indices` + schematów left/right (dokładnie to, do czego
-//! `column_indices` służy: mapowanie z powrotem na kolumny źródłowe).
+//! The filter's schema is NOT serialized separately - we reconstruct it from
+//! `column_indices` + the left/right schemas (exactly what
+//! `column_indices` is for: a mapping back to the source columns).
 
 use std::sync::Arc;
 
@@ -42,20 +42,20 @@ use prost::Message;
 
 use crate::codec_io::{has_magic, read_bytes, read_u32, write_bytes, write_u32};
 
-/// `algorithm`/`low_memory` NIE mają publicznych getterów na IntervalJoinExec
-/// (sprawdzone empirycznie) — nie da się ich odczytać z istniejącej instancji.
-/// Ale nie trzeba: to wartości pochodzące z BioConfig sesji (interval_join_algorithm/
-/// interval_join_low_memory, `runner::bio_session_config`), a SCHEDULER i EXECUTOR mają
-/// identyczną konfigurację — więc ZNAMY je z góry, tak samo jak sesja, która zbudowała
-/// ten węzeł. Jedno miejsce tego założenia dla kodeka i dla przebudowy węzła przy
-/// planowaniu (`dist_provider::collect_left_at_planning`).
+/// `algorithm`/`low_memory` have NO public getters on IntervalJoinExec
+/// (checked empirically) - they cannot be read from an existing instance.
+/// But there is no need: they are values from the session's BioConfig (interval_join_algorithm/
+/// interval_join_low_memory, `runner::bio_session_config`), and the SCHEDULER and EXECUTOR have
+/// an identical configuration - so we KNOW them in advance, just like the session that built
+/// this node. One place for this assumption, for the codec and for rebuilding the node during
+/// planning (`dist_provider::collect_left_at_planning`).
 pub(crate) const INTERVAL_JOIN_ALGORITHM: Algorithm = Algorithm::Coitrees;
 pub(crate) const INTERVAL_JOIN_LOW_MEMORY: bool = false;
 
 #[derive(Debug)]
 pub struct IntervalJoinPhysicalCodec {
     inner: Arc<dyn PhysicalExtensionCodec>,
-    // Patrz `INTERVAL_JOIN_ALGORITHM`/`INTERVAL_JOIN_LOW_MEMORY`.
+    // See `INTERVAL_JOIN_ALGORITHM`/`INTERVAL_JOIN_LOW_MEMORY`.
     algorithm: Algorithm,
     low_memory: bool,
 }
@@ -70,7 +70,7 @@ impl Default for IntervalJoinPhysicalCodec {
     }
 }
 
-// --- pomocnicze, ręczne kodowanie binarne (te same konwencje co Payload w main.rs) ---
+// --- helpers, hand-written binary encoding (the same conventions as in codec_io.rs) ---
 
 const MAGIC: u32 = 0xD157_0002;
 
@@ -180,8 +180,8 @@ fn byte_to_algorithm(b: u8) -> Result<Algorithm> {
     })
 }
 
-/// Odtwarza schemat pośredni JoinFilter z column_indices + schematów left/right —
-/// dokładnie to, do czego column_indices służy (mapowanie z powrotem na źródło).
+/// Reconstructs the JoinFilter's intermediate schema from column_indices + the left/right
+/// schemas - exactly what column_indices is for (a mapping back to the source).
 fn build_filter_schema(left: &Schema, right: &Schema, indices: &[ColumnIndex]) -> Schema {
     let fields: Vec<Arc<Field>> = indices
         .iter()
@@ -266,17 +266,17 @@ impl PhysicalExtensionCodec for IntervalJoinPhysicalCodec {
             DataFusionError::Internal("IntervalJoinPhysicalCodec: truncated (partition_mode)".into())
         })?;
         pos += 1;
-        // Tryb odtwarzamy dokładnie taki, jaki zaplanował scheduler. Węzeł z
-        // IntervalJoinPhysicalOptimizationRule ma tryb Auto (with_config_rt_bio() usuwa
-        // regułę join_selection), a executor odrzuca Auto w execute(). Dawniej (Faza A.5:
-        // Partitioned, plan 2: CollectLeft) koder zamieniał Auto dopiero tutaj, przy
-        // dekodowaniu. W Ballistcie 55 to za późno: scheduler zawęża liście planu do
-        // partycji zadania (restrict_plan_to_partitions), a przy Auto — także lewą stronę,
-        // więc tryb CollectLeft ustawiony tutaj indeksowałby tylko wycinek lewej tabeli i
-        // gubił pary bez żadnego błędu. Dlatego Auto → CollectLeft rozstrzyga się teraz przy
-        // planowaniu (`dist_provider::collect_left_at_planning`), a tu zamiany NIE ma:
-        // gdyby Auto jednak dotarło do executora, IntervalJoinExec::execute() odrzuci je
-        // błędem „unsupported PartitionMode Auto” — głośno, zamiast liczyć z wycinka.
+        // We reconstruct exactly the mode the scheduler planned. A node from
+        // IntervalJoinPhysicalOptimizationRule has mode Auto (with_config_rt_bio() removes the
+        // join_selection rule), and the executor rejects Auto in execute(). Formerly (first
+        // Partitioned, then CollectLeft) the codec turned Auto into a concrete mode only here,
+        // at decode time. In Ballista 55 that is too late: the scheduler narrows the plan's
+        // leaves to the task's partitions (restrict_plan_to_partitions), and with Auto also the
+        // left side, so a CollectLeft mode set here would index only a slice of the left table
+        // and lose pairs without any error. Therefore Auto -> CollectLeft is now resolved during
+        // planning (`dist_provider::collect_left_at_planning`), and there is NO conversion here:
+        // if Auto did reach the executor, IntervalJoinExec::execute() rejects it with the error
+        // "unsupported PartitionMode Auto" - loudly, instead of computing from a slice.
         let partition_mode = byte_to_partition_mode(partition_mode_b)?;
 
         let null_equals_null = *buf.get(pos).ok_or_else(|| {
@@ -294,13 +294,13 @@ impl PhysicalExtensionCodec for IntervalJoinPhysicalCodec {
             .get(pos)
             .ok_or_else(|| DataFusionError::Internal("IntervalJoinPhysicalCodec: truncated (low_memory)".into()))?
             != 0;
-        let _ = pos; // ostatnie pole, pos nie jest już dalej używane
+        let _ = pos; // the last field, pos is not used any further
 
-        // ColIntervals nie jest serializowane osobno — odtwarzane z filter przez
-        // parse_intervals() (dostępne dzięki łatce widoczności, patrz vendor/PATCH.md).
-        // To DOKŁADNIE ta sama funkcja, której IntervalJoinPhysicalOptimizationRule
-        // używa, żeby zbudować ColIntervals za pierwszym razem — więc wynik jest
-        // identyczny niezależnie czy liczony po stronie klienta czy executora.
+        // ColIntervals is not serialized separately - it is reconstructed from the filter through
+        // parse_intervals() (available thanks to the visibility patch, see vendor/PATCH.md).
+        // This is EXACTLY the function IntervalJoinPhysicalOptimizationRule uses to build
+        // ColIntervals the first time - so the result is identical whether computed on the
+        // client side or on the executor.
         let intervals = parse_intervals(filter.as_ref()).ok_or_else(|| {
             DataFusionError::Internal(
                 "IntervalJoinPhysicalCodec: could not rebuild ColIntervals from the filter".into(),
@@ -314,7 +314,7 @@ impl PhysicalExtensionCodec for IntervalJoinPhysicalCodec {
             filter,
             intervals,
             &join_type,
-            None, // projection — nieużywane w naszych zapytaniach (SELECT * bez projekcji na tym węźle)
+            None, // projection - unused in our queries (SELECT * with no projection on this node)
             partition_mode,
             null_equals_null,
             algorithm,
@@ -358,9 +358,9 @@ impl PhysicalExtensionCodec for IntervalJoinPhysicalCodec {
         buf.push(join_type_to_byte(ij.join_type()));
         buf.push(partition_mode_to_byte(ij.partition_mode()));
         buf.push(ij.null_equals_null() as u8);
-        // Brak getterów dla algorithm/low_memory na IntervalJoinExec — używamy
-        // wartości znanych z konfiguracji kodeka (patrz komentarz przy polach
-        // struktury), nie z instancji węzła.
+        // IntervalJoinExec has no getters for algorithm/low_memory - we use the
+        // values known from the codec's configuration (see the comment at the struct's
+        // fields), not from the node instance.
         buf.push(algorithm_to_byte(&self.algorithm));
         buf.push(self.low_memory as u8);
 

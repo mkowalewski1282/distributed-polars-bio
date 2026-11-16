@@ -1,29 +1,30 @@
-//! Runner Ballisty dla narzędzia pomiarowego (specyfikacja, sekcje 8.1 i 8.3).
+//! Ballista runner for the benchmark tool.
 //!
-//! Wykonuje JEDEN scenariusz na wskazanych danych — plik albo katalog plików
-//! Parquet (zbiory databio-8p) lub CSV — i wypisuje na stdout JEDNĄ linię JSON:
+//! Runs ONE scenario on the given data - a file or a directory of Parquet files
+//! (the databio-8p datasets) or CSV - and prints ONE JSON line to stdout:
 //! `{"rows": N, "checksum": "0x…", "t_total_s": T, "phases": {"first_batch_s": F}, "extra":
 //! {"target_partitions": P, "checksum_s": C}, "peak_rss_bytes": M}`.
 //!
-//! - czas: od wysłania zapytania (`ctx.sql`) do odebrania ostatniej partii — bez startu
-//!   procesu i połączenia z klastrem; `phases.first_batch_s` — czas do pierwszej partii;
-//! - suma kontrolna: `checksum.rs` (specyfikacja 8.4), liczona PO zatrzymaniu zegara na
-//!   partiach trzymanych w pamięci (specyfikacja 3b-2, 4.1); jej czas — `extra.checksum_s`;
-//! - szczyt pamięci: VmHWM tego procesu, licznik zerowany tuż przed zapytaniem;
-//! - `extra.target_partitions`: liczba partycji sesji (`BIO_TARGET_PARTITIONS`).
+//! - time: from sending the query (`ctx.sql`) to receiving the last batch - excluding process
+//!   start-up and the connection to the cluster; `phases.first_batch_s` - time to the first batch;
+//! - checksum: `checksum.rs`, computed AFTER the clock is stopped, on the batches held in
+//!   memory; its time is `extra.checksum_s`;
+//! - peak memory: VmHWM of this process, the counter reset right before the query;
+//! - `extra.target_partitions`: the number of session partitions (`BIO_TARGET_PARTITIONS`).
 //!
-//! Wynik jest trzymany w pamięci klienta (w schemacie znormalizowanym, `scenario.rs`) do
-//! końca pomiaru czasu. Tryb klastra jak w `dist_ops`:
-//! `BALLISTA_SCHEDULER_URL` → zewnętrzny scheduler, brak → standalone in-proc.
-//! `--output` dodatkowo zapisuje wynik do Parquet (testy poprawności).
+//! The result is held in client memory (in the normalized schema, `scenario.rs`) until the
+//! timing ends. Cluster mode as in `dist_ops`:
+//! `BALLISTA_SCHEDULER_URL` -> an external scheduler, unset -> in-process standalone.
+//! `--output` additionally writes the result to Parquet (correctness tests).
 //!
-//! `--checksum PLIK --op OP` liczy samą sumę kontrolną pliku Parquet w schemacie
-//! znormalizowanym, bez silnika — test zgodności z `bench/checksum.py`.
+//! `--checksum FILE --op OP` computes only the checksum of a Parquet file in the normalized
+//! schema, without an engine - a test of agreement with `bench/checksum.py`.
 //!
-//! `--version-info` wypisuje wersje Ballisty i DataFusion oraz ustawienia Ballisty odczytane
-//! z konfiguracji klastra (`cluster::bio_ballista_config`) — jedno źródło dla testów i opisu.
+//! `--version-info` prints the Ballista and DataFusion versions and the Ballista settings read
+//! from the cluster configuration (`cluster::bio_ballista_config`) - a single source for tests
+//! and documentation.
 //!
-//! Kody wyjścia: 0 — sukces, 1 — błąd wykonania, 2 — błędne argumenty lub środowisko.
+//! Exit codes: 0 - success, 1 - execution error, 2 - bad arguments or environment.
 
 use std::fs::File;
 use std::time::{Duration, Instant};
@@ -60,13 +61,13 @@ const USAGE: &str = "usage:
 const DEFAULT_COLS: &str = "contig,pos_start,pos_end";
 
 enum Mode {
-    /// Jeden scenariusz na silniku; opcjonalnie zapis wyniku do Parquet.
+    /// One scenario on the engine; optionally writes the result to Parquet.
     Run { scenario: Scenario, output: Option<String> },
-    /// Sama suma kontrolna pliku w schemacie znormalizowanym.
+    /// Only the checksum of a file in the normalized schema.
     Checksum { op: DistOp, file: String },
-    /// Plan EXPLAIN ANALYZE scenariusza do pliku (dodatkowy, niemierzony przebieg; plan 3b-2).
+    /// The scenario's EXPLAIN ANALYZE plan written to a file (an extra, unmeasured run).
     Explain { scenario: Scenario, file: String },
-    /// Wersje i ustawienia Ballisty z konfiguracji klastra, bez łączenia się z klastrem.
+    /// Ballista versions and settings from the cluster configuration, without connecting to a cluster.
     VersionInfo,
 }
 
@@ -80,7 +81,7 @@ fn parse(args: &[String]) -> std::result::Result<Mode, String> {
         if let Some(other) = flags.keys().find(|f| f.as_str() != "--version-info") {
             return Err(format!("--version-info cannot be combined with {other}"));
         }
-        // Konfiguracja klastra czyta zmienne środowiskowe: błąd = kod 2, jak w pozostałych trybach.
+        // The cluster configuration reads environment variables: an error = exit code 2, as in the other modes.
         target_partitions()?;
         grpc_max_message_bytes()?;
         return Ok(Mode::VersionInfo);
@@ -96,7 +97,7 @@ fn parse(args: &[String]) -> std::result::Result<Mode, String> {
         }
         return Ok(Mode::Checksum { op, file });
     }
-    // Zmienna środowiskowa to też wejście: błąd = kod 2, zanim cokolwiek się uruchomi.
+    // An environment variable is also input: an error = exit code 2, before anything starts.
     target_partitions()?;
     grpc_max_message_bytes()?;
     let cols_raw: String =
@@ -125,8 +126,8 @@ fn parse(args: &[String]) -> std::result::Result<Mode, String> {
     }
 }
 
-/// Logi Ballisty na stderr — tylko gdy ustawiono `RUST_LOG` (diagnostyka; stdout
-/// to protokół, a domyślnie stderr ma zawierać wyłącznie komunikat błędu).
+/// Ballista logs on stderr - only when `RUST_LOG` is set (diagnostics; stdout is the
+/// protocol, and by default stderr should contain only the error message).
 fn init_logging() {
     if std::env::var_os("RUST_LOG").is_some() {
         tracing_subscriber::fmt()
@@ -137,7 +138,7 @@ fn init_logging() {
     }
 }
 
-/// Zeruje licznik szczytu pamięci tego procesu (VmHWM := bieżący RSS).
+/// Resets this process's peak-memory counter (VmHWM := current RSS).
 fn reset_peak_rss() -> std::io::Result<()> {
     std::fs::write("/proc/self/clear_refs", "5")
 }
@@ -202,8 +203,8 @@ async fn run(scenario: &Scenario, output: Option<&str>) -> Result<Report> {
     })
 }
 
-/// Dodatkowy, niemierzony przebieg: plan EXPLAIN ANALYZE z metrykami operatorów do pliku
-/// (specyfikacja 3b-2, 6.4). Zwraca liczbę zapisanych bajtów.
+/// An extra, unmeasured run: the EXPLAIN ANALYZE plan with operator metrics, written to a
+/// file. Returns the number of bytes written.
 async fn explain(scenario: &Scenario, file: &str) -> Result<usize> {
     let ctx = connect_from_env().await?;
     let batches = ctx
@@ -216,8 +217,9 @@ async fn explain(scenario: &Scenario, file: &str) -> Result<usize> {
     Ok(text.len())
 }
 
-/// Wersje i ustawienia Ballisty odczytane z tej samej konfiguracji, którą dostają klient,
-/// scheduler i executory (`bio_ballista_config`), a nie ze stałych — test porównuje je z OPIS.md.
+/// Ballista versions and settings read from the same configuration that the client,
+/// scheduler and executors get (`bio_ballista_config`), not from constants - a test compares
+/// them with the values documented in the technical description.
 fn version_info() -> String {
     let config = bio_ballista_config();
     let ballista = config.ballista_config();
@@ -251,7 +253,7 @@ async fn checksum_file(op: DistOp, file: &str) -> Result<Checksum> {
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    // Najpierw WYŁĄCZNIE parsowanie (kod 2), potem działanie (kod 1) — jak w ballista_node.
+    // Parsing ONLY first (exit code 2), then running (exit code 1) - as in ballista_node.
     let mode = parse(&args).unwrap_or_else(|msg| {
         eprintln!("error: {msg}\n{USAGE}");
         std::process::exit(2);

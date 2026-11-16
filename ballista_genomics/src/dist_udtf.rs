@@ -1,7 +1,7 @@
-//! Rejestracja operacji jako funkcji tabelowych SQL (`dist_overlap(...)` itd.).
+//! Registration of the operations as SQL table functions (`dist_overlap(...)` etc.).
 //!
-//! Jeden typ z polem `op` zamiast typu per operacja — parsowanie argumentów
-//! rozgałęzia się po `self.op`, reszta (budowa providera) jest wspólna.
+//! One type with an `op` field instead of a type per operation - argument parsing
+//! branches on `self.op`, the rest (building the provider) is shared.
 
 use std::sync::Arc;
 
@@ -37,10 +37,9 @@ pub fn expect_string_literal(args: &[Expr], idx: usize, fname: &str) -> Result<S
     }
 }
 
-/// Obowiązkowy argument konwencji współrzędnych: `'strict'` (0-based, półotwarte — dane
-/// databio-8p) albo `'weak'` (1-based, zamknięte). Dawniej brak argumentu oznaczał `'weak'`, co
-/// ukryło błąd w `nearest` aż do biblioteki v0.22.2 (plan 3b-1) — dlatego bez wartości domyślnej
-/// (plan 3b-2).
+/// A mandatory coordinate-convention argument: `'strict'` (0-based, half-open - the databio-8p
+/// data) or `'weak'` (1-based, closed). Formerly a missing argument meant `'weak'`, which hid a
+/// bug in `nearest` until library v0.22.2 - hence no default value.
 pub fn expect_filter_mode(args: &[Expr], idx: usize, fname: &str) -> Result<bool> {
     match args.get(idx) {
         Some(Expr::Literal(ScalarValue::Utf8(Some(v)), _)) if v.eq_ignore_ascii_case("strict") => Ok(true),
@@ -157,8 +156,8 @@ fn parse_nearest(args: &[Expr]) -> Result<DistPayload> {
         ),
         lcols: cols.clone(),
         rcols: cols,
-        // Konwencja obowiązkowa (plan 3b-2): dane 0-based wymagają 'strict' — bez niego od v0.22.2
-        // odległość wychodziła o 1 mniejsza niż w polars-bio (plan 3b-1).
+        // The convention is mandatory: 0-based data requires 'strict' - without it, since v0.22.2
+        // the distance came out 1 smaller than in polars-bio.
         strict: expect_filter_mode(args, 10, "dist_nearest")?,
         k: expect_i64_literal(args, 4, "dist_nearest")? as u32,
         include_overlaps: expect_bool_literal(args, 5, "dist_nearest")?,
@@ -231,8 +230,8 @@ impl TableFunctionImpl for DistTableFunction {
             DistOp::Coverage => parse_coverage(args)?,
         };
 
-        // TableFunctionImpl::call jest synchroniczne, a budowa providera wymaga
-        // async — ten sam wzorzec, którego używa sam vendor (table_function.rs).
+        // TableFunctionImpl::call is synchronous, while building the provider requires
+        // async - the same pattern the vendored crate itself uses (table_function.rs).
         let provider = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(DistBioProvider::build(payload))
         })?;

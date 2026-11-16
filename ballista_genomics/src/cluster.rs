@@ -1,10 +1,10 @@
-//! Jedno źródło konfiguracji węzłów klastra — klienta, schedulera i executora.
+//! A single source of configuration for the cluster nodes - client, scheduler and executor.
 //!
-//! W trybie standalone scheduler i executor dostają GOTOWY stan sesji klienta
-//! (`new_standalone_scheduler_from_state` / `new_standalone_executor_from_state`):
-//! bio-owego planistę, reguły optymalizatora i kodery. Osobny proces nie ma
-//! dostępu do pamięci klienta, więc musi zbudować identyczny stan sam — stąd te
-//! funkcje, wołane przez `runner` (klient) i `bin/ballista_node.rs` (węzły).
+//! In standalone mode the scheduler and executor get the client's READY-MADE session state
+//! (`new_standalone_scheduler_from_state` / `new_standalone_executor_from_state`): the bio
+//! planner, the optimizer rules and the codecs. A separate process has no access to the
+//! client's memory, so it must build an identical state itself - hence these functions,
+//! called by `runner` (the client) and `bin/ballista_node.rs` (the nodes).
 
 use std::sync::Arc;
 
@@ -23,57 +23,58 @@ use crate::bio_phys_codec::BioRangesPhysicalCodec;
 use crate::logical_codec::BioDistLogicalCodec;
 use crate::runner::{bio_session_config, grpc_max_message_bytes};
 
-/// Koder planu logicznego (klient → scheduler).
+/// The logical-plan codec (client -> scheduler).
 pub fn bio_logical_codec() -> Arc<dyn LogicalExtensionCodec> {
     Arc::new(BioDistLogicalCodec::default())
 }
 
-/// Koder planu fizycznego (scheduler → executor). Deleguje do
-/// `IntervalJoinPhysicalCodec`, a ten do domyślnego kodeka Ballisty.
+/// The physical-plan codec (scheduler -> executor). Delegates to
+/// `IntervalJoinPhysicalCodec`, which delegates to Ballista's default codec.
 pub fn bio_physical_codec() -> Arc<dyn PhysicalExtensionCodec> {
     Arc::new(BioRangesPhysicalCodec::default())
 }
 
-/// Planista adaptacyjny Ballisty (AQE, `ballista.planner.adaptive.enabled`), ustawiany jawnie,
-/// a nie brany z wartości domyślnej (Ballista 53: wyłączony, 55: włączony, #2315). Decyzja
-/// i dowody z `EXPLAIN ANALYZE`: OPIS.md, sekcja „Ballista 55”. Jedno źródło prawdy: wartość
-/// odczytaną z `bio_ballista_config()` drukuje `bench_client --version-info`, a test
-/// `test_aqe_setting_is_explicit` porównuje ją z deklaracją w OPIS.md.
+/// Ballista's adaptive query planner (AQE, `ballista.planner.adaptive.enabled`), set
+/// explicitly rather than taken from the default (Ballista 53: off, 55: on, #2315). A single
+/// source of truth: the value read from `bio_ballista_config()` is printed by
+/// `bench_client --version-info`, and the test `test_aqe_setting_is_explicit` compares it with
+/// the value declared in the technical description.
 pub const ADAPTIVE_QUERY_PLANNER: bool = true;
 
-/// Najwyżej tyle partycji wejściowych w jednym zadaniu (`ballista.scheduler.max_partitions_per_task`).
-/// Ballista 55 domyślnie (0 = bez limitu) pakuje do jednego zadania tyle partycji, ile executor ma
-/// wolnych slotów (vcores), więc przy 2 slotach cały etap dwóch partycji trafiał jako JEDNO zadanie
-/// do JEDNEGO executora. 1 = jedno zadanie na partycję, jak w Ballistcie 53 — zadania rozchodzą się
-/// round-robin po executorach. Nie dotyczy etapów zbierających (jedna partycja wyjściowa), które
-/// Ballista i tak musi wykonać jako jedno zadanie.
+/// At most this many input partitions per task (`ballista.scheduler.max_partitions_per_task`).
+/// By default (0 = no limit) Ballista 55 packs as many partitions into one task as the executor
+/// has free slots (vcores), so with 2 slots a whole two-partition stage went to ONE executor as
+/// ONE task. 1 = one task per partition, as in Ballista 53 - tasks spread round-robin across the
+/// executors. Does not apply to collecting stages (a single output partition), which Ballista
+/// has to run as one task anyway.
 pub const MAX_PARTITIONS_PER_TASK: usize = 1;
 
-/// Wspólna dla wszystkich sesji pamięć podręczna statystyk plików w schedulerze
-/// (`ballista.scheduler.share_file_statistics_cache`, nowość w 55, domyślnie włączona): kolejne
-/// zapytania korzystałyby ze statystyk stopek Parquetu odczytanych przez wcześniejsze. W 53 każda
-/// sesja miała własną, zimną. Wyłączone, jak pamięć podręczna środowiska sesji executora
-/// (`ballista_node`): pomiary nie mogą dostawać ciepłych pamięci podręcznych, których 53 nie miała.
-/// Zabezpieczenie: skany naszych operacji planują sesje wewnętrzne providerów (własne
-/// `RuntimeEnv`), których ta pamięć i tak nie obejmuje.
+/// A file-statistics cache in the scheduler shared by all sessions
+/// (`ballista.scheduler.share_file_statistics_cache`, new in 55, on by default): later queries
+/// would reuse the Parquet footer statistics read by earlier ones. In 53 each session had its
+/// own, cold one. Disabled, like the executor's session runtime-environment cache
+/// (`ballista_node`): measurements must not get warm caches that 53 did not have.
+/// As a safeguard, the scans of our operations are planned by the providers' internal sessions
+/// (their own `RuntimeEnv`), which this cache does not cover anyway.
 pub const SHARE_FILE_STATISTICS_CACHE: bool = false;
 
-/// `bio_session_config()` z zarejestrowanymi oboma koderami, limitem wiadomości gRPC klienta
-/// (`ballista.client.grpc_max_message_size`) i jawnymi ustawieniami Ballisty 55 (AQE, partycje
-/// na zadanie, wspólna pamięć statystyk plików). Ta konfiguracja trafia do klienta, a przez
-/// `override_config_producer` — do schedulera (planowanie zadań, jego klient gRPC do executorów)
-/// i executorów.
+/// `bio_session_config()` with both codecs registered, the client's gRPC message size limit
+/// (`ballista.client.grpc_max_message_size`) and explicit Ballista 55 settings (AQE, partitions
+/// per task, shared file-statistics cache). This configuration goes to the client and, through
+/// `override_config_producer`, to the scheduler (task planning, its gRPC client to the
+/// executors) and to the executors.
 pub fn bio_ballista_config() -> SessionConfig {
-    // Binarki sprawdzają zmienną przy starcie (błąd użycia, kod 2), więc niepoprawna wartość
-    // w tym miejscu to błąd programisty.
+    // The binaries validate the variable at start-up (a usage error, exit code 2), so an
+    // invalid value here is a programmer error.
     let limit = grpc_max_message_bytes().unwrap_or_else(|e| panic!("{e}"));
     bio_session_config()
-        // Ustawienia DataFusion pod Ballistę (`ballista_restricted_configuration`, m.in.
-        // `enable_round_robin_repartition = false`) Ballista 55 nakłada tylko przy PIERWSZYM
-        // `upgrade_for_ballista()`, na konfiguracji bez rozszerzenia `ballista`.
-        // Settery niżej to rozszerzenie dodają, więc późniejsze `upgrade_for_ballista()` (klient,
-        // scheduler, executory) by je pomijały — a Ballista 53 nakładała je zawsze. Bez tego
-        // wywołania standalone wstawiał RoundRobinBatch przed węzły operacji (EXPLAIN ANALYZE).
+        // Ballista 55 applies its DataFusion settings (`ballista_restricted_configuration`,
+        // among them `enable_round_robin_repartition = false`) only on the FIRST
+        // `upgrade_for_ballista()`, on a configuration without the `ballista` extension.
+        // The setters below add that extension, so a later `upgrade_for_ballista()` (client,
+        // scheduler, executors) would skip them - whereas Ballista 53 always applied them.
+        // Without this call, standalone mode inserted RoundRobinBatch before the operation
+        // nodes (seen in EXPLAIN ANALYZE).
         .upgrade_for_ballista()
         .with_ballista_logical_extension_codec(bio_logical_codec())
         .with_ballista_physical_extension_codec(bio_physical_codec())
@@ -83,8 +84,8 @@ pub fn bio_ballista_config() -> SessionConfig {
         .set_bool(BALLISTA_SCHEDULER_SHARE_FILE_STATISTICS_CACHE, SHARE_FILE_STATISTICS_CACHE)
 }
 
-/// Bio-owy stan sesji dla podanej konfiguracji. Scheduler MUSI planować na
-/// takim stanie, żeby `IntervalJoinPhysicalOptimizationRule` w ogóle zadziałała.
+/// The bio session state for the given configuration. The scheduler MUST plan on such a
+/// state for `IntervalJoinPhysicalOptimizationRule` to work at all.
 pub fn bio_session_state(config: SessionConfig) -> Result<SessionState> {
     Ok(DFSessionContext::new_with_bio(config).state())
 }

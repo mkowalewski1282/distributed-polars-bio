@@ -1,15 +1,14 @@
-//! `DistBioProvider` — jeden, generyczny `TableProvider` owijający właściwy
-//! provider z datafusion-bio-function-ranges.
+//! `DistBioProvider` - a single, generic `TableProvider` wrapping the actual
+//! provider from datafusion-bio-function-ranges.
 //!
-//! Po co owijanie: pola providerów vendora są prywatne, więc nie da się ich
-//! odczytać przy serializacji. `DistBioProvider` trzyma obok nich jawny
-//! `DistPayload` z parametrami konstrukcyjnymi, a `scan()` deleguje do
-//! prawdziwego providera — czyli silnik algorytmiczny (COITrees) jest wciąż
-//! używany, nic nie reimplementujemy.
+//! Why wrap: the fields of the vendored providers are private, so they cannot be
+//! read during serialization. `DistBioProvider` keeps next to them an explicit
+//! `DistPayload` with the constructor parameters, and `scan()` delegates to the
+//! real provider - so the algorithmic engine (COITrees) is still used and
+//! nothing is reimplemented.
 //!
-//! Uogólnienie względem Fazy A.4 (`DistOverlapProvider`): jeden typ zamiast
-//! jednego typu na operację. Dodanie kolejnej operacji = jeden wariant enuma
-//! + jedna gałąź `match` w `build()`.
+//! One type instead of one type per operation. Adding another operation = one enum
+//! variant + one `match` arm in `build()`.
 
 use std::fmt;
 use std::path::Path;
@@ -52,20 +51,20 @@ impl DistBioProvider {
         &self.payload
     }
 
-    /// Buduje własną, jednorazową sesję bio (nie dzieli stanu z sesją
-    /// zapytania) — rejestruje źródła danych (Parquet albo CSV, patrz
-    /// `register_source`) i konstruuje właściwy provider vendora.
+    /// Builds its own, one-off bio session (it does not share state with the query's
+    /// session) - registers the data sources (Parquet or CSV, see
+    /// `register_source`) and constructs the actual vendored provider.
     ///
-    /// Samodzielne budowanie sesji przy każdej rekonstrukcji jest CELOWE: to
-    /// dokładnie to, co musiałby zrobić prawdziwy executor w osobnym procesie
-    /// (nie ma dostępu do pamięci klienta) — więc ten sam kod działa i w
-    /// in-proc standalone, i w rozproszeniu wieloprocesowym.
+    /// Building the session ourselves on every reconstruction is DELIBERATE: it is
+    /// exactly what a real executor in a separate process would have to do
+    /// (it has no access to the client's memory) - so the same code works both in
+    /// in-process standalone mode and in a multi-process deployment.
     ///
-    /// Sesja używa TEJ SAMEJ `bio_session_config()` co sesja klienta/schedulera.
-    /// To istotne: ta sesja buduje plany fizyczne dzieci, więc decyduje o
-    /// liczbie partycji, na podstawie której `EnforceDistribution` schedulera
-    /// podejmuje potem decyzję o wstawieniu shuffle. Rozjazd konfiguracji
-    /// między tymi dwoma miejscami cicho psuł dystrybucję (naprawione w Fazie H).
+    /// The session uses THE SAME `bio_session_config()` as the client/scheduler session.
+    /// This matters: this session builds the physical plans of the children, so it decides
+    /// the number of partitions on which the scheduler's `EnforceDistribution` later bases its
+    /// decision to insert a shuffle. A configuration mismatch between these two places
+    /// silently broke the distribution.
     pub async fn build(payload: DistPayload) -> Result<Self> {
         let session = Arc::new(DFSessionContext::new_with_bio(bio_session_config()));
 
@@ -180,13 +179,13 @@ impl DistBioProvider {
     }
 }
 
-/// Rejestruje źródło danych tabeli w sesji odbiorcy. Format rozpoznawany po
-/// ścieżce: plik `*.parquet` albo katalog zawierający pliki `*.parquet` →
-/// Parquet (zbiory databio-8p), wszystko inne → CSV (dotychczasowe dane
-/// testowe). Ścieżka, której nie ma, to błąd z jej nazwą — wcześniej błąd
-/// rejestracji był połykany, a zapytanie padało później na mylącym „table not
-/// found”. Nazwa już zarejestrowana (ta sama tabela dwa razy w ładunku) jest
-/// pomijana.
+/// Registers a table's data source in the receiver's session. The format is recognized from
+/// the path: a `*.parquet` file or a directory containing `*.parquet` files ->
+/// Parquet (the databio-8p datasets), anything else -> CSV (the small test data).
+/// A path that does not exist is an error naming it - previously the registration
+/// error was swallowed and the query failed later with a misleading "table not
+/// found". A name that is already registered (the same table twice in one payload) is
+/// skipped.
 async fn register_source(session: &DFSessionContext, t: &TableRef) -> Result<()> {
     if session.table_exist(t.name.as_str())? {
         return Ok(());
@@ -220,23 +219,25 @@ fn is_parquet_source(path: &Path) -> bool {
     }
 }
 
-/// Rozstrzyga tryb `IntervalJoinExec` (overlap) z `Auto` na `CollectLeft` już przy planowaniu
-/// fizycznym w schedulerze.
+/// Resolves the mode of `IntervalJoinExec` (overlap) from `Auto` to `CollectLeft` already
+/// during physical planning in the scheduler.
 ///
-/// Węzeł z `IntervalJoinPhysicalOptimizationRule` ma tryb `Auto` (`with_config_rt_bio()` usuwa
-/// regułę `join_selection`), a w nim oba wejścia mają rozkład nieokreślony. Scheduler Ballisty 55
-/// przed wysłaniem zadania zawęża liście planu do partycji tego zadania
-/// (`restrict_plan_to_partitions`), oszczędzając tylko wejścia, które muszą być scalone — przy
-/// `Auto` zawężał więc i lewą (budowaną) stronę, a koder, który zamieniał `Auto` na `CollectLeft`
-/// dopiero przy dekodowaniu, budował indeks z wycinka lewej tabeli (gubione pary). Ballista 53
-/// wysyłała każdemu zadaniu cały plan etapu, więc tam to wystarczało.
+/// A node produced by `IntervalJoinPhysicalOptimizationRule` has mode `Auto`
+/// (`with_config_rt_bio()` removes the `join_selection` rule), and in it both inputs have an
+/// unspecified distribution. Before sending a task, the Ballista 55 scheduler narrows the plan's
+/// leaves to the partitions of that task (`restrict_plan_to_partitions`), sparing only the
+/// inputs that must be merged - so with `Auto` it also narrowed the left (build) side, and the
+/// codec, which turned `Auto` into `CollectLeft` only at decode time, built the index from a
+/// slice of the left table (lost pairs). Ballista 53 sent every task the whole stage plan, so
+/// that was enough there.
 ///
-/// `CollectLeft` żąda dla lewej strony `SinglePartition`: planista wstawia nad nią
-/// `CoalescePartitionsExec`, którego scheduler nie zawęża, a każde zadanie złączenia indeksuje
-/// całą lewą stronę i dzieli się z innymi prawą — ten sam algorytm (COITrees) i ten sam tryb co
-/// dotąd, tylko ustalony wcześniej. Koszt: przy kilku partycjach lewa strona staje się osobnym
-/// etapem (skan → shuffle), czytanym w całości przez każde zadanie złączenia. Algorytm i tryb
-/// pamięci przyjmujemy z tych samych stałych co koder (brak getterów na węźle).
+/// `CollectLeft` requires `SinglePartition` for the left side: the planner inserts a
+/// `CoalescePartitionsExec` above it, which the scheduler does not narrow, and each join task
+/// indexes the whole left side and shares the right side with the other tasks - the same
+/// algorithm (COITrees) and the same mode as before, just fixed earlier. Cost: with several
+/// partitions the left side becomes a separate stage (scan -> shuffle), read in full by every
+/// join task. The algorithm and memory mode come from the same constants as in the codec (the
+/// node has no getters).
 fn collect_left_at_planning(plan: Arc<dyn ExecutionPlan>) -> Result<Arc<dyn ExecutionPlan>> {
     plan.transform_up(|node| {
         let Some(join) = node.downcast_ref::<IntervalJoinExec>() else {
@@ -282,9 +283,9 @@ impl TableProvider for DistBioProvider {
     ) -> Result<Arc<dyn ExecutionPlan>> {
         let plan = self.inner.scan(state, projection, filters, limit).await?;
         let plan = collect_left_at_planning(plan)?;
-        // Strażnik broadcastu (specyfikacja 3b-2, 6.2): planowanie fizyczne odbywa się
-        // w schedulerze, więc błąd dociera do klienta jako błąd zapytania, zamiast zawiesić je
-        // przy wysyłce zadań do executorów.
+        // The broadcast guard: physical planning happens in the scheduler, so the error
+        // reaches the client as a query error instead of hanging the query when tasks
+        // are sent to the executors.
         let grpc_limit = grpc_max_message_bytes().map_err(DataFusionError::Configuration)?;
         check_broadcast_fits(&plan, grpc_limit)?;
         Ok(plan)

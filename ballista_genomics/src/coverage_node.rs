@@ -1,20 +1,20 @@
-//! Coverage — jedyna z czterech operacji Fazy H, ktora wymaga WLASNEGO
-//! wezla-nosnika, a nie tylko latki widocznosci.
+//! Coverage - the only one of the four operations that requires its OWN
+//! carrier node, and not just a visibility patch.
 //!
-//! Powod (zweryfikowany w zrodle, count_overlaps.rs:122-141):
-//! `CountOverlapsProvider::scan()` materializuje lewa tabele, PRZENOSI ja do
-//! konstruktora indeksu i porzuca. Powstaly `CountOverlapsExec` ma pola
-//! `schema, index, right, columns_2, filter_op, cache` — czyli NIE MA:
-//!   - danych lewej tabeli (nie da sie ich odzyskac),
-//!   - `columns_1` (nazw kolumn lewej tabeli, potrzebnych do odbudowy indeksu),
-//!   - flagi `coverage` (jest tylko wariantem enuma).
-//! A samego indeksu nie da sie odczytac: `COITree` nie ma serde, a
-//! `CountOverlapIndex` ma prywatne pola.
+//! The reason (verified in the source, count_overlaps.rs:122-141):
+//! `CountOverlapsProvider::scan()` materializes the left table, MOVES it into the
+//! index constructor and discards it. The resulting `CountOverlapsExec` has the fields
+//! `schema, index, right, columns_2, filter_op, cache` - so it has NO:
+//!   - data of the left table (it cannot be recovered),
+//!   - `columns_1` (the left table's column names, needed to rebuild the index),
+//!   - `coverage` flag (it is only an enum variant).
+//! And the index itself cannot be read: `COITree` has no serde, and
+//! `CountOverlapIndex` has private fields.
 //!
-//! Rozwiazanie: `DistCoverageExec` — TRANSPARENTNY DEKORATOR, ktory deleguje
-//! wszystko do wewnetrznego `CountOverlapsExec`, ale dodatkowo przenosi to,
-//! co tamten gubi. Dla optymalizatora i dla DistributedPlannera Ballisty
-//! zachowuje sie identycznie jak wezel wewnetrzny.
+//! The solution: `DistCoverageExec` - a TRANSPARENT DECORATOR that delegates
+//! everything to the inner `CountOverlapsExec`, but additionally carries what
+//! that one loses. For the optimizer and for Ballista's DistributedPlanner it
+//! behaves identically to the inner node.
 
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
@@ -42,11 +42,11 @@ use datafusion_bio_function_ranges::{
     CountOverlapsIndex, CountOverlapsProvider, FilterOp,
 };
 
-/// Buduje wezel vendora z jawnie podanego batcha lewej tabeli.
+/// Builds the vendored node from an explicitly given batch of the left table.
 ///
-/// Typow indeksu (`AHashMap`, `COITree`) celowo nigdzie nie nazywamy —
-/// inferencja dopasowuje je nominalnie z publicznych funkcji budujacych,
-/// dzieki czemu nasz Cargo.toml nie potrzebuje ani `ahash`, ani `coitrees`.
+/// We deliberately never name the index types (`AHashMap`, `COITree`) -
+/// inference matches them nominally from the public builder functions,
+/// so our Cargo.toml needs neither `ahash` nor `coitrees`.
 pub fn build_count_overlaps_exec(
     right: Arc<dyn ExecutionPlan>,
     schema: SchemaRef,
@@ -74,14 +74,14 @@ pub fn build_count_overlaps_exec(
         right: Arc::clone(&right),
         columns_2: Arc::new(columns_2),
         filter_op,
-        // Atrapa; `recompute_with_children` ponizej przelicza cache dokladnie tak,
-        // jak zrobilby to vendor (wlacznie z EmissionType::Final).
+        // A dummy; `recompute_with_children` below recomputes the cache exactly as
+        // the vendored code would (including EmissionType::Final).
         cache: crate::bio_phys_codec::placeholder_props(schema),
     };
     crate::bio_phys_codec::recompute_with_children(Arc::new(exec), vec![right])
 }
 
-/// Transparentny dekorator nad `CountOverlapsExec`.
+/// A transparent decorator over `CountOverlapsExec`.
 pub struct DistCoverageExec {
     pub left_batch: Arc<RecordBatch>,
     pub columns_1: Arc<(String, String, String)>,
@@ -104,9 +104,9 @@ impl Debug for DistCoverageExec {
 
 impl DisplayAs for DistCoverageExec {
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> std::fmt::Result {
-        // `broadcast_rows` celowo w wydruku: pojawia sie w EXPLAIN ANALYZE
-        // i staje sie czescia dowodu, ze lewa tabela faktycznie pojechala
-        // w ladunku planu (oraz materialem do oceny limitu 16 MB).
+        // `broadcast_rows` is deliberately in the output: it appears in EXPLAIN ANALYZE
+        // and becomes part of the evidence that the left table actually travelled
+        // in the plan payload (and material for judging the 16 MB limit).
         write!(
             f,
             "DistCoverageExec: coverage={}, broadcast_rows={}",
@@ -121,8 +121,8 @@ impl ExecutionPlan for DistCoverageExec {
         "DistCoverageExec"
     }
 
-    // DataFusion 55: wymagane. Wezel nie ma wlasnych wyrazen (wewnetrzny
-    // `CountOverlapsExec` tez nie), wiec nie ma czego odwiedzac.
+    // DataFusion 55: required. The node has no expressions of its own (the inner
+    // `CountOverlapsExec` has none either), so there is nothing to visit.
     fn apply_expressions(
         &self,
         _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> Result<TreeNodeRecursion>,
@@ -138,7 +138,7 @@ impl ExecutionPlan for DistCoverageExec {
         self.inner.children()
     }
 
-    // DataFusion 55: nastepca `required_input_distribution` (domyslnie ja owija).
+    // DataFusion 55: the successor of `required_input_distribution` (by default it wraps it).
     fn input_distribution_requirements(&self) -> InputDistributionRequirements {
         self.inner.input_distribution_requirements()
     }
@@ -177,9 +177,9 @@ impl ExecutionPlan for DistCoverageExec {
         self.inner.metrics()
     }
 
-    // DataFusion 55: statystyki licza `StatisticsContext` przez te dwie metody
-    // (nastepcy `partition_statistics`); dzieci sa dziecmi wezla wewnetrznego,
-    // wiec delegacja obu zachowuje dekorator przezroczystym.
+    // DataFusion 55: statistics are computed through `StatisticsContext` by these two methods
+    // (the successors of `partition_statistics`); the children are the inner node's
+    // children, so delegating both keeps the decorator transparent.
     fn child_stats_requests(&self, partition: Option<usize>) -> Vec<ChildStats> {
         self.inner.child_stats_requests(partition)
     }
@@ -193,8 +193,8 @@ impl ExecutionPlan for DistCoverageExec {
     }
 }
 
-/// Nasz provider dla coverage — jedyne miejsce w Fazie H, gdzie NIE delegujemy
-/// `scan()` do vendora (bo tamten gubi dane potrzebne do serializacji).
+/// Our provider for coverage - the only place where we do NOT delegate
+/// `scan()` to the vendored crate (because that one loses the data needed for serialization).
 pub struct DistCoverageProvider {
     session: Arc<SessionContext>,
     schema: SchemaRef,
@@ -224,8 +224,8 @@ impl DistCoverageProvider {
         filter_op: FilterOp,
         coverage: bool,
     ) -> Self {
-        // Schemat wyjsciowy bierzemy od vendora, zeby na pewno byl identyczny
-        // z wariantem lokalnym (right_schema + kolumna coverage/count).
+        // We take the output schema from the vendored crate so that it is certainly identical
+        // to the local variant (right_schema + the coverage/count column).
         let schema = CountOverlapsProvider::new(
             Arc::clone(&session),
             left_table.clone(),
@@ -276,8 +276,8 @@ impl TableProvider for DistCoverageProvider {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        // 1. Materializacja lewej (indeksowanej) tabeli — i ZATRZYMUJEMY batch,
-        //    w odroznieniu od vendora, ktory go porzuca.
+        // 1. Materialize the left (indexed) table - and KEEP the batch,
+        //    unlike the vendored code, which discards it.
         let left_df = self
             .session
             .table(self.left_table.clone())
@@ -287,11 +287,12 @@ impl TableProvider for DistCoverageProvider {
         let batches = left_df.collect().await?;
         let left_batch = Arc::new(concat_batches(&left_schema, &batches)?);
 
-        // 2. Plan prawej strony. CELOWO nie wstawiamy RepartitionExec(RoundRobinBatch),
-        //    ktory wstawia vendor: Ballista i tak usuwa z planu rozproszonego kazda
-        //    repartycje inna niz hash (ballista-scheduler/src/planner.rs), wiec
-        //    wstawianie jej tutaj tylko rozjechaloby ksztalt planu lokalnego
-        //    i rozproszonego. Rownoleglosc bierze sie z partycjonowania zrodla.
+        // 2. The right side's plan. We DELIBERATELY do not insert the
+        //    RepartitionExec(RoundRobinBatch) that the vendored code inserts: Ballista removes
+        //    every non-hash repartitioning from the distributed plan anyway
+        //    (ballista-scheduler/src/planner.rs), so inserting it here would only make the
+        //    shape of the local and the distributed plan diverge. Parallelism comes from the
+        //    source's partitioning.
         let right = self
             .session
             .table(self.right_table.clone())
@@ -320,7 +321,7 @@ impl TableProvider for DistCoverageProvider {
     }
 }
 
-/// Pomocnicze: `DataFusionError` z komunikatem o brakujacym wejsciu.
+/// Helper: a `DataFusionError` with a message about a missing input.
 pub fn missing_input(what: &str) -> DataFusionError {
     DataFusionError::Internal(format!("DistCoverageExec: missing {what}"))
 }

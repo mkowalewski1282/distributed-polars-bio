@@ -1,14 +1,14 @@
-//! Ścisłe parsowanie flag wiersza poleceń, wspólne dla binarek `ballista_node`
-//! i `bench_client`. Nieznany albo powtórzony argument to błąd: literówka w nazwie
-//! flagi nie może cicho uruchomić programu z wartością domyślną, a powtórzenie —
-//! z inną wartością niż zamierzona.
+//! Strict command-line flag parsing shared by the `ballista_node` and `bench_client`
+//! binaries. An unknown or repeated argument is an error: a typo in a flag name must
+//! not silently run the program with a default value, and a repetition must not
+//! silently run it with an unintended value.
 
 use std::collections::HashMap;
 use std::str::FromStr;
 
 pub type Flags = HashMap<String, Option<String>>;
 
-/// Parsuje `--klucz wartość` i flagi bez wartości.
+/// Parses `--key value` flags and flags without a value.
 pub fn parse_flags(
     args: &[String],
     value_flags: &[&str],
@@ -31,12 +31,12 @@ pub fn parse_flags(
     Ok(flags)
 }
 
-/// Wymagana flaga z wartością danego typu.
+/// A required flag with a value of the given type.
 pub fn required<T: FromStr>(flags: &Flags, name: &str) -> Result<T, String> {
     optional(flags, name)?.ok_or_else(|| format!("missing required flag {name}"))
 }
 
-/// Opcjonalna flaga z wartością danego typu; brak flagi → `None`.
+/// An optional flag with a value of the given type; an absent flag -> `None`.
 pub fn optional<T: FromStr>(flags: &Flags, name: &str) -> Result<Option<T>, String> {
     match flags.get(name).and_then(|v| v.as_deref()) {
         None => Ok(None),

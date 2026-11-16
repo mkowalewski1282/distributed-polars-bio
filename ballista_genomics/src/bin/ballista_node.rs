@@ -1,11 +1,11 @@
-//! Zadanie P0: węzeł klastra Ballista jako OSOBNY proces — scheduler albo
-//! executor z koderami operacji genomicznych.
+//! A Ballista cluster node as a SEPARATE process: a scheduler or an executor with the
+//! genomic-operation codecs.
 //!
-//! Jedna binarka z dwiema rolami zamiast dwóch binarek: na tej maszynie
-//! dominującym kosztem iteracji jest linkowanie (patrz dist_ops.rs).
+//! One binary with two roles instead of two binaries: on the development machine the
+//! dominant cost of an iteration is linking (see dist_ops.rs).
 //!
-//! Wszystkie procesy klastra i klient muszą działać w katalogu
-//! `ballista_genomics/`, bo ładunki planu przenoszą ŚCIEŻKI WZGLĘDNE do danych.
+//! All cluster processes and the client must run in the `ballista_genomics/` directory,
+//! because the plan payloads carry RELATIVE PATHS to the data.
 
 use std::error::Error;
 use std::net::SocketAddr;
@@ -35,7 +35,7 @@ struct ExecutorOpts {
     grpc_port: u16,
     work_dir: String,
     concurrent_tasks: usize,
-    /// `false` = kontrola negatywna: executor bez koderów operacji genomicznych.
+    /// `false` = negative control: an executor without the genomic-operation codecs.
     codecs: bool,
 }
 
@@ -59,21 +59,21 @@ async fn run_scheduler(port: u16, grpc_limit: usize) -> Result<(), Box<dyn Error
     let mut config = SchedulerConfig::default()
         .with_hostname("localhost")
         .with_port(port)
-        // Push + round-robin: scheduler sam rozdaje zadania po kolei na
-        // wszystkie executory. Przy pull (executory same pytają o pracę)
-        // i milisekundowych zadaniach jeden executor potrafi zgarnąć wszystko,
-        // a dowód „praca na obu executorach” byłby loterią.
+        // Push + round-robin: the scheduler hands out tasks to all executors in turn.
+        // With pull (executors ask for work themselves) and millisecond-long tasks
+        // one executor can grab everything, and any proof that "work ran on both
+        // executors" would be a lottery.
         .with_scheduler_policy(TaskSchedulingPolicy::PushStaged)
         .with_task_distribution(TaskDistributionPolicy::RoundRobin)
-        // 0 = nie każ executorom kasować danych zakończonych zadań: pliki etapów
-        // w katalogach roboczych są dowodem, kto co liczył.
+        // 0 = do not tell executors to delete the data of finished tasks: the stage
+        // files in the work directories show who computed what.
         .with_finished_job_data_clean_up_interval_seconds(0)
-        // Odpowiednik stanu sesji, który standalone przekazuje od klienta.
-        // upgrade_for_ballista() dodaje przestrzeń nazw `ballista` — bez niej
-        // scheduler cicho odrzuca wszystkie klucze `ballista.*` od klienta.
+        // Equivalent of the session state that standalone mode takes from the client.
+        // upgrade_for_ballista() adds the `ballista` namespace - without it the
+        // scheduler silently rejects all `ballista.*` keys coming from the client.
         .with_override_config_producer(Arc::new(|| bio_ballista_config().upgrade_for_ballista()))
         .with_override_session_builder(Arc::new(bio_session_state))
-        // Limit wiadomości gRPC serwera schedulera (specyfikacja 3b-2, 6.2).
+        // gRPC message size limit of the scheduler server (the broadcast payload travels through it).
         .with_grpc_server_max_decoding_message_size(grpc_limit as u32)
         .with_grpc_server_max_encoding_message_size(grpc_limit as u32);
     config.bind_host = "127.0.0.1".into();
@@ -82,7 +82,7 @@ async fn run_scheduler(port: u16, grpc_limit: usize) -> Result<(), Box<dyn Error
 
     let addr: SocketAddr = format!("127.0.0.1:{port}").parse()?;
     let cluster = BallistaCluster::new_from_config(&config).await?;
-    // Ustawienia planowania z konfiguracji, którą scheduler dostaje od `override_config_producer`.
+    // Planning settings from the configuration the scheduler gets from `override_config_producer`.
     let planning = bio_ballista_config();
     println!(
         "ballista_node: scheduler listening on {addr}, grpc max message {grpc_limit} B, \
@@ -95,8 +95,8 @@ async fn run_scheduler(port: u16, grpc_limit: usize) -> Result<(), Box<dyn Error
 }
 
 async fn run_executor(o: ExecutorOpts, grpc_limit: usize) -> Result<(), Box<dyn Error>> {
-    // Kontrola negatywna usuwa kodery z OBU miejsc — nadpisań i konfiguracji
-    // sesji — żeby executor nie miał skąd ich wziąć.
+    // The negative control removes the codecs from BOTH places - the overrides and the
+    // session configuration - so the executor has nowhere to get them from.
     let config_producer: ConfigProducer = if o.codecs {
         Arc::new(|| bio_ballista_config().upgrade_for_ballista())
     } else {
@@ -109,25 +109,25 @@ async fn run_executor(o: ExecutorOpts, grpc_limit: usize) -> Result<(), Box<dyn 
         grpc_port: o.grpc_port,
         scheduler_host: "localhost".into(),
         scheduler_port: o.scheduler_port,
-        // Ballista 55: `concurrent_tasks` przemianowane na `vcores` (liczba slotow executora).
+        // Ballista 55: `concurrent_tasks` was renamed to `vcores` (the number of executor slots).
         vcores: o.concurrent_tasks,
         task_scheduling_policy: TaskSchedulingPolicy::PushStaged,
         work_dir: Some(o.work_dir.clone()),
         override_config_producer: Some(config_producer),
         override_logical_codec: o.codecs.then(bio_logical_codec),
         override_physical_codec: o.codecs.then(bio_physical_codec),
-        // Limit wiadomości gRPC serwera executora — tu przychodzą zadania z ładunkiem broadcastu.
+        // gRPC message size limit of the executor server - tasks with the broadcast payload arrive here.
         grpc_max_decoding_message_size: grpc_limit as u32,
         grpc_max_encoding_message_size: grpc_limit as u32,
-        // Bez puli pamięci, jak w Ballistcie 53. W 55 `None` znaczy pulę automatyczną
-        // (FairSpillPool = 70% pamięci hosta/cgroup, dzielone na vcores), a dopiero `Some(0)`
-        // daje nieograniczoną pulę DataFusion (`MemoryBudget::Unbounded`). Zachowujemy
-        // semantykę 53; pamięć wykonania protokół pomiarowy traktuje osobno.
+        // No memory pool, as in Ballista 53. In 55 `None` means an automatic pool
+        // (FairSpillPool = 70% of host/cgroup memory, divided among the vcores), and only
+        // `Some(0)` gives an unbounded DataFusion pool (`MemoryBudget::Unbounded`). We keep
+        // the 53 semantics; the measurement protocol handles execution memory separately.
         memory_pool_size: Some(0),
-        // Bez pamięci podręcznej środowiska sesji, jak w Ballistcie 53 (świeże `RuntimeEnv`
-        // na każde zadanie). Domyślne 16 w 55 współdzieli środowisko między zadaniami
-        // i zapytaniami sesji (klienci object store, cache stopek Parquetu) — pomiary nie mogą
-        // dostawać „ciepłych” pamięci podręcznych, których 53 nie miała. 0 = wyłączone.
+        // No session runtime-environment cache, as in Ballista 53 (a fresh `RuntimeEnv`
+        // per task). The default of 16 in 55 shares the environment between the tasks and
+        // queries of a session (object store clients, Parquet footer cache) - measurements
+        // must not get "warm" caches that 53 did not have. 0 = disabled.
         session_runtime_cache_capacity: 0,
         ..ExecutorProcessConfig::default()
     };
@@ -163,14 +163,14 @@ fn usage_error(msg: &str) -> ! {
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    // Zmienna środowiskowa to też wejście: niepoprawna = błąd użycia (kod 2), zanim
-    // węzeł cokolwiek uruchomi (inaczej panika w bio_session_config).
+    // An environment variable is also input: an invalid one is a usage error (exit code 2)
+    // before the node starts anything (otherwise a panic in bio_session_config).
     if let Err(e) = target_partitions() {
         usage_error(&e);
     }
     let grpc_limit = grpc_max_message_bytes().unwrap_or_else(|e| usage_error(&e));
     let rest = args.get(1..).unwrap_or(&[]);
-    // Najpierw WYŁĄCZNIE parsowanie (kod 2), potem działanie (kod 1).
+    // Parsing ONLY first (exit code 2), then running (exit code 1).
     let outcome = match args.first().map(String::as_str) {
         Some("scheduler") => {
             let port = parse_flags(rest, &["--port"], &[])

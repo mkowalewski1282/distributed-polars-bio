@@ -1,22 +1,21 @@
-//! Ładunek logiczny: komplet parametrów potrzebnych, żeby po drugiej stronie
-//! sieci ODTWORZYĆ provider operacji zakresowej.
+//! The logical payload: the complete set of parameters needed to RECREATE a range-operation
+//! provider on the other side of the network.
 //!
-//! Kluczowa decyzja (Faza A.4, utrzymana i uogólniona w Fazie H): nie
-//! serializujemy stanu providera ani planu, który on zbuduje — tylko argumenty
-//! konstrukcyjne. Odbiorca (scheduler/executor) buduje własną sesję bio,
-//! rejestruje te same pliki CSV i konstruuje provider od zera. To dokładnie to,
-//! co musi zrobić prawdziwy executor w osobnym procesie, bo nie ma dostępu do
-//! pamięci klienta.
+//! The key decision: we do not serialize the provider's state or the plan it will build -
+//! only the constructor arguments. The receiver (scheduler/executor) builds its own bio
+//! session, registers the same data files and constructs the provider from scratch. This is
+//! exactly what a real executor in a separate process must do, since it has no access to the
+//! client's memory.
 //!
-//! Jeden `enum DistPayload` zamiast osobnego typu per operacja — bo
-//! `SessionConfig` przyjmuje dokładnie JEDEN `LogicalExtensionCodec`, więc
-//! wariant per operacja oznaczałby łańcuch delegacji o tylu poziomach, ile
-//! operacji (patrz plan, Faza H, decyzje architektoniczne).
+//! A single `enum DistPayload` instead of a separate type per operation - because
+//! `SessionConfig` accepts exactly ONE `LogicalExtensionCodec`, so a per-operation
+//! variant would mean a delegation chain with as many levels as there are
+//! operations.
 
 use crate::codec_io::*;
 use datafusion::common::Result;
 
-/// Tag operacji — kodowany jako `u8` zaraz po MAGIC, po obu stronach kodeka.
+/// The operation tag - encoded as a `u8` right after MAGIC, on both sides of the codec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DistOp {
     Overlap = 0,
@@ -50,7 +49,7 @@ impl DistOp {
         })
     }
 
-    /// Nazwa funkcji tabelowej rejestrowanej w SQL.
+    /// The name of the table function registered in SQL.
     pub fn udtf_name(self) -> &'static str {
         match self {
             DistOp::Overlap => "dist_overlap",
@@ -83,10 +82,10 @@ impl DistOp {
     }
 }
 
-/// Tabela do zarejestrowania po stronie odbiorcy: nazwa logiczna + ścieżka.
-/// Ścieżka może wskazywać na pojedynczy plik CSV albo na KATALOG z wieloma
-/// plikami — ten drugi wariant jest istotny, bo daje >1 partycję źródła, bez
-/// czego Ballista może w ogóle nie wstawić shuffle (patrz plan, Faza H, §3-4).
+/// A table to register on the receiver's side: a logical name + a path.
+/// The path can point to a single CSV file or to a DIRECTORY with several
+/// files - the latter matters because it gives more than one source partition, without
+/// which Ballista may not insert a shuffle at all.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableRef {
     pub name: String,
@@ -102,7 +101,7 @@ impl TableRef {
     }
 }
 
-/// Trójka nazw kolumn (kontig, start, koniec).
+/// A triple of column names (contig, start, end).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cols(pub String, pub String, pub String);
 
@@ -170,7 +169,7 @@ impl DistPayload {
         }
     }
 
-    /// Wszystkie tabele, które odbiorca musi zarejestrować przed budową providera.
+    /// All the tables the receiver must register before building the provider.
     pub fn tables(&self) -> Vec<&TableRef> {
         match self {
             DistPayload::Overlap { left, right, .. } => vec![left, right],
@@ -259,7 +258,7 @@ impl DistPayload {
         buf
     }
 
-    /// `None` oznacza „to nie jest nasz ładunek" — kodek ma wtedy delegować dalej.
+    /// `None` means "this is not our payload" - the codec should then delegate onwards.
     pub fn decode(buf: &[u8]) -> Option<Self> {
         if !has_magic(buf, DIST_LOGICAL_MAGIC) {
             return None;

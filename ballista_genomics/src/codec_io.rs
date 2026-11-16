@@ -1,13 +1,13 @@
-//! Wspólne prymitywy kodowania binarnego dla wszystkich kodeków tego crate'a.
+//! Binary encoding primitives shared by all codecs of this crate.
 //!
-//! Konwencje (te same, których używał już `physical_codec.rs` w Fazie A.5):
-//! - liczby little-endian,
-//! - sekwencje bajtów i stringi length-prefiksowane `u32`,
-//! - bool jako pojedynczy bajt 0/1.
+//! Conventions (the same ones `physical_codec.rs` already used):
+//! - little-endian numbers,
+//! - byte sequences and strings prefixed with their `u32` length,
+//! - a bool as a single 0/1 byte.
 //!
-//! Formatu nie trzeba wersjonować: klient, scheduler i executor pochodzą z tego
-//! samego procesu i tej samej binarki (Ballista standalone), więc ładunek żyje
-//! dokładnie jedną sesję.
+//! The format does not need versioning: the client, scheduler and executor come from the
+//! same process and the same binary (Ballista standalone), so a payload lives for
+//! exactly one session.
 
 use datafusion::common::{DataFusionError, Result};
 
@@ -83,8 +83,8 @@ pub fn read_str(buf: &[u8], pos: &mut usize) -> Result<String> {
         .map_err(|e| DataFusionError::Internal(format!("codec_io: invalid UTF-8: {e}")))
 }
 
-/// Trójka nazw kolumn (kontig, start, koniec) — powtarza się w KAŻDEJ operacji
-/// zakresowej z datafusion-bio-function-ranges, stąd osobny helper.
+/// A triple of column names (contig, start, end) - it recurs in EVERY range operation of
+/// datafusion-bio-function-ranges, hence a separate helper.
 pub fn write_cols(buf: &mut Vec<u8>, c: &(String, String, String)) {
     write_str(buf, &c.0);
     write_str(buf, &c.1);
@@ -99,8 +99,8 @@ pub fn read_cols(buf: &[u8], pos: &mut usize) -> Result<(String, String, String)
     ))
 }
 
-/// Sprawdza prefiks MAGIC bez przesuwania pozycji. Zwraca `false` także dla
-/// buforów krótszych niż 4 bajty — wtedy ładunek na pewno nie jest nasz.
+/// Checks the MAGIC prefix without advancing the position. Returns `false` also for
+/// buffers shorter than 4 bytes - such a payload is certainly not ours.
 pub fn has_magic(buf: &[u8], magic: u32) -> bool {
     buf.len() >= 4 && u32::from_le_bytes(buf[0..4].try_into().unwrap()) == magic
 }
@@ -109,12 +109,12 @@ pub fn write_magic(buf: &mut Vec<u8>, magic: u32) {
     buf.extend_from_slice(&magic.to_le_bytes());
 }
 
-// --- schemat Arrow ---------------------------------------------------------
+// --- Arrow schema ----------------------------------------------------------
 //
-// Schemat wyjsciowy serializujemy ZAWSZE, przez protobuf datafusion-proto.
-// Alternatywa (odtwarzanie go po stronie executora z parametrow) oznaczalaby
-// powielenie logiki konstruktorow providerow vendora - a ta logika jest rozna
-// dla kazdej operacji i moglaby sie z nia cicho rozjechac.
+// We ALWAYS serialize the output schema, through the datafusion-proto protobuf.
+// The alternative (reconstructing it on the executor side from the parameters) would mean
+// duplicating the constructor logic of the vendored providers - and that logic differs
+// for each operation and could silently drift apart from it.
 
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion_proto::protobuf;
@@ -137,22 +137,22 @@ pub fn read_schema(buf: &[u8], pos: &mut usize) -> Result<SchemaRef> {
     Ok(Arc::new(schema))
 }
 
-// --- RecordBatch przez Arrow IPC -------------------------------------------
+// --- RecordBatch through Arrow IPC -----------------------------------------
 //
-// Uzywane przez operacje o wzorcu BROADCAST (nearest, coverage): lewa,
-// indeksowana tabela jedzie w calosci w ladunku planu fizycznego kazdego
-// zadania (Ballista 55 koduje plan osobno dla kazdego zadania), a executor
-// odbudowuje z niej indeks lokalnie.
+// Used by the operations with the BROADCAST pattern (nearest, coverage): the left,
+// indexed table travels in full in the physical-plan payload of every
+// task (Ballista 55 encodes the plan separately for each task), and the executor
+// rebuilds the index from it locally.
 //
-// GRANICA SKALOWALNOSCI: ladunek planu idzie przez gRPC, a domyslny limit
-// wiadomosci Ballisty to 16 MiB (`ballista.client.grpc_max_message_size`,
-// ballista-core/src/config.rs; serwery gRPC schedulera i executora tak samo).
-// Przekroczenie tego limitu w trybie push nie konczy zapytania bledem: Ballista
-// (53 i 55) uznaje executor za utracony i ponawia, wiec zapytanie wisi. To jest
-// wlasciwe ograniczenie tego podejscia i nalezy je raportowac jako takie, a nie
-// obchodzic.
-// Od planu 3b-2 limit podnosi `BALLISTA_GRPC_MAX_MESSAGE_BYTES` (512 MiB), a przekroczenie
-// wykrywa przy planowaniu `broadcast.rs`.
+// SCALABILITY LIMIT: the plan payload goes through gRPC, and Ballista's default
+// message size limit is 16 MiB (`ballista.client.grpc_max_message_size`,
+// ballista-core/src/config.rs; the scheduler's and executor's gRPC servers likewise).
+// Exceeding this limit in push mode does not end the query with an error: Ballista
+// (53 and 55) treats the executor as lost and retries, so the query hangs. This is the
+// real limitation of this approach and should be reported as such, not
+// worked around.
+// The limit is raised by `BALLISTA_GRPC_MAX_MESSAGE_BYTES` (512 MiB), and exceeding it is
+// detected during planning by `broadcast.rs`.
 
 use datafusion::arrow::compute::concat_batches;
 use datafusion::arrow::error::ArrowError;
@@ -164,8 +164,8 @@ fn arrow_err(e: ArrowError) -> DataFusionError {
     DataFusionError::ArrowError(Box::new(e), None)
 }
 
-/// `StreamWriter` zapisuje komunikat ze SCHEMATEM przy konstrukcji, wiec nawet
-/// pusty batch (0 wierszy) round-trip'uje z poprawnym schematem.
+/// `StreamWriter` writes the message with the SCHEMA at construction, so even an
+/// empty batch (0 rows) round-trips with the correct schema.
 pub fn write_batch_ipc(buf: &mut Vec<u8>, batch: &RecordBatch) -> Result<()> {
     let mut w = StreamWriter::try_new(Vec::<u8>::new(), batch.schema_ref()).map_err(arrow_err)?;
     w.write(batch).map_err(arrow_err)?;
@@ -175,7 +175,7 @@ pub fn write_batch_ipc(buf: &mut Vec<u8>, batch: &RecordBatch) -> Result<()> {
     Ok(())
 }
 
-/// Rozmiar partii zakodowanej tak jak w ładunku planu (`write_batch_ipc`), w bajtach.
+/// The size of a batch encoded as in the plan payload (`write_batch_ipc`), in bytes.
 pub fn ipc_len(batch: &RecordBatch) -> Result<usize> {
     let mut buf = Vec::new();
     write_batch_ipc(&mut buf, batch)?;

@@ -1,12 +1,11 @@
-//! `BioDistLogicalCodec` — to jest to, czego brakowało w Fazie A.3
-//! (błąd `LogicalExtensionCodec is not provided`).
+//! `BioDistLogicalCodec` - the codec whose absence causes the error
+//! `LogicalExtensionCodec is not provided`.
 //!
-//! Uogólniony w Fazie H z jednego typu per operacja na jeden kodek obsługujący
-//! wszystkie operacje przez tag w ładunku. Powód techniczny, nie estetyczny:
-//! `SessionConfig` przyjmuje dokładnie JEDEN `LogicalExtensionCodec`, więc
-//! wariant per operacja wymuszałby łańcuch delegacji o tylu poziomach, ile
-//! operacji, gdzie pomyłka (zapomniana delegacja jednej z czterech metod
-//! traitu) byłaby cicha.
+//! One codec serves all operations through a tag in the payload, rather than one type per
+//! operation. The reason is technical, not aesthetic: `SessionConfig` accepts exactly ONE
+//! `LogicalExtensionCodec`, so a per-operation variant would force a delegation chain with as
+//! many levels as there are operations, where a mistake (a forgotten delegation of one of the
+//! four trait methods) would be silent.
 
 use std::sync::Arc;
 
@@ -25,10 +24,10 @@ use crate::dist_provider::DistBioProvider;
 
 #[derive(Debug)]
 pub struct BioDistLogicalCodec {
-    /// Domyślny kodek Ballisty (dla wszystkiego, co NIE jest naszym providerem)
-    /// — pobrany jako trait object z pustego `SessionConfig`, żeby nie dodawać
-    /// `ballista-core` jako osobnej zależności tylko po to, by nazwać konkretny
-    /// typ `BallistaLogicalExtensionCodec`.
+    /// Ballista's default codec (for everything that is NOT our provider) -
+    /// obtained as a trait object from an empty `SessionConfig`, so as not to add
+    /// `ballista-core` as a separate dependency just to name the concrete
+    /// `BallistaLogicalExtensionCodec` type.
     inner: Arc<dyn LogicalExtensionCodec>,
 }
 
@@ -58,10 +57,10 @@ impl LogicalExtensionCodec for BioDistLogicalCodec {
     ) -> Result<Arc<dyn TableProvider>> {
         match DistPayload::decode(buf) {
             Some(payload) => {
-                // `try_decode_table_provider` jest synchroniczne, a budowa providera
-                // wymaga async (rejestracja CSV, lookup schematu). Ten sam wzorzec
-                // (block_in_place + block_on) jest już użyty wewnątrz samego
-                // datafusion-bio-function-ranges (table_function.rs).
+                // `try_decode_table_provider` is synchronous, while building the provider
+                // requires async (CSV registration, schema lookup). The same pattern
+                // (block_in_place + block_on) is already used inside
+                // datafusion-bio-function-ranges itself (table_function.rs).
                 let provider = tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(DistBioProvider::build(payload))
                 })?;

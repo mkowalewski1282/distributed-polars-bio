@@ -4,9 +4,9 @@ use datafusion::error::Result;
 use datafusion::prelude::CsvReadOptions;
 use datafusion_bio_function_ranges::create_bio_session;
 
-// Faza C: operacja subtract, poziom lokalny — SubtractProvider też buduje
-// customowy, prywatny SubtractExec bezpośrednio (ta sama granica dystrybucji
-// co merge/nearest/coverage, patrz ballista_genomics/OPIS.md).
+// The subtract operation at the local level - SubtractProvider also builds a
+// custom, private SubtractExec directly (the same distribution boundary as
+// merge/nearest/coverage, see vendor/PATCH.md).
 
 #[tokio::main]
 async fn main() -> Result<()> {

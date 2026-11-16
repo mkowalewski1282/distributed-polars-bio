@@ -4,9 +4,9 @@ use datafusion::error::Result;
 use datafusion::prelude::CsvReadOptions;
 use datafusion_bio_function_ranges::create_bio_session;
 
-// Faza C: operacja coverage, poziom lokalny (jak merge/nearest_local —
-// RangeTableFunction/CountOverlapsProvider też buduje customowy, prywatny
-// CountOverlapsExec bezpośrednio, ta sama granica dystrybucji).
+// The coverage operation at the local level (like merge/nearest_local -
+// RangeTableFunction/CountOverlapsProvider also builds a custom, private
+// CountOverlapsExec directly, the same distribution boundary).
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -21,15 +21,15 @@ async fn main() -> Result<()> {
     ctx.register_csv("intervals_b", "data/intervals_b.csv", CsvReadOptions::new())
         .await?;
 
-    // UWAGA (nieoczywista różnica API, znaleziona empirycznie w tej sesji):
-    // pb.coverage(a, b) z polars-bio i coverage(reads, targets) z
-    // bio-function-ranges mają ODWRÓCONĄ konwencję argumentów. pb.coverage(a, b)
-    // raportuje pokrycie KAŻDEGO interwału z `a` przez `b` (a = cel/target,
-    // b = odczyty/reads pokrywające), podczas gdy dokumentacja SQL
-    // "coverage('reads', 'targets', ...)" sugeruje odwrotnie. Żeby dostać ten
-    // sam wynik co pb.coverage(intervals_a, intervals_b), trzeba wywołać
-    // coverage('intervals_b', 'intervals_a', ...) — czyli B jako "reads", A
-    // jako "targets" (raportowane interwały).
+    // NOTE (a non-obvious API difference, found empirically):
+    // pb.coverage(a, b) from polars-bio and coverage(reads, targets) from
+    // bio-function-ranges use the OPPOSITE argument convention. pb.coverage(a, b)
+    // reports the coverage of EACH interval of `a` by `b` (a = target,
+    // b = the covering reads), whereas the SQL documentation
+    // "coverage('reads', 'targets', ...)" suggests the reverse. To get the
+    // same result as pb.coverage(intervals_a, intervals_b), call
+    // coverage('intervals_b', 'intervals_a', ...) - i.e. B as the "reads", A
+    // as the "targets" (the reported intervals).
     let t0 = Instant::now();
     let df = ctx
         .sql(

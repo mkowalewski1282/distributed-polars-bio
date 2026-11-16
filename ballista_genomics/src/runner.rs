@@ -1,6 +1,6 @@
-//! Wspólny „szkielet uruchomieniowy" dla wszystkich operacji rozproszonych:
-//! jedna konfiguracja sesji, jedno miejsce z SQL-ami, jedno miejsce zapisujące
-//! wynik i dowód dystrybucji.
+//! A common "run harness" for all distributed operations: one session
+//! configuration, one place holding the SQL, one place that writes the
+//! result and the proof of distribution.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -18,14 +18,14 @@ use crate::cluster::{bio_ballista_config, bio_session_state};
 use crate::dist_payload::DistOp;
 use crate::dist_udtf::DistTableFunction;
 
-/// Adres zewnętrznego schedulera (np. `df://localhost:50050`). Niepusta wartość
-/// → klient łączy się z klastrem z osobnych procesów (`ballista_node`); pusta
-/// albo brak → dotychczasowy tryb standalone (scheduler + executor in-proc).
+/// Address of an external scheduler (e.g. `df://localhost:50050`). A non-empty value
+/// -> the client connects to a cluster of separate processes (`ballista_node`); empty
+/// or unset -> the standalone mode (scheduler + executor in-process).
 pub const SCHEDULER_URL_ENV: &str = "BALLISTA_SCHEDULER_URL";
 
-/// Katalog na wynik i plan EXPLAIN ANALYZE; pusty albo brak → `output`.
-/// Testy klastra z osobnych procesów podają własny katalog, żeby nie nadpisywać
-/// plików, na których opierają się testy trybu standalone.
+/// Directory for the result and the EXPLAIN ANALYZE plan; empty or unset -> `output`.
+/// Tests of the separate-process cluster pass their own directory so as not to overwrite
+/// the files that the standalone-mode tests rely on.
 pub const OUTPUT_DIR_ENV: &str = "DIST_OUTPUT_DIR";
 
 fn output_dir() -> PathBuf {
@@ -35,21 +35,23 @@ fn output_dir() -> PathBuf {
     }
 }
 
-/// Adres zewnętrznego schedulera z `BALLISTA_SCHEDULER_URL`; pusta wartość = brak.
+/// Address of the external scheduler from `BALLISTA_SCHEDULER_URL`; an empty value = unset.
 pub fn scheduler_url() -> Option<String> {
     std::env::var(SCHEDULER_URL_ENV).ok().filter(|url| !url.is_empty())
 }
 
-/// Liczba partycji docelowych (`target_partitions`) dla WSZYSTKICH sesji — klienta,
-/// schedulera, executorów i wewnętrznych sesji providera. Orkiestrator pomiarów ustawia
-/// ją na 2N (N węzłów po 2 sloty; specyfikacja, sekcja 3) w środowisku każdego procesu
-/// klastra i klienta — rozjazd między procesami cicho psułby dystrybucję (patrz
-/// `bio_session_config`). Brak albo pusta → 4 (wartość sprzed planu 3a).
+/// The target number of partitions (`target_partitions`) for ALL sessions - the client,
+/// scheduler, executors and the providers' internal sessions. For parallelism P the benchmark
+/// orchestrator sets it to `max(P, 2)` (one executor per CPU with one slot each; values below 2
+/// are rejected because DataFusion skips hash repartitioning at 1 partition) in the environment
+/// of every cluster process and of the client - a mismatch between processes would silently
+/// break the distribution (see `bio_session_config`). Unset or empty -> 4 (the value used
+/// before it became configurable).
 pub const TARGET_PARTITIONS_ENV: &str = "BIO_TARGET_PARTITIONS";
 pub const DEFAULT_TARGET_PARTITIONS: usize = 4;
 
-/// Wartość z `BIO_TARGET_PARTITIONS`: liczba całkowita ≥ 2 (przy 1 DataFusion nie wstawia
-/// hash-repartycji — patrz `bio_session_config`). Binarki sprawdzają ją przy starcie.
+/// The value of `BIO_TARGET_PARTITIONS`: an integer >= 2 (at 1 DataFusion does not insert
+/// hash repartitioning - see `bio_session_config`). The binaries validate it at start-up.
 pub fn target_partitions() -> std::result::Result<usize, String> {
     match std::env::var(TARGET_PARTITIONS_ENV) {
         Ok(v) if !v.is_empty() => v
@@ -61,21 +63,22 @@ pub fn target_partitions() -> std::result::Result<usize, String> {
     }
 }
 
-/// Limit wiadomości gRPC (bajty) klienta, schedulera i executorów (specyfikacja 3b-2, 6.2).
-/// Plan etapu z broadcastem (nearest, coverage) niesie całą tabelę rozsyłaną. Ballista 55 koduje
-/// plan osobno dla każdego zadania, a zadania przydzielone executorowi w jednej rundzie wysyła
-/// jedną wiadomością (`launch_multi_task`), więc wiadomość niesie po kopii tabeli na każde z tych
-/// zadań — najwyżej tyle kopii, ile executor ma slotów (Ballista 53: jedna kopia na executor
-/// i etap). Domyślne 16 MiB Ballisty nie mieści par 2-7 i 7-0 (zapytanie wisiało). Orkiestrator
-/// przekazuje tę samą wartość wszystkim procesom klastra i klientowi.
+/// The gRPC message size limit (bytes) of the client, scheduler and executors.
+/// The plan of a stage with a broadcast (nearest, coverage) carries the whole broadcast table.
+/// Ballista 55 encodes the plan separately for each task and sends the tasks assigned to an
+/// executor in one round as a single message (`launch_multi_task`), so the message carries one
+/// copy of the table per such task - at most as many copies as the executor has slots (Ballista
+/// 53: one copy per executor and stage). Ballista's default of 16 MiB does not fit the pairs
+/// 2-7 and 7-0 (the query hung). The orchestrator passes the same value to all cluster
+/// processes and to the client.
 pub const GRPC_MAX_MESSAGE_ENV: &str = "BALLISTA_GRPC_MAX_MESSAGE_BYTES";
 pub const DEFAULT_GRPC_MAX_MESSAGE_BYTES: usize = 512 * 1024 * 1024;
-/// Najmniejsza dopuszczalna wartość — domyślny limit Ballisty; niżej psułby zwykłe wiadomości.
+/// The smallest allowed value - Ballista's default limit; a lower one would break ordinary messages.
 pub const MIN_GRPC_MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 
-/// Wartość z `BALLISTA_GRPC_MAX_MESSAGE_BYTES`: liczba całkowita od 16 MiB do `u32::MAX` (pola
-/// konfiguracji serwerów gRPC Ballisty są typu u32); brak albo pusta → 512 MiB. Binarki
-/// sprawdzają ją przy starcie.
+/// The value of `BALLISTA_GRPC_MAX_MESSAGE_BYTES`: an integer from 16 MiB to `u32::MAX` (the
+/// configuration fields of Ballista's gRPC servers are u32); unset or empty -> 512 MiB. The
+/// binaries validate it at start-up.
 pub fn grpc_max_message_bytes() -> std::result::Result<usize, String> {
     match std::env::var(GRPC_MAX_MESSAGE_ENV) {
         Ok(v) if !v.is_empty() => v
@@ -93,12 +96,12 @@ pub fn grpc_max_message_bytes() -> std::result::Result<usize, String> {
     }
 }
 
-/// Bio-owa sesja klienta Ballisty z zarejestrowanymi funkcjami `dist_*`:
-/// zewnętrzny scheduler, gdy podano adres, inaczej standalone in-proc.
-/// Nic nie wypisuje na stdout — stdout `bench_client` to protokół.
+/// A bio-enabled Ballista client session with the `dist_*` functions registered:
+/// an external scheduler when an address is given, otherwise in-process standalone.
+/// Prints nothing to stdout - the stdout of `bench_client` is the protocol.
 pub async fn connect_from_env() -> Result<DFSessionContext> {
-    // Sesja klienta MUSI być bio-owa (new_with_bio), a konfiguracja mieć oba
-    // kodery — patrz cluster.rs. Ten sam stan dostaje scheduler standalone.
+    // The client session MUST be bio-enabled (new_with_bio), and the configuration must
+    // have both codecs - see cluster.rs. The standalone scheduler gets the same state.
     let state = bio_session_state(bio_ballista_config())?;
     let ctx = match scheduler_url() {
         Some(url) => DFSessionContext::remote_with_state(&url, state).await?,
@@ -110,30 +113,29 @@ pub async fn connect_from_env() -> Result<DFSessionContext> {
     Ok(ctx)
 }
 
-/// Konfiguracja sesji używana ZARÓWNO przez sesję klienta/schedulera, JAK I
-/// przez wewnętrzne sesje budowane w `DistBioProvider::build()`.
+/// The session configuration used BOTH by the client/scheduler session AND by the
+/// internal sessions built in `DistBioProvider::build()`.
 ///
-/// Dlaczego jedno miejsce: to wewnętrzna sesja buduje plany fizyczne dzieci
-/// (`create_physical_plan()`), więc decyduje o liczbie partycji, na podstawie
-/// której `EnforceDistribution` schedulera decyduje potem, czy wstawić shuffle.
-/// Rozjazd między tymi konfiguracjami cicho psuł dystrybucję.
+/// Why a single place: the internal session builds the physical plans of the children
+/// (`create_physical_plan()`), so it decides the number of partitions on which the
+/// scheduler's `EnforceDistribution` later bases the decision whether to insert a shuffle.
+/// A mismatch between these configurations silently broke the distribution.
 ///
-/// `target_partitions ≥ 2` jest OBOWIĄZKOWE, nie kosmetyczne: przy
-/// `target_partitions == 1` DataFusion w ogóle nie wstawia hash-repartycji
+/// `target_partitions >= 2` is REQUIRED, not cosmetic: with
+/// `target_partitions == 1` DataFusion does not insert hash repartitioning at all
 /// (`enforce_distribution.rs`, `add_hash_on_top`: `if n_target == 1 && count == 1
-/// { return input }`), więc zapytanie policzyłoby się poprawnie, ale w JEDNYM
-/// stage'u — a teza o dystrybucji byłaby pusta. Objawu brak; wykrywalne tylko
-/// przez `EXPLAIN ANALYZE`. Wartość: `BIO_TARGET_PARTITIONS` (domyślnie 4).
+/// { return input }`), so the query would compute correctly but in ONE
+/// stage - and the claim of distribution would be empty. There is no visible symptom;
+/// it is detectable only through `EXPLAIN ANALYZE`. Value: `BIO_TARGET_PARTITIONS` (4 by default).
 ///
-/// `BioConfig::default()` rejestrujemy jawnie, mimo że `new_with_bio()` tego nie
-/// wymaga — żeby `interval_join_algorithm = Coitrees` i
-/// `interval_join_low_memory = false` były zapisane wprost, a nie brane
-/// milcząco z domyślnych. `IntervalJoinPhysicalCodec` zakłada dokładnie te
-/// wartości (nie da się ich odczytać z instancji węzła), więc lepiej, żeby
-/// invariant był widoczny w kodzie.
+/// We register `BioConfig::default()` explicitly, even though `new_with_bio()` does not
+/// require it - so that `interval_join_algorithm = Coitrees` and
+/// `interval_join_low_memory = false` are written out rather than silently taken
+/// from the defaults. `IntervalJoinPhysicalCodec` assumes exactly these values (they
+/// cannot be read from a node instance), so the invariant is better visible in the code.
 pub fn bio_session_config() -> SessionConfig {
-    // Binarki sprawdzają zmienną przy starcie (błąd użycia, kod 2), więc niepoprawna
-    // wartość w tym miejscu to błąd programisty.
+    // The binaries validate the variable at start-up (a usage error, exit code 2), so an
+    // invalid value here is a programmer error.
     let partitions = target_partitions().unwrap_or_else(|e| panic!("{e}"));
     SessionConfig::from(ConfigOptions::new())
         .with_option_extension(BioConfig::default())
@@ -163,12 +165,12 @@ pub fn spec(op: DistOp) -> OpSpec {
             title: "dist_overlap + COITrees, fully distributed",
         },
         DistOp::Merge => OpSpec {
-            // Dane celowo rozbite na DWA pliki (data/parts_a/): nakładające się
-            // gene_A1=[100,200) i gene_A2=[150,300) są w RÓŻNYCH plikach, więc
-            // poprawny wynik [100,300) powstanie TYLKO jeśli hash-shuffle po
-            // chrom faktycznie przeniósł wiersze między partycjami. Bez tego
-            // MergeExec scaliłby je osobno i zwrócił dwa interwały zamiast
-            // jednego — test poprawności zawali się głośno.
+            // The data is deliberately split into TWO files (data/parts_a/): the overlapping
+            // gene_A1=[100,200) and gene_A2=[150,300) are in DIFFERENT files, so the
+            // correct result [100,300) appears ONLY if the hash shuffle by chrom
+            // actually moved rows between partitions. Otherwise MergeExec would merge
+            // them separately and return two intervals instead of one - the
+            // correctness test would fail loudly.
             sql: "SELECT * FROM dist_merge('intervals_a', 'data/parts_a', \
                                            'chrom', 'start', 'end', 0, 'strict') \
                   ORDER BY chrom, start"
@@ -178,11 +180,11 @@ pub fn spec(op: DistOp) -> OpSpec {
             title: "dist_merge, fully distributed (hash shuffle by chrom)",
         },
         DistOp::Subtract => OpSpec {
-            // Wezel BINARNY: obie strony musza byc ko-partycjonowane po chrom,
-            // bo SubtractExec::execute(partition) siega po TE SAMA partycje z
-            // lewej i prawej strony. DataFusion wymusza to przez needs_alignment
-            // (gdy choc jedno dziecko wymaga hasha, wszystkie hash-owe dzieci
-            // dostaja hash_necessary=true) — stad oczekiwane 2x Hash([chrom.
+            // A BINARY node: both sides must be co-partitioned by chrom,
+            // because SubtractExec::execute(partition) reads the SAME partition from
+            // the left and the right side. DataFusion enforces this through needs_alignment
+            // (when at least one child requires a hash, all hash-distributed children
+            // get hash_necessary=true) - hence the expected 2x Hash([chrom ...) in the plan.
             sql: "SELECT * FROM dist_subtract('intervals_a', 'data/parts_a', \
                                               'intervals_b', 'data/parts_b', \
                                               'chrom', 'start', 'end', 'strict') \
@@ -193,19 +195,18 @@ pub fn spec(op: DistOp) -> OpSpec {
             title: "dist_subtract, fully distributed (two-sided hash shuffle)",
         },
         DistOp::Nearest => OpSpec {
-            // Wzorzec BROADCAST, nie hash-shuffle: NearestExec nie nadpisuje
-            // required_input_distribution(), wiec nie zada repartycji. Lewa
-            // (indeksowana) tabela jedzie w CALOSCI w ladunku planu do kazdego
-            // executora, a rownoleglosc bierze sie z partycjonowania PRAWEJ
-            // strony. Argumenty (k=1, include_overlaps, compute_distance, 'strict')
-            // odwzorowuja nearest_local.rs 1:1; 'strict' = dane 0-based (plan 3b-1).
+            // The BROADCAST pattern, not a hash shuffle: NearestExec does not override
+            // required_input_distribution(), so it does not request repartitioning. The left
+            // (indexed) table travels IN FULL in the plan payload to every
+            // executor, and parallelism comes from partitioning the RIGHT
+            // side. The arguments (k=1, include_overlaps, compute_distance, 'strict')
+            // mirror nearest_local.rs 1:1; 'strict' = 0-based data.
             //
-            // ORIENTACJA (poprawione w planie 2): wynik ma JEDEN wiersz na kazdy
-            // wiersz PRAWEJ tabeli, z najblizszym sasiadem z lewej — odwrotnie niz
-            // pb.nearest(A, B), ktore daje wiersz na kazdy przedzial A. Dlatego A
-            // jest prawa (odpytywana), a B lewa (indeksowana, broadcastowana).
-            // Wczesniej strony byly odwrotne, a test zgodnosci z pb przechodzil
-            // przypadkiem (5 x 5 przedzialow, wszystkie odleglosci 0).
+            // ORIENTATION: the result has ONE row per row of the RIGHT table, with the
+            // nearest neighbour from the left - the opposite of pb.nearest(A, B), which gives
+            // a row per interval of A. Therefore A is the right (queried) side and B the left
+            // (indexed, broadcast) one. The sides used to be swapped, and the agreement test
+            // with pb passed by accident (5 x 5 intervals, all distances 0).
             sql: "SELECT * FROM dist_nearest('intervals_b', 'data/parts_b', \
                                              'intervals_a', 'data/parts_a', \
                                              1, true, true, \
@@ -217,12 +218,12 @@ pub fn spec(op: DistOp) -> OpSpec {
             title: "dist_nearest, fully distributed (broadcast of the left table)",
         },
         DistOp::Coverage => OpSpec {
-            // ODWROCONA KONWENCJA ARGUMENTOW, udokumentowana w Fazie C:
-            // pb.coverage(a, b) raportuje pokrycie interwalow `a` przez `b`,
-            // a SQL-owe coverage('reads','targets',...) odwrotnie. Zeby dostac
-            // wynik identyczny z pb.coverage(INTERVALS_A, INTERVALS_B), wolamy
-            // z intervals_b jako 'reads' i intervals_a jako 'targets' —
-            // dokladnie tak jak coverage_local.rs.
+            // REVERSED ARGUMENT CONVENTION (see coverage_local.rs):
+            // pb.coverage(a, b) reports the coverage of the intervals of `a` by `b`,
+            // whereas the SQL coverage('reads','targets',...) does the reverse. To get a
+            // result identical to pb.coverage(INTERVALS_A, INTERVALS_B), we call it
+            // with intervals_b as 'reads' and intervals_a as 'targets' -
+            // exactly like coverage_local.rs.
             sql: "SELECT * FROM dist_coverage('intervals_b', 'data/parts_b', \
                                               'intervals_a', 'data/parts_a', \
                                               'chrom', 'start', 'end', 'strict') \
@@ -269,12 +270,12 @@ pub async fn run(op: DistOp) -> Result<()> {
     write_csv(&result, &output_csv)?;
     println!("Result written to {}", output_csv.display());
 
-    // PUNKT KONTROLNY: zrzut planu ROZPROSZONEGO z podziałem na query stage'e.
-    // Ballista implementuje EXPLAIN ANALYZE tak, że zwraca sekcje
-    // `=========SuccessfulStage[stage_id=N, partitions=M]=========` z drzewem
-    // operatorów i metrykami per stage — to jedyny maszynowo sprawdzalny dowód,
-    // że zapytanie NAPRAWDĘ zostało pocięte na etapy i przeszło przez shuffle,
-    // a nie tylko „nie wywaliło błędu". Asercje: tests/test_ballista_distribution_evidence.py
+    // CHECKPOINT: a dump of the DISTRIBUTED plan split into query stages.
+    // Ballista implements EXPLAIN ANALYZE so that it returns sections
+    // `=========SuccessfulStage[stage_id=N, partitions=M]=========` with the operator
+    // tree and per-stage metrics - the only machine-checkable proof that the
+    // query was REALLY cut into stages and went through a shuffle, and did not
+    // merely "run without an error". Assertions: tests/test_ballista_distribution_evidence.py
     match ctx.sql(&format!("EXPLAIN ANALYZE {}", s.sql)).await {
         Ok(df) => match df.collect().await {
             Ok(batches) => {
@@ -303,9 +304,9 @@ fn write_csv(batches: &[RecordBatch], path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Wyciąga surową treść tekstową z wyniku EXPLAIN (kolumny stringowe), zamiast
-/// formatować przez `pretty_format_batches` — plan jest wielolinijkowy i
-/// ramkowanie ASCII zniszczyłoby jego strukturę, a testy parsują go regexem.
+/// Extracts the raw text from an EXPLAIN result (string columns) instead of
+/// formatting it with `pretty_format_batches` - the plan is multi-line and
+/// ASCII framing would destroy its structure, and the tests parse it with a regex.
 pub fn extract_text(batches: &[RecordBatch]) -> String {
     let mut out = String::new();
     for batch in batches {

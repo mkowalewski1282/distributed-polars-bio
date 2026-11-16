@@ -1,29 +1,30 @@
-# Lokalne łatki: datafusion-bio-function-ranges
+# Local patches: datafusion-bio-function-ranges
 
-**To NIE jest fork Ballisty ani Saila** (celem projektu jest uniknięcie forkowania
-silników rozproszonych) — to poprawki **widoczności** w pomocniczej bibliotece
-(`datafusion-bio-function-ranges`, biodatageeks, Apache-2.0), zwendorowanej lokalnie tylko
-dlatego, że upstream jeszcze ich nie ma.
+**This is NOT a fork of Ballista or Sail** (the project deliberately avoids forking the
+distributed engines). These are **visibility** fixes in a helper library
+(`datafusion-bio-function-ranges`, biodatageeks, Apache-2.0), vendored locally only
+because upstream does not have them yet.
 
-## Wersja kopii
+## Version of the copy
 
-Kopia to `datafusion/bio-function-ranges` z tagu **v0.25.0** repozytorium
-biodatageeks/datafusion-bio-functions (DataFusion =55.2.0, ten sam co Ballista 55). `Cargo.toml`
-kopii ma rozwinięte dziedziczenie z workspace upstreamu v0.25.0 (`version.workspace` itd.),
-poza tym jest bez zmian. Upstream v0.25.0 nadal nie udostępnia ani `physical_planner::intervals`,
-ani węzłów fizycznych operacji, więc obie łatki są nałożone ponownie bez zmian — struktury mają
-te same pola co w 0.18.0 i 0.22.2 (Etap 4, 15.11.2026).
+The copy is `datafusion/bio-function-ranges` from tag **v0.25.0** of the
+biodatageeks/datafusion-bio-functions repository (DataFusion =55.2.0, the same as Ballista 55).
+The copy's `Cargo.toml` has the upstream v0.25.0 workspace inheritance expanded
+(`version.workspace` etc.); otherwise it is unchanged. Upstream v0.25.0 still exposes neither
+`physical_planner::intervals` nor the physical nodes of the operations, so both patches are
+re-applied unchanged - the structs have the same fields as in 0.18.0 and 0.22.2 (updated
+15.11.2026).
 
-**Okres przejściowy:** polars-bio 0.37 jest zbudowany z v0.24.0 (DataFusion 53), Ballista liczy
-kopią v0.25.0 (DataFusion 55.2). v0.24.x → v0.25.0 to wyłącznie przeniesienie na API DataFusion 55
-(plus deterministyczna zmiana funkcji haszującej klucze równościowe w `IntervalJoinExec`), bez zmian
-algorytmów przedziałowych — tę równoważność jawnie dopuszcza `tests/test_algorithm_versions.py`
-(`EQUIVALENT_RANGES`). Asymetria ma zniknąć z polars-bio 0.38 (gałąź główna polars-bio ma już
-DataFusion 55.2 i v0.25.0; wydania jeszcze nie ma — może dostać v0.26.0, która nie zmienia crate'a
-ranges).
+**Transitional period:** polars-bio 0.37 is built from v0.24.0 (DataFusion 53), while Ballista
+uses the v0.25.0 copy (DataFusion 55.2). v0.24.x -> v0.25.0 is only a port to the DataFusion 55
+API (plus a deterministic change of the hash function for equality keys in `IntervalJoinExec`),
+with no change to the interval algorithms; `tests/test_algorithm_versions.py`
+(`EQUIVALENT_RANGES`) explicitly allows this equivalence. The asymmetry should disappear with
+polars-bio 0.38 (polars-bio's main branch already has DataFusion 55.2 and v0.25.0; there is no
+release yet - it may get v0.26.0, which does not change the ranges crate).
 
-Obie łatki mają tę samą naturę: **zero linii logiki, wyłącznie słowa `pub` i re-eksporty**.
-Regułę utrzymaniową sprawdza się względem czystego tagu upstreamu:
+Both patches have the same nature: **zero lines of logic, only the word `pub` and re-exports**.
+The maintenance rule is checked against the clean upstream tag:
 
 ```bash
 git clone -q --depth 1 --branch v0.25.0 https://github.com/biodatageeks/datafusion-bio-functions /tmp/dbf
@@ -31,29 +32,29 @@ diff -ru /tmp/dbf/datafusion/bio-function-ranges/src ballista_genomics/vendor/da
   | grep '^[+-]' | grep -v '^[+-][+-]'
 ```
 
-Jeśli w wyniku pojawi się cokolwiek poza dodanym `pub`, re-eksportem lub komentarzem,
-łatka przestała być „czysta" i wymaga osobnej decyzji. Aktualizacja vendora: łatki to różnica
-kopii względem czystego tagu poprzedniej wersji (`diff -ru -x Cargo.toml`, ścieżki w nagłówkach
-sprowadzone do `a/`/`b/`), nakładana `patch -p1` na nową; `Cargo.toml` nowej kopii rozwija się
-ręcznie wartościami z workspace nowego tagu (plan 3b-1, Zadanie 3; Etap 4: v0.22.2 → v0.25.0).
+If anything other than an added `pub`, a re-export or a comment shows up in the output, the
+patch is no longer "clean" and needs a separate decision. To update the vendored copy, the
+patches are the difference between the copy and the clean tag of the previous version
+(`diff -ru -x Cargo.toml`, header paths reduced to `a/`/`b/`), applied with `patch -p1` to the
+new one; the new copy's `Cargo.toml` is expanded by hand with the values from the new tag's
+workspace (last done for v0.22.2 -> v0.25.0).
 
-## Łatka 1: `pub mod intervals` — `ColIntervals` nienazywalny
+## Patch 1: `pub mod intervals` - `ColIntervals` cannot be named
 
-### Co i dlaczego
+### What and why
 
-`IntervalJoinExec` (fizyczny operator overlap-join z COITrees) ma publiczny konstruktor
-`try_new(...)`, ale jeden z wymaganych argumentów — `ColIntervals` — jest zdefiniowany w
-module zadeklarowanym jako `mod intervals;` (bez `pub`) wewnątrz `physical_planner/mod.rs`.
+`IntervalJoinExec` (the physical overlap-join operator using COITrees) has a public
+constructor `try_new(...)`, but one of its required arguments - `ColIntervals` - is defined in
+a module declared as `mod intervals;` (without `pub`) inside `physical_planner/mod.rs`.
 
-W Rust widoczność wymaga, żeby CAŁA ścieżka do typu była publiczna — samo `pub struct
-ColIntervals { ... }` nie wystarczy, jeśli moduł go zawierający jest prywatny. Efekt:
-`ColIntervals` jest **całkowicie nienazywalny i niekonstruowalny spoza crate'a**, mimo że
-sam jest zadeklarowany jako `pub`. To był fundamentalny bloker dla napisania
-`PhysicalExtensionCodec` dla `IntervalJoinExec` (Faza A.4 planu pracy magisterskiej,
-rozszerzenie na pełną dystrybucję z COITrees w Ballistrze) — bez tego nie da się w ogóle
-wywołać `IntervalJoinExec::try_new()` spoza crate'a.
+In Rust, visibility requires the WHOLE path to a type to be public - `pub struct
+ColIntervals { ... }` alone is not enough if the module containing it is private. As a result
+`ColIntervals` **cannot be named or constructed from outside the crate at all**, even though it
+is itself declared `pub`. This was a fundamental blocker for writing a
+`PhysicalExtensionCodec` for `IntervalJoinExec` (distributing the COITree-based operations in
+Ballista) - without it, `IntervalJoinExec::try_new()` cannot be called from outside the crate.
 
-### Zmiana (dokładnie 2 linijki)
+### Change (exactly 2 lines)
 
 `src/physical_planner/mod.rs`:
 ```diff
@@ -61,93 +62,93 @@ wywołać `IntervalJoinExec::try_new()` spoza crate'a.
 +pub mod intervals;
 ```
 
-`src/lib.rs` (wygoda, nieobowiązkowe, ale ułatwia import):
+`src/lib.rs` (a convenience, optional, but it makes importing easier):
 ```diff
 +pub use physical_planner::intervals::{ColInterval, ColIntervals, parse as parse_intervals};
 ```
 
-### Status: gotowe do zgłoszenia upstream
+### Status: ready to submit upstream
 
-Ta zmiana nie modyfikuje żadnej logiki, tylko widoczność — bezpieczna, bezkonfliktowa,
-łatwa do zaakceptowania jako osobny, mały PR do
+This change modifies no logic, only visibility - it is safe, conflict-free and easy to accept
+as a separate small PR to
 [biodatageeks/datafusion-bio-functions](https://github.com/biodatageeks/datafusion-bio-functions).
-Gdyby taki PR wylądował, ten katalog `vendor/` przestałby być potrzebny — wystarczyłoby
-wrócić do zwykłej zależności `git`/przyszłej wersji na crates.io w `Cargo.toml`.
+If such a PR landed, this `vendor/` directory would no longer be needed - it would be enough to
+go back to a regular `git` dependency or a future crates.io version in `Cargo.toml`.
 
-## Łatka 2: publiczne węzły fizyczne operacji zakresowych
+## Patch 2: public physical nodes of the range operations
 
 ### Problem
 
-`MergeExec`, `SubtractExec`, `NearestExec` i `CountOverlapsExec` są zadeklarowane **bez
-`pub`** i nie mają ŻADNYCH inherent impls — ani konstruktorów, ani getterów. Powstają
-wyłącznie jako literały struktury wewnątrz `scan()` odpowiedniego providera.
+`MergeExec`, `SubtractExec`, `NearestExec` and `CountOverlapsExec` are declared **without
+`pub`** and have NO inherent impls - neither constructors nor getters. They are created only as
+struct literals inside the `scan()` of the corresponding provider.
 
-Spoza crate'a nie da się ich zatem ani **nazwać** (`downcast_ref::<MergeExec>()` w
-`try_encode`), ani **odczytać**, ani **skonstruować** (`try_decode`). Bez tego nie da się
-napisać `PhysicalExtensionCodec`, a bez niego Ballista nie prześle planu fizycznego do
-executora — czyli operacja nie może wykonać się rozproszona.
+From outside the crate they therefore cannot be **named** (`downcast_ref::<MergeExec>()` in
+`try_encode`), **read**, or **constructed** (`try_decode`). Without that, a
+`PhysicalExtensionCodec` cannot be written, and without it Ballista cannot ship the physical
+plan to the executor - so the operation cannot run distributed.
 
-Uwaga: same **moduły** (`pub mod merge`, `pub mod nearest`, …) są już publiczne, więc
-problem jest o poziom niżej niż przy Łatce 1.
+Note: the **modules** themselves (`pub mod merge`, `pub mod nearest`, ...) are already public,
+so the problem is one level lower than with Patch 1.
 
-### Zmiana (38× `pub` + 5 re-eksportów, 0 linii logiki)
+### Change (38x `pub` + 5 re-exports, 0 lines of logic)
 
-| plik | element |
+| file | item |
 |---|---|
-| `src/merge.rs` | `MergeExec` + 6 pól |
-| `src/subtract.rs` | `SubtractExec` + 9 pól |
-| `src/nearest.rs` | `NearestExec` + 11 pól, oraz `fn build_nearest_indexes` → `pub fn` |
-| `src/count_overlaps.rs` | `CountOverlapsExec` + 6 pól, oraz `enum CountOverlapsIndex` → `pub enum` |
-| `src/lib.rs` | re-eksporty powyższych + `build_coitree_from_batches`/`build_count_index_from_batches` |
+| `src/merge.rs` | `MergeExec` + 6 fields |
+| `src/subtract.rs` | `SubtractExec` + 9 fields |
+| `src/nearest.rs` | `NearestExec` + 11 fields, and `fn build_nearest_indexes` -> `pub fn` |
+| `src/count_overlaps.rs` | `CountOverlapsExec` + 6 fields, and `enum CountOverlapsIndex` -> `pub enum` |
+| `src/lib.rs` | re-exports of the above + `build_coitree_from_batches`/`build_count_index_from_batches` |
 
-### Dlaczego `pub` przy polach, a nie konstruktor + gettery
+### Why `pub` on the fields rather than a constructor + getters
 
-Rust nie ma literału częściowego — żeby zbudować `MergeExec` spoza crate'a, **wszystkie**
-pola muszą być publiczne. `pub` przy polach załatwia jednocześnie konstruktor i gettery
-przy zerowym dodanym kodzie, zgodnie z zasadą „łatka = czysta widoczność" przyjętą przy
-Łatce 1.
+Rust has no partial literal - to build a `MergeExec` from outside the crate, **all** fields
+must be public. `pub` on the fields provides both the constructor and the getters at zero added
+code, in line with the "patch = pure visibility" rule adopted for Patch 1.
 
-Gdyby zgłaszać to upstream, idiomatyczniejszym kształtem byłoby `pub fn try_new(...)`
-plus gettery (enkapsuluje wyliczanie `cache`). Kod pracy jest na taką zmianę przygotowany:
-cała konstrukcja tych węzłów jest zamknięta w funkcjach `build_*_exec()` w
-`src/bio_phys_codec.rs` i `src/coverage_node.rs` — podmiana kształtu API vendora oznacza
-edycję tych kilku funkcji, nic więcej.
+If this were submitted upstream, a more idiomatic shape would be `pub fn try_new(...)` plus
+getters (encapsulating the computation of `cache`). Our code is prepared for such a change:
+the whole construction of these nodes is confined to the `build_*_exec()` functions in
+`src/bio_phys_codec.rs` and `src/coverage_node.rs`, so swapping the vendored API shape means
+editing those few functions, nothing more.
 
-### Czego łatka NIE robi
+### What the patch does NOT do
 
-Nie zmienia `cache: Arc<PlanProperties>` w nic serializowalnego — i nie musi.
-`with_new_children()` przelicza `cache` deterministycznie ze `schema` i liczby partycji
-dziecka, więc kodek po zdekodowaniu od razu je przelicza i dostaje dokładnie to, co
-policzyłby vendor (włącznie z właściwym `EmissionType`). Od DataFusion 55 wołanie
-`with_new_children()` wprost jest przestarzałe: kodek woła `recompute_with_children`
-(`src/bio_phys_codec.rs`) → `replace_children(..., ChildrenPropertiesMode::Recompute)`, a ta
-domyślnie kończy się w `with_new_children()` węzła vendora.
+It does not turn `cache: Arc<PlanProperties>` into anything serializable - and does not need
+to. `with_new_children()` recomputes `cache` deterministically from the `schema` and the
+child's partition count, so after decoding the codec recomputes it immediately and gets exactly
+what the vendored code would compute (including the correct `EmissionType`). Since DataFusion
+55, calling `with_new_children()` directly is deprecated: the codec calls
+`recompute_with_children` (`src/bio_phys_codec.rs`) -> `replace_children(...,
+ChildrenPropertiesMode::Recompute)`, which by default ends up in the vendored node's
+`with_new_children()`.
 
-### Czego łatka NIE wystarczyła załatwić
+### What the patch was NOT enough for
 
-`coverage` wymagał dodatkowo **własnego węzła-nośnika** po naszej stronie
-(`DistCoverageExec`, `src/coverage_node.rs`) — nie z powodu widoczności, lecz dlatego, że
-`CountOverlapsProvider::scan()` materializuje lewą tabelę, przenosi ją do konstruktora
-indeksu i **porzuca**. Powstały `CountOverlapsExec` nie przechowuje ani danych lewej
-tabeli, ani nazw jej kolumn, ani flagi `coverage`, a samego indeksu nie da się odczytać
-(`COITree` bez serde). Żadna łatka widoczności tego nie naprawi — to kwestia tego, co
-węzeł w ogóle pamięta.
+`coverage` additionally required **our own carrier node** (`DistCoverageExec`,
+`src/coverage_node.rs`) - not because of visibility, but because
+`CountOverlapsProvider::scan()` materializes the left table, passes it to the index
+constructor and **discards** it. The resulting `CountOverlapsExec` stores neither the left
+table's data, nor its column names, nor the `coverage` flag, and the index itself cannot be
+read (`COITree` has no serde). No visibility patch can fix that - it is a matter of what the
+node remembers at all.
 
-Osobno: **`cluster` pozostaje niewykonalny** i nie jest objęty łatką. `ClusterIdCoordinator`
-(`src/cluster.rs`) to bariera rendez-vous z `Vec<Waker>` w `Mutex`, działająca wyłącznie
-w obrębie jednego procesu. Po rozproszeniu każdy executor dostałby własną kopię, więc plan
-albo zawisłby, albo cicho zduplikował ID klastrów. To bloker **semantyczny**, nie
-widocznościowy.
+Separately: **`cluster` remains non-distributable** and is not covered by the patch.
+`ClusterIdCoordinator` (`src/cluster.rs`) is a rendezvous barrier built on a `Vec<Waker>` in a
+`Mutex`, working only within a single process. After distribution each executor would get its
+own copy, so the plan would either hang or silently duplicate the cluster IDs. This is a
+**semantic** blocker, not a visibility one.
 
-### Status: gotowe do zgłoszenia upstream
+### Status: ready to submit upstream
 
-Tak jak Łatka 1 — zero zmian logiki, więc naturalny kandydat na jeden mały PR
-(„udostępnij węzły fizyczne operacji zakresowych, żeby dało się dla nich napisać
-`PhysicalExtensionCodec`").
+Like Patch 1 - zero logic changes, so a natural candidate for one small PR ("expose the
+physical nodes of the range operations so that a `PhysicalExtensionCodec` can be written for
+them").
 
-## Dlaczego wendorowane lokalnie, a nie jako fork na GitHubie
+## Why vendored locally rather than as a GitHub fork
 
-Zwendorowanie (kopia w repo, nie osobny fork na koncie użytkownika) było wybrane celowo:
-nie wymaga zakładania nowego repozytorium/konta w imieniu użytkownika ani utrzymywania
-zdalnego forka — cała zmiana mieści się w tym jednym pliku, więc jest w pełni
-transparentna i łatwa do zweryfikowania w diffie commita.
+Vendoring (a copy in the repository, not a separate fork under the user's account) was chosen
+deliberately: it does not require creating a new repository/account on the user's behalf or
+maintaining a remote fork - the whole change fits in this one file, so it is fully transparent
+and easy to verify in the commit diff.

@@ -5,35 +5,35 @@ edition = "2024"
 
 [dependencies]
 ballista = { version = "55.0.0", features = ["standalone"] }
-# Zadanie P0: własne procesy schedulera i executora (binarka ballista_node).
-# Te crate'y i tak są już kompilowane przez `ballista` (cecha standalone),
-# z domyślnymi cechami — bezpośrednia zależność z tymi samymi cechami nie
-# wymusza ponownej kompilacji ani pobierania.
+# Standalone scheduler and executor processes (the ballista_node binary).
+# These crates are already compiled by `ballista` (standalone feature) with
+# default features, so a direct dependency with the same features does not
+# force a recompilation or an extra download.
 ballista-core = "55.0.0"
 ballista-scheduler = "55.0.0"
 ballista-executor = "55.0.0"
-# Logi węzłów na stderr; wersja i cecha env-filter jak u ballista-scheduler.
+# Node logs on stderr; version and env-filter feature match ballista-scheduler.
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# Linie logu węzłów z rozmiarem odebranego ładunku broadcastu (plan 3b-2); wersja z Cargo.lock.
+# Node log lines with the size of the received broadcast payload; version taken from Cargo.lock.
 tracing = "0.1"
 datafusion = "=55.2.0"
 datafusion-proto = "55"
-# Lokalna kopia datafusion-bio-function-ranges v0.25.0 (DataFusion 55.2; polars-bio 0.37 ma
-# v0.24.0 z tymi samymi algorytmami - okres przejściowy) z dwiema łatkami widoczności - patrz
-# vendor/PATCH.md. Potrzebna do kodeków węzłów fizycznych operacji zakresowych (Faza A.4b i dalej).
+# Local copy of datafusion-bio-function-ranges v0.25.0 (DataFusion 55.2; polars-bio 0.37 ships
+# v0.24.0 with the same algorithms - a transitional period) with two visibility patches - see
+# vendor/PATCH.md. Needed by the codecs for the physical nodes of the range operations.
 datafusion-bio-function-ranges = { path = "vendor/datafusion-bio-function-ranges" }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 prost = "0.14"
-# bench_client: strumieniowa konsumpcja wyniku (StreamExt); wersja z Cargo.lock.
+# bench_client: streaming consumption of the result (StreamExt); version taken from Cargo.lock.
 futures = "0.3"
-# bench_client: suma kontrolna (specyfikacja 8.4) — CRC-32 kontigu; wersja z Cargo.lock
-# (używana już przez flate2 z tymi samymi cechami, więc bez przebudowy zależności).
+# bench_client: checksum - CRC-32 of the contig; version taken from Cargo.lock
+# (already used by flate2 with the same features, so no dependency rebuild).
 crc32fast = "1.5"
 
-# Środowisko ma tylko 3.5GB RAM — linkowanie tej binarki (Ballista scheduler+executor
-# + cały DataFusion + bio-function-ranges) z pełnym debug info (-C debuginfo=2)
-# wykańczało swap i groziło ponownym zawieszeniem WSL (patrz OPIS.md). Wyłączenie
-# debug info drastycznie zmniejsza zużycie pamięci przez linker (rust-lld).
+# The development machine has only 3.5GB of RAM - linking these binaries (Ballista
+# scheduler + executor + all of DataFusion + bio-function-ranges) with full debug info
+# (-C debuginfo=2) exhausted swap and risked hanging WSL again. Disabling debug info
+# drastically reduces the linker's (rust-lld) memory use.
 [profile.dev]
 debug = false

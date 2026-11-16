@@ -1,10 +1,8 @@
-//! Binarka Fazy A.4 + A.5: w pełni rozproszony `overlap` z COITrees.
+//! Binary for the fully distributed `overlap` with COITrees.
 //!
-//! Zamrożony punkt odniesienia — `tests/test_ballista_overlap.py` uruchamia
-//! dokładnie tę binarkę. Cała logika żyje w bibliotece (`src/lib.rs` i moduły),
-//! żeby dzielić ją z `src/bin/dist_ops.rs`; tutaj został sam punkt wejścia.
-//!
-//! Historia i uzasadnienia poszczególnych decyzji: `OPIS.md`, sekcje Faza A.4 i A.5.
+//! A frozen reference point - `tests/test_ballista_overlap.py` runs exactly this
+//! binary. All the logic lives in the library (`src/lib.rs` and its modules) so that
+//! it can be shared with `src/bin/dist_ops.rs`; only the entry point is left here.
 
 use ballista_genomics::{runner, DistOp};
 use datafusion::error::Result;

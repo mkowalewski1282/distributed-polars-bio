@@ -4,10 +4,10 @@ use datafusion::error::Result;
 use datafusion::prelude::CsvReadOptions;
 use datafusion_bio_function_ranges::create_bio_session;
 
-// Faza C: operacja nearest, poziom lokalny (jak merge_local — NearestProvider
-// też buduje customowy, prywatny NearestExec bezpośrednio w scan(), nie
-// deleguje przez session.sql() — ta sama granica dystrybucji co merge, patrz
-// ballista_genomics/OPIS.md).
+// The nearest operation at the local level (like merge_local - NearestProvider
+// also builds a custom, private NearestExec directly in scan() and does not
+// delegate through session.sql() - the same distribution boundary as merge, see
+// vendor/PATCH.md).
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -25,8 +25,8 @@ async fn main() -> Result<()> {
     let t0 = Instant::now();
     let df = ctx
         .sql(
-            // Wiersz na kazdy wiersz PRAWEJ tabeli -> A jako prawa, zeby wynik
-            // odpowiadal pb.nearest(A, B) (patrz runner.rs, DistOp::Nearest).
+            // One row per row of the RIGHT table -> A as the right one, so the result
+            // matches pb.nearest(A, B) (see runner.rs, DistOp::Nearest).
             "SELECT * FROM nearest('intervals_b', 'intervals_a', 1, true, true, \
                                     'chrom', 'start', 'end', 'strict') \
              ORDER BY right_chrom, right_start",
