@@ -101,8 +101,8 @@ def summarize(runs: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def _fmt(x: float | None, spec: str) -> str:
-    return "-" if x is None else format(x, spec)
+def _fmt(x: float | None, fmt_spec: str) -> str:
+    return "-" if x is None else format(x, fmt_spec)
 
 
 def _markdown(summary: pl.DataFrame) -> str:

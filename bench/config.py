@@ -153,7 +153,7 @@ def _scenario(item, where: str) -> Scenario:
     if not isinstance(item, dict):
         raise ConfigError(f"{where}: expected a mapping, got {item!r}")
     if "algorithm" in item:
-        raise ConfigError(f"{where}: the algorithm parameter is not supported yet (plan 3b-3)")
+        raise ConfigError(f"{where}: the algorithm parameter is not supported yet")
     unknown = set(item) - _SCENARIO_KEYS
     if unknown:
         raise ConfigError(f"{where}: unknown keys {sorted(unknown)}")

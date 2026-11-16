@@ -74,7 +74,7 @@ def test_smoke_config_is_the_full_matrix_on_pair_1_2():
         ({"series": "Smoke!"}, "series"),
         ({"scenarios": []}, "scenarios: expected a non-empty list"),
         ({"scenarios": ["overlap"]}, "expected a mapping"),
-        ({"scenarios": [{"op": "overlap", "pair": "1-2", "algorithm": "Lapper"}]}, "plan 3b"),
+        ({"scenarios": [{"op": "overlap", "pair": "1-2", "algorithm": "Lapper"}]}, "algorithm parameter is not supported"),
         ({"scenarios": [{"op": "overlap", "pair": "1-2", "x": 1}]}, "unknown keys"),
         ({"scenarios": [{"op": "join", "pair": "1-2"}]}, "unknown operation"),
         ({"scenarios": [{"op": "merge", "pair": "1-2"}]}, "single dataset"),

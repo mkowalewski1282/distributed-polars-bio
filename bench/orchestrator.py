@@ -613,7 +613,7 @@ def summary_lines(series: str, summary: SeriesSummary) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m bench.orchestrator",
-        description="Measurement series from a YAML configuration (methodology spec, section 8).",
+        description="Measurement series from a YAML configuration (scenarios, variants, values of P).",
     )
     parser.add_argument("config", type=Path, help="series YAML file, e.g. bench/conf/smoke.yaml")
     parser.add_argument(
