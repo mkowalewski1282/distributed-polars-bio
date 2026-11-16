@@ -2,13 +2,15 @@
 
 `ballista_genomics` runs the polars-bio interval operations (overlap, nearest, coverage, merge,
 subtract) on Apache Ballista **55.0.0** with DataFusion **55.2.0**. The operations themselves come
-from `datafusion-bio-function-ranges` **v0.25.0**, the same algorithm crate polars-bio is built
-on; it is vendored in `vendor/` with two visibility patches (`vendor/PATCH.md`). This crate adds
-the parts Ballista needs to run them on a cluster: a table provider that keeps the operation in
-the logical plan (`src/dist_provider.rs`), logical and physical extension codecs that ship the
-operation nodes from the client to the scheduler and from the scheduler to the executors
-(`src/logical_codec.rs`, `src/physical_codec.rs`, `src/bio_phys_codec.rs`), a coverage node that
-carries its left table (`src/coverage_node.rs`) and the binaries in `src/bin/`.
+from `datafusion-bio-function-ranges` **v0.25.0**, the algorithm crate polars-bio is built on
+(polars-bio 0.37 uses v0.24.0 with the same interval algorithms; v0.25.0 ports it to
+DataFusion 55). It is vendored in `vendor/` with two visibility patches (`vendor/PATCH.md`).
+`ballista_genomics` adds what Ballista needs to run the operations on a cluster: a table provider
+that keeps the operation in the logical plan (`src/dist_provider.rs`), logical and physical
+extension codecs that ship the operation nodes from the client to the scheduler and from the
+scheduler to the executors (`src/logical_codec.rs`, `src/physical_codec.rs`,
+`src/bio_phys_codec.rs`), a coverage node that carries its left table (`src/coverage_node.rs`)
+and the binaries in `src/bin/`.
 
 ## Building
 
