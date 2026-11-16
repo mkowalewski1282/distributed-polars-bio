@@ -22,7 +22,7 @@ WORKER_TASK_SLOTS = 1
 
 def sail_env(n_nodes: int) -> dict[str, str]:
     """Zmienne SAIL_* serwera dla N węzłów: local-cluster, N workerów bez wygaszania
-    bezczynnych, równoległość 2N.
+    bezczynnych, równoległość N (1 slot na workera).
 
     Sail tworzy driver i N workerów dla KAŻDEJ sesji Spark Connect — przy pierwszym RPC
     sesji (w runnerze: rozgrzanie sesji, przed pomiarem czasu) — i zamyka je razem z sesją
@@ -32,7 +32,9 @@ def sail_env(n_nodes: int) -> dict[str, str]:
         "SAIL_CLUSTER__WORKER_INITIAL_COUNT": str(n_nodes),
         "SAIL_CLUSTER__WORKER_TASK_SLOTS": str(WORKER_TASK_SLOTS),
         "SAIL_CLUSTER__WORKER_MAX_IDLE_TIME_SECS": "86400",
-        "SAIL_EXECUTION__DEFAULT_PARALLELISM": str(2 * n_nodes),
+        # Przy 1 slocie na workera równoległość musi równać się liczbie workerów, inaczej Sail
+        # dokłada workery (sonda 2026-11-16). Zadanie 8 zmieni n_nodes na P.
+        "SAIL_EXECUTION__DEFAULT_PARALLELISM": str(n_nodes),
         # Rozmiar partii wykonania (sonda 3b-2, Zadanie 12): overlap 7-0, N = 3 — 273 partii
         # wyniku zamiast 1877, odbiór wyniku przez klienta 1,59 s zamiast 2,79 s, ta sama suma
         # kontrolna. Opcje Spark Connect (arrow.maxRecordsPerBatch, maxRecordsPerOutputBatch,

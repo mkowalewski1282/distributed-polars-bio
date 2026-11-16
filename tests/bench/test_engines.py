@@ -149,7 +149,7 @@ def test_sail_server_is_pinned_and_configured(tmp_path):
         assert {
             "SAIL_MODE=local-cluster",
             "SAIL_CLUSTER__WORKER_INITIAL_COUNT=2",
-            "SAIL_EXECUTION__DEFAULT_PARALLELISM=4",
+            "SAIL_EXECUTION__DEFAULT_PARALLELISM=2",
             "POLARS_MAX_THREADS=4",
             "MPLBACKEND=Agg",
         } <= environ(pid)
