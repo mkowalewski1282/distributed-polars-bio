@@ -57,6 +57,9 @@ uv run python -m bench.orchestrator bench/conf/smoke.yaml --ballista-profile deb
 Wyniki trafiają do `bench/results/<seria>/<czas>/runs.parquet`. Metodyka:
 `docs/superpowers/specs/2026-09-29-metodyka-benchmarkow-design.md`.
 
+Seria skalowania (etap 4, P = 1, 2, 4, 8; ok. 1,5 h): `uv run python -m bench.orchestrator bench/conf/scaling.yaml`,
+raport: `uv run python -m bench.report bench/results/scaling/<czas>`.
+
 Serie pomiarowe używają domyślnie binarek release (build trwa ponad godzinę przy
 `CARGO_BUILD_JOBS=1`; narzędzie sprawdza przed startem, czy binarki są nowsze od źródeł):
 

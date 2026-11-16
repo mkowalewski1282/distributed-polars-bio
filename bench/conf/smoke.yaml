@@ -2,6 +2,7 @@
 # 1-2 (merge: zbiór 1), 1 przebieg bez rozgrzewki — krótko, tylko poprawność narzędzia; uruchamiany
 # przed każdą dużą serią:
 #   uv run python -m bench.orchestrator bench/conf/smoke.yaml
+# Główna seria etapu 4 (skalowanie P = 1, 2, 4, 8): bench/conf/scaling.yaml.
 series: smoke
 scenarios:
   - {op: overlap, pair: "1-2"}
