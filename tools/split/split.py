@@ -26,6 +26,7 @@ REPOS = ("ballista-genomics", "sail-genomics", "genomics-engines-bench")
 EXCLUDES_ALL = (
     "tools/**",
     "tests/test_split.py",
+    "tests/test_code_language.py",
     "bench/results/**",
     "**/__pycache__/**",
     "**/*.pyc",
@@ -53,10 +54,10 @@ _BALLISTA_TESTS = (
     "test_ballista_distributed_ops.py test_ballista_distribution_evidence.py "
     "test_ballista_multiprocess.py test_ballista_parquet.py test_merge_correctness.py "
     "test_nearest_correctness.py test_coverage_subtract_correctness.py test_oracle_sanity.py "
-    "test_generic_oracle.py test_code_language.py"
+    "test_generic_oracle.py"
 ).split()
 _SAIL_TESTS = (
-    "__init__.py parquet_fixture.py generic_oracle.py test_sail_pb_context.py test_code_language.py"
+    "__init__.py parquet_fixture.py generic_oracle.py test_sail_pb_context.py"
 ).split()
 
 #: repo -> [(sciezka w monorepo albo glob, cel)]. Bez globa cel to sciezka pliku; z globem cel to

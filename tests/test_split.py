@@ -14,7 +14,7 @@ from tools.split import split
 REPO = Path(__file__).resolve().parent.parent
 
 #: Testy, ktore zostaja w warsztacie (nie sa eksportowane do zadnego repozytorium).
-STAYS_IN_WORKSHOP = {"tests/test_split.py"}
+STAYS_IN_WORKSHOP = {"tests/test_split.py", "tests/test_code_language.py"}
 
 #: Testy trafiajace jawnie do kilku repozytoriow (reszta: dokladnie do jednego).
 IN_SEVERAL_REPOS = {
@@ -22,7 +22,6 @@ IN_SEVERAL_REPOS = {
     "tests/test_ballista_multiprocess.py",
     "tests/test_ballista_parquet.py",
     "tests/test_generic_oracle.py",
-    "tests/test_code_language.py",
     "tests/test_sail_pb_context.py",
 }
 
@@ -51,11 +50,39 @@ def test_mapping_covers_every_moved_test():
             assert len(repos) == 1, f"{path} -> {repos}"
 
 
+def test_moved_files_are_english():
+    """Kazdy plik eksportowany wg MAPPING (zrodlo w monorepo, bez vendor/ i plikow binarnych) nie
+    ma trafien wzorcow jezyka polskiego ani odwolan do dokumentow roboczych."""
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+    hits = []
+    for path in tracked:
+        dests = [split.map_path(repo, path) for repo in split.REPOS]
+        dests = [d for d in dests if d is not None]
+        if not dests or all(d.startswith(split.SCAN_EXCLUDED_PREFIXES) for d in dests):
+            continue
+        raw = (REPO / path).read_bytes()
+        if b"\0" in raw:
+            continue
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        hits += [
+            f"{path}:{n}: {line.strip()}"
+            for n, line in enumerate(text.splitlines(), 1)
+            if split.line_families(line)
+        ]
+    assert not hits, f"{len(hits)} trafien w przenoszonych plikach:\n" + "\n".join(hits[:50])
+
+
 def test_workshop_only_files_are_never_mapped():
     for repo in split.REPOS:
         assert split.map_path(repo, "tools/split/split.py") is None
         assert split.map_path(repo, "bench/results/x/runs.parquet") is None
         assert split.map_path(repo, "tests/test_split.py") is None
+        assert split.map_path(repo, "tests/test_code_language.py") is None
 
 
 def test_scan_finds_workshop_refs(tmp_path):
