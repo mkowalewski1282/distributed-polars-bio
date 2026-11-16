@@ -1,9 +1,8 @@
-"""Środowisko narzędzia (plan 3a, Zadanie 1): import polars-bio nie może czekać na
-serwer X ze zmiennej DISPLAY.
+"""Tool environment: importing polars-bio must not wait for the X server named in DISPLAY.
 
-Matplotlib (importowany przez polars-bio) przy domyślnym backendzie sprawdza ekran
-z DISPLAY. Gdy adres jest nieosiągalny, połączenie TCP czeka na timeout — na tej
-maszynie import polars-bio trwał ~270 s zamiast ~1 s."""
+Matplotlib (imported by polars-bio) checks the display from DISPLAY with the default
+backend. When the address is unreachable, the TCP connection waits for a timeout; on this
+machine the polars-bio import took ~270 s instead of ~1 s."""
 
 from __future__ import annotations
 
@@ -44,15 +43,15 @@ def test_explicit_matplotlib_backend_wins():
 
 
 def test_polars_bio_import_does_not_wait_for_x_server():
-    """DISPLAY na adresie z TEST-NET-1 (RFC 5737, nieosiągalny): bez backendu bez okien
-    import czeka na timeout TCP i przekracza limit procesu."""
+    """DISPLAY on a TEST-NET-1 address (RFC 5737, unreachable): without a windowless backend
+    the import waits for the TCP timeout and exceeds the process limit."""
     r = _python("import bench, polars_bio", _env_without_backend(DISPLAY="192.0.2.1:0"))
     assert r.returncode == 0, r.stderr[-2000:]
 
 
 def test_bench_rejects_a_foreign_python():
-    """Systemowy python3 (3.10) widzi starsze biblioteki z ~/.local — polars-bio 0.28 z błędem
-    #372, Sail 0.5.3. Seria uruchomiona nim po cichu mieszałaby wersje silników w wynikach."""
+    """The system python3 (3.10) sees older libraries from ~/.local: polars-bio 0.28 with bug
+    #372, Sail 0.5.3. A series run with it would silently mix engine versions in the results."""
     with pytest.raises(ImportError, match=r"Python 3\.12\.15.*found 3\.10\.12.*uv run"):
         bench.require_project_python((3, 10, 12, "final", 0))
 

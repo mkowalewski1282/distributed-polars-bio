@@ -1,5 +1,5 @@
-"""Wspólne wartości wzorcowe sumy kontrolnej (specyfikacja 8.4): te same wiersze sprawdza
-implementacja w Pythonie (bench/checksum.py) i w Rust (bench_client --checksum)."""
+"""Shared reference values for the checksum: the same rows are checked by the Python
+implementation (bench/checksum.py) and the Rust one (bench_client --checksum)."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import pyarrow as pa
 
 from bench.ops import KEY_COLUMNS, OUTPUT_COLUMNS
 
-#: Wiersze w schemacie znormalizowanym (kolejność OUTPUT_COLUMNS): duplikat, chromosom bez
-#: sąsiada (braki wartości), chr10 obok chr2, wartość 2³¹ − 1, zera.
+#: Rows in the normalized schema (OUTPUT_COLUMNS order): a duplicate, a chromosome with no
+#: neighbour (missing values), chr10 next to chr2, the value 2³¹ − 1, zeros.
 ROWS: dict[str, list[tuple]] = {
     "overlap": [
         ("chr1", 100, 200, "chr1", 150, 300),
@@ -25,9 +25,9 @@ ROWS: dict[str, list[tuple]] = {
     "subtract": [("chr1", 100, 180), ("chr1", 100, 180), ("chr2", 220, 300)],
 }
 
-#: Wartości wyliczone z definicji (bench/checksum.py, 01.10.2026). Zmiana definicji sumy
-#: kontrolnej unieważnia porównania z wcześniejszymi seriami — wtedy świadomie zaktualizować
-#: te stałe i opisać zmianę w specyfikacji (sekcja 8.4).
+#: Values computed from the definition (bench/checksum.py, 2026-10-01). Changing the checksum
+#: definition invalidates comparisons with earlier series; in that case update these
+#: constants deliberately and document the change.
 CHECKSUMS: dict[str, str] = {
     "overlap": "0x696c86b3d336e487",
     "nearest": "0xf471dd63731fa19a",
@@ -38,7 +38,7 @@ CHECKSUMS: dict[str, str] = {
 
 
 def _arrow_type(column: str) -> pa.DataType:
-    """Typy jak w wynikach silników: chromosom string, początek/koniec int32, reszta int64."""
+    """Types as in the engines' results: chromosome string, start/end int32, the rest int64."""
     if column.startswith("chrom"):
         return pa.string()
     if column.startswith(("start", "end")):
@@ -54,6 +54,6 @@ def table(op: str) -> pa.Table:
 
 
 def key_rows(op: str) -> list[tuple]:
-    """Wiersze zawężone do KEY_COLUMNS[op] — wejście definicji wzorcowej."""
+    """Rows narrowed to KEY_COLUMNS[op], the input of the reference definition."""
     idx = [OUTPUT_COLUMNS[op].index(c) for c in KEY_COLUMNS[op]]
     return [tuple(r[i] for i in idx) for r in ROWS[op]]

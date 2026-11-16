@@ -1,4 +1,4 @@
-"""Reguły ważności przebiegu i dryfu (plan 3a, Zadanie 8; specyfikacja 6.3–6.5 i 8.3)."""
+"""Run validity and drift rules."""
 
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ def test_drift_rule():
 
 
 def test_control_drift_compares_medians():
-    # pojedyncze wyskoki (5,0 i 9,0) nie przesuwają median 1,1 i 1,05 — dryf 4,5% < 10%
+    # single outliers (5.0 and 9.0) do not move the medians 1.1 and 1.05: drift 4.5% < 10%
     assert control_drift([1.0, 5.0, 1.1], [1.05, 1.0, 9.0], repeats=3, tolerance=0.10) is None
     assert control_drift([1.0, 1.0, 1.0], [1.3, 1.3, 1.0], repeats=3, tolerance=0.10) == "control drift 30%"
 

@@ -1,6 +1,6 @@
-"""Badanie szumu przebiegu kontrolnego (plan 3b-2, Zadanie 7; specyfikacja 4.2): jak często dwie
-mediany po 10 czasów różnią się o ponad próg przy niezmienionej maszynie. Od etapu 4 próbką są
-przebiegi kontrolne z początku bloku (wariant kontrolny różni się od wariantów serii)."""
+"""Noise of the control run: how often two medians of 10 timings differ by more than the
+threshold on an unchanged machine. The sample is the control runs from the start of a block
+(the control variant differs from the series variants)."""
 
 from __future__ import annotations
 

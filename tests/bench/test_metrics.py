@@ -1,5 +1,4 @@
-"""Metryki z /proc (plan 3a, Zadanie 2; specyfikacja 5 i 6): parsowanie na plikach
-wzorcowych oraz działanie na prawdziwym /proc."""
+"""Metrics from /proc: parsing on reference files and behaviour on the real /proc."""
 
 from __future__ import annotations
 
@@ -96,8 +95,8 @@ def test_missing_pswpout_is_reported(tmp_path):
 
 
 def test_reset_peak_rss_on_real_process():
-    """200 MB zapisanych stron podnosi VmHWM; po zwolnieniu i wyzerowaniu licznik
-    wraca do bieżącego RSS."""
+    """200 MB of written pages raise VmHWM; after freeing and resetting, the counter
+    returns to the current RSS."""
     blob = b"x" * (200 << 20)
     del blob
     before = metrics.peak_rss()

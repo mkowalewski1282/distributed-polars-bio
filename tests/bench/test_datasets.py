@@ -1,4 +1,4 @@
-"""Rejestr zbiorów databio-8p i rozwiązywanie identyfikatorów (plan 2, Zadanie 1)."""
+"""Registry of the databio-8p datasets and identifier resolution."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from bench.data import datasets as ds
 
 
 def test_dataset_ids_match_polars_bio_bench_directories():
-    # Nazwy katalogów z archiwum databio-8p.zip; identyfikatory jak w
-    # conf/common.yaml polars-bio-bench (specyfikacja, sekcja 4).
+    # Directory names from the databio-8p.zip archive; identifiers as in
+    # conf/common.yaml of polars-bio-bench.
     assert ds.DATASETS == {
         0: "chainRn4",
         1: "fBrain-DS14718",

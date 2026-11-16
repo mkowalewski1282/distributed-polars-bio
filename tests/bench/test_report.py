@@ -1,4 +1,4 @@
-"""Raport serii (etap 4, Zadanie 9)."""
+"""Series report."""
 
 from __future__ import annotations
 

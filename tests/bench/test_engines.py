@@ -1,8 +1,8 @@
-"""Silniki serii (plan 3a, Zadanie 7; etap 4: semantyka P): przypięcie procesów do CPU z układu
-(bench/cpus.py), jawna liczba wątków i polecenia runnerów. Testy bez procesów silników używają
-układu laptopa z fałszywego sysfs; testy z prawdziwym klastrem — układu tej maszyny.
+"""Series engines (P semantics): pinning processes to CPUs from the layout
+(bench/cpus.py), explicit thread counts and runner commands. Tests without engine processes use
+the laptop layout from a fake sysfs; tests with a real cluster use this machine's layout.
 
-Testy klastra Ballisty wymagają binarek debug (brak = BŁĄD, jak w P0):
+Ballista cluster tests require debug binaries (missing = ERROR):
 cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bins"""
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from bench.procutil import EngineError
 from bench.runners.sail_server import WORKER_TASK_SLOTS, sail_env
 from tests.bench.fake_sysfs import make
 
-#: Laptop pomiarowy: 6 rdzeni, rdzeń k = CPU {2k, 2k+1} (lscpu -e).
+#: Measurement laptop: 6 cores, core k = CPUs {2k, 2k+1} (lscpu -e).
 LAPTOP_CORES = [[2 * k, 2 * k + 1] for k in range(6)]
 
 
@@ -36,7 +36,7 @@ def laptop(tmp_path):
 
 @pytest.fixture
 def machine():
-    """Układ CPU tej maszyny — dla testów uruchamiających prawdziwe procesy silników."""
+    """CPU layout of this machine, for tests that start real engine processes."""
     return read_layout()
 
 
@@ -45,7 +45,7 @@ def environ(pid: int) -> set[str]:
 
 
 def allowed(pid: int) -> set[int]:
-    """CPU, na których proces może działać (Cpus_allowed_list, np. '0-1,4')."""
+    """CPUs the process may run on (Cpus_allowed_list, e.g. '0-1,4')."""
     out: set[int] = set()
     for part in metrics.cpus_allowed(pid).split(","):
         first, _, last = part.partition("-")
@@ -95,8 +95,8 @@ def test_polars_bio_runs_pinned_with_explicit_threads(variant, p, threads, cpus,
 
 
 def test_control_engine_uses_two_threads_on_first_core(laptop, tmp_path):
-    """Przebieg kontrolny (specyfikacja 5.1): polars-bio, 2 wątki na obu wątkach pierwszego
-    rdzenia poza systemowym — niezależnie od P bloku."""
+    """Control run: polars-bio, 2 threads on both threads of the first non-system core,
+    regardless of the block's P."""
     control = engine(engines.CONTROL_VARIANT, engines.CONTROL_THREADS, laptop, tmp_path)
     assert engines.CONTROL_VARIANT == "polars_bio_control"
     assert control.threads == 2 and control.cpus == (2, 3)
@@ -124,7 +124,7 @@ def test_unknown_variant_is_rejected(laptop, tmp_path):
 
 
 class _FakePopen:
-    """Proces bez procesu: zapisuje argv i środowisko, żyje do terminate()."""
+    """A process stand-in: records argv and the environment, lives until terminate()."""
 
     def __init__(self, argv, **kwargs):
         self.argv, self.env, self.returncode, self.pid = argv, kwargs.get("env"), None, 0
@@ -142,8 +142,8 @@ class _FakePopen:
 
 
 def test_ballista_pins_one_executor_per_cpu(laptop, tmp_path, monkeypatch):
-    """P = 4: cztery executory po 1 slocie, executor k na k-tym CPU układu; scheduler i klient
-    na rdzeniu systemowym; BIO_TARGET_PARTITIONS = P w każdym procesie."""
+    """P = 4: four executors with 1 slot each, executor k on the k-th CPU of the layout;
+    scheduler and client on the system core; BIO_TARGET_PARTITIONS = P in every process."""
     spawned: list[_FakePopen] = []
 
     def popen(argv, **kwargs):
@@ -173,9 +173,9 @@ def test_ballista_pins_one_executor_per_cpu(laptop, tmp_path, monkeypatch):
 
 
 def test_ballista_keeps_at_least_two_target_partitions(laptop, tmp_path):
-    """P = 1: binarki Ballisty odrzucają BIO_TARGET_PARTITIONS < 2 (runner.rs, target_partitions:
-    przy 1 partycji DataFusion nie wstawia hash-repartycji), więc jeden executor z 1 slotem liczy
-    2 partycje po kolei."""
+    """P = 1: the Ballista binaries reject BIO_TARGET_PARTITIONS < 2 (runner.rs, target_partitions:
+    with 1 partition DataFusion does not insert a hash repartition), so a single executor with
+    1 slot computes 2 partitions in sequence."""
     assert engine("ballista", 1, laptop, tmp_path).env["BIO_TARGET_PARTITIONS"] == "2"
     assert engine("ballista", 2, laptop, tmp_path).env["BIO_TARGET_PARTITIONS"] == "2"
     assert engine("ballista", 8, laptop, tmp_path).env["BIO_TARGET_PARTITIONS"] == "8"
@@ -195,14 +195,14 @@ def test_sail_engine_pins_server_to_the_block_cpus(laptop, tmp_path):
 
 
 def test_ballista_dir_prefers_submodule(tmp_path, monkeypatch):
-    """Repozytorium pomiarowe po podziale ma Ballistę w submodule engines/ballista-genomics;
-    monorepo — w ballista_genomics/. Brak binarek w submodule to błąd z poleceniem budowania
-    w tym katalogu, nie FileNotFoundError."""
+    """The benchmark repository has Ballista in the engines/ballista-genomics submodule;
+    the monorepo has it in ballista_genomics/. Missing binaries in the submodule are an error
+    with a build command for that directory, not a FileNotFoundError."""
     monkeypatch.setattr(engines, "REPO", tmp_path)
     assert engines.ballista_dir() == tmp_path / "ballista_genomics"
     submodule = tmp_path / "engines" / "ballista-genomics"
     submodule.mkdir(parents=True)
-    assert engines.ballista_dir() == tmp_path / "ballista_genomics"  # pusty submoduł (bez init)
+    assert engines.ballista_dir() == tmp_path / "ballista_genomics"  # empty submodule (not initialized)
     (submodule / "Cargo.toml").write_text("[package]\n")
     assert engines.ballista_dir() == submodule
     monkeypatch.setattr(engines, "BALLISTA_DIR", submodule)
@@ -233,7 +233,7 @@ def test_ballista_cluster_is_pinned_and_configured(machine, tmp_path):
         for name in ("executor_1", "executor_2"):
             assert ", slots 1, " in (tmp_path / "logs" / f"{name}.log").read_text()
         cmd = engine.command(Scenario("merge", "1"))
-        # Limit gRPC 512 MiB w każdym procesie (specyfikacja 3b-2, 6.2) — i potwierdzenie z węzłów.
+        # gRPC limit of 512 MiB in every process, confirmed by the nodes.
         assert all("BALLISTA_GRPC_MAX_MESSAGE_BYTES=536870912" in environ(pid) for pid in pids.values())
         assert cmd.env["BALLISTA_GRPC_MAX_MESSAGE_BYTES"] == "536870912"
         for name in pids:
@@ -252,17 +252,18 @@ def test_ballista_cluster_is_pinned_and_configured(machine, tmp_path):
 
 @pytest.mark.parallelism(1)
 def test_ballista_start_retries_when_executor_registration_fails(machine, tmp_path, monkeypatch):
-    """Nieudany start executora (kod 1) ma powtórzyć start klastra na nowych portach.
-    Ballista 53 rejestrowała executor, zanim jego serwer gRPC przyjmował połączenia, i przy
-    zajętym porcie gRPC rejestracja była odrzucona („Connection refused”; ten sam objaw dawał
-    wyścig ze smoke 02.10.2026, blok N = 3). Ballista 55 wiąże port przed rejestracją (#2225),
-    więc zajęty port kończy executor już przy wiązaniu („Address already in use”)."""
+    """A failed executor start (exit code 1) must retry the cluster start on new ports.
+    Ballista 53 registered the executor before its gRPC server accepted connections, so with
+    the gRPC port taken the registration was rejected ("Connection refused"; the same symptom
+    came from a race in the 2026-10-02 smoke run, block N = 3). Ballista 55 binds the port
+    before registering (#2225), so a taken port ends the executor already at bind time
+    ("Address already in use")."""
     blocker = socket.socket()
-    blocker.bind(("127.0.0.1", 0))  # zajęty (bez listen()): wiązanie przez executor się nie uda
+    blocker.bind(("127.0.0.1", 0))  # taken (no listen()): the executor's bind will fail
     taken = blocker.getsockname()[1]
     real_free_port = engines.free_port
     calls = itertools.count(1)
-    # Pierwsza próba losuje porty: schedulera, flight executora 1 i gRPC executora 1 (zajęty).
+    # The first attempt picks ports: scheduler, flight of executor 1 and gRPC of executor 1 (taken).
     monkeypatch.setattr(engines, "free_port", lambda: taken if next(calls) == 3 else real_free_port())
     engine = engines.make_engine(
         "ballista", 1, layout=machine, data_root=tmp_path, log_dir=tmp_path / "logs", profile="debug",
@@ -352,7 +353,7 @@ def _fake_ballista(tmp_path: Path) -> Path:
     for name in ("ballista_node", "bench_client"):
         (root / "target" / "debug" / name).write_bytes(b"binary")
     for source in (root / "Cargo.toml", root / "Cargo.lock", *(root / "src" / "bin").iterdir()):
-        _set_mtime(source, 500_000)  # manifesty starsze od binarek — o wyniku decyduje lib.rs
+        _set_mtime(source, 500_000)  # manifests older than the binaries: lib.rs decides the outcome
     return root
 
 
@@ -369,7 +370,7 @@ def test_stale_ballista_binary_is_rejected(tmp_path, monkeypatch):
     with pytest.raises(EngineError, match=r"ballista_node is older than .*lib\.rs.*cargo build"):
         engines.require_ballista_binaries("debug")
     _set_mtime(root / "src" / "lib.rs", 500_000)
-    engines.require_ballista_binaries("debug")  # binarki nowsze od źródeł
+    engines.require_ballista_binaries("debug")  # binaries newer than the sources
 
 
 def test_documentation_in_vendor_does_not_make_binaries_stale(tmp_path, monkeypatch):
@@ -387,7 +388,7 @@ def test_other_binaries_entry_points_do_not_make_a_binary_stale(tmp_path, monkey
     _set_mtime(root / "target" / "debug" / "bench_client", 3_000_000)
     for entry in ("dist_ops", "bench_client"):
         _set_mtime(root / "src" / "bin" / f"{entry}.rs", 2_000_000)
-        engines.require_ballista_binaries("debug")  # ballista_node nie zależy od tych punktów wejścia
+        engines.require_ballista_binaries("debug")  # ballista_node does not depend on these entry points
     _set_mtime(root / "src" / "bin" / "bench_client.rs", 4_000_000)
     with pytest.raises(EngineError, match=r"bench_client is older than .*bench_client\.rs"):
         engines.require_ballista_binaries("debug")
@@ -428,7 +429,7 @@ def test_ballista_reports_a_dead_process(machine, tmp_path):
 @pytest.mark.parallelism(1)
 def test_sail_start_retries_on_a_taken_port(machine, tmp_path, monkeypatch):
     blocker = socket.socket()
-    blocker.bind(("127.0.0.1", 0))  # zajęty bez listen(): serwer nie zbinduje portu i zakończy się
+    blocker.bind(("127.0.0.1", 0))  # taken without listen(): the server cannot bind the port and exits
     taken = blocker.getsockname()[1]
     real_free_port = engines.free_port
     calls = itertools.count(1)

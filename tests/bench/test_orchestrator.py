@@ -1,6 +1,6 @@
-"""Orkiestrator serii (plan 3a, Zadanie 9; etap 4: semantyka P) na fałszywych silnikach i runnerze:
-logika bloków, ważności, limitu czasu, strażnika pamięci, swapu, dryfu, przerwań i pomijania P
-większych niż układ CPU — bez uruchamiania silników."""
+"""Series orchestrator (P semantics) on fake engines and runner: block logic, validity,
+timeout, memory guard, swap, drift, interruptions and skipping P larger than the CPU layout,
+without starting engines."""
 
 from __future__ import annotations
 
@@ -27,8 +27,8 @@ from tests.bench.fake_sysfs import make
 
 REPO = Path(__file__).resolve().parents[2]
 FAKE_RUNNER = Path(__file__).resolve().parent / "fake_runner.py"
-#: Układ laptopa (6 rdzeni, rdzeń k = CPU {2k, 2k+1}) — ten sam, który read_layout odczytuje
-#: z fałszywego sysfs (test_laptop_constant_matches_the_fake_sysfs).
+#: Laptop layout (6 cores, core k = CPUs {2k, 2k+1}), the same one read_layout reads
+#: from the fake sysfs (test_laptop_constant_matches_the_fake_sysfs).
 LAPTOP = CpuLayout(
     system=(0, 1),
     order=(2, 4, 6, 8, 10, 3, 5, 7, 9, 11),
@@ -37,15 +37,15 @@ LAPTOP = CpuLayout(
 
 
 def fake_cpus(layout: CpuLayout, variant: str, p: int) -> tuple[int, ...]:
-    """CPU silnika jak w engines.make_engine."""
+    """Engine CPUs as in engines.make_engine."""
     if variant == CONTROL_VARIANT:
         return control_cpus(layout)
     return cpus_for(layout, 1 if variant == REFERENCE_VARIANT else p)
 
 
 class FakeEngine:
-    """Silnik bez procesów: runnerem jest fake_runner.py z argumentami zależnymi od wariantu
-    i scenariusza; start, stop i restart trafiają do wspólnego dziennika."""
+    """Engine without processes: the runner is fake_runner.py with arguments depending on the
+    variant and scenario; start, stop and restart go to a shared journal."""
 
     def __init__(self, variant, parallelism, args_for, log, cpus):
         self.variant, self.n, self.args_for, self.log = variant, parallelism, args_for, log
@@ -70,7 +70,7 @@ class FakeEngine:
         self.graces.append(grace_s)
 
     def dead(self):
-        """Martwy proces silnika — raz, gdy runner utworzy plik `dead_once` (sygnał z testu)."""
+        """Dead engine process, once, when the runner creates the `dead_once` file (signal from the test)."""
         if self.dead_once is not None and self.dead_once.exists():
             self.dead_once.unlink()
             return ["executor_1"]
@@ -166,7 +166,7 @@ def rows(summary) -> pl.DataFrame:
 
 
 def block(df: pl.DataFrame, variant: str) -> pl.DataFrame:
-    """Przebiegi bloku wariantu bez wzorca i przebiegów kontrolnych."""
+    """Runs of a variant block, excluding the reference and control runs."""
     return df.filter(
         (pl.col("variant") == variant) & ~pl.col("is_control") & ~pl.col("is_reference")
     )
@@ -207,7 +207,7 @@ def test_wrong_result_invalidates_only_that_scenario(tmp_path):
     summary = run(tmp_path, factory=make_factory(args_for))
     bad = rows(summary).filter(~pl.col("valid"))
     assert set(zip(bad["variant"], bad["op"])) == {("ballista", "merge")}
-    assert bad.height == 3  # rozgrzewka i dwie rundy
+    assert bad.height == 3  # warm-up and two rounds
     assert set(bad["invalid_reason"]) == {
         "checksum 0x00000000000000bb ≠ reference 0x00000000000000aa"
     }
@@ -280,8 +280,8 @@ def test_swap_during_run_invalidates_it(tmp_path):
 
 
 def test_swap_in_invalidates_run(tmp_path):
-    """Seria startuje od pustego swapu (sprawdzenie przed serią), więc każde wczytanie ze swapu
-    w trakcie przebiegu pochodzi z pomiaru — przebieg jest nieważny (specyfikacja 3b-2, 4.3)."""
+    """The series starts with empty swap (checked before the series), so every swap-in during a
+    run comes from the measurement and the run is invalid."""
     marker = tmp_path / "swapin"
 
     def args_for(variant, n, scenario):
@@ -345,8 +345,8 @@ def test_control_drift_of_medians_repeats_block(tmp_path):
 
 
 def test_invalid_control_runs_invalidate_the_block(tmp_path):
-    """Wszystkie przebiegi kontrolne nieważne (zła suma kontrolna) — blok dostaje przyczynę
-    „control run invalid” zamiast wyjątku z mediany pustej listy, także po powtórzeniu."""
+    """All control runs invalid (wrong checksum): the block gets the reason
+    "control run invalid" instead of an exception from the median of an empty list, also after a retry."""
     def args_for(variant, n, scenario):
         return ["--checksum", "0x00000000000000bb"] if variant == CONTROL_VARIANT else []
 
@@ -392,12 +392,12 @@ def test_interrupt_keeps_finished_rows_and_stops_engine(tmp_path):
         run(tmp_path, factory=factory)
     df = pl.read_parquet(next((tmp_path / "results").rglob("runs.parquet")))
     assert block(df, "polars_bio")["valid"].all()
-    assert df["invalid_reason"][-1] == "series interrupted"  # kontrola przerwanego bloku Ballisty
+    assert df["invalid_reason"][-1] == "series interrupted"  # control of the interrupted Ballista block
     assert factory.log[-1] == ("stop", "ballista", 1)
 
 
-#: Seria w osobnym procesie (jak `python -m bench.orchestrator`), której runner Ballisty „wisi”:
-#: test wysyła sygnał w trakcie przebiegu.
+#: A series in a separate process (like `python -m bench.orchestrator`) whose Ballista runner
+#: "hangs": the test sends a signal mid-run.
 SIGNAL_SERIES = """
 import sys
 from pathlib import Path
@@ -427,8 +427,8 @@ def _cmdline_contains(proc_dir: Path, text: str) -> bool:
 
 
 def test_interrupt_during_a_run_kills_the_running_runner(tmp_path):
-    """Ctrl-C (KeyboardInterrupt) w trakcie przebiegu: grupa procesów runnera jest zabijana —
-    żaden runner nie zostaje na CPU bloku (przegląd 3a)."""
+    """Ctrl-C (KeyboardInterrupt) during a run: the runner's process group is killed, so no
+    runner is left on the block's CPUs."""
     started = tmp_path / "runner_started"
 
     def args_for(variant, n, scenario):
@@ -449,9 +449,10 @@ def test_interrupt_during_a_run_kills_the_running_runner(tmp_path):
 
 @pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGHUP])
 def test_termination_signal_keeps_rows_and_stops_runner_and_engine(tmp_path, sig):
-    """Zamknięcie terminala (SIGHUP) albo `kill` (SIGTERM) w trakcie przebiegu działa jak Ctrl-C:
-    wiersze przerwanego bloku i runs.parquet zostają, runner (osobna sesja, więc sam sygnału
-    nie dostaje) i silnik są zatrzymane. Domyślnie oba sygnały kończą proces bez sprzątania."""
+    """Closing the terminal (SIGHUP) or `kill` (SIGTERM) during a run acts like Ctrl-C: the rows
+    of the interrupted block and runs.parquet are kept, and the runner (a separate session, so
+    it gets no signal itself) and the engine are stopped. By default both signals end the
+    process without cleanup."""
     proc = subprocess.Popen(
         [sys.executable, "-c", SIGNAL_SERIES, str(tmp_path)], cwd=REPO,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -465,7 +466,7 @@ def test_termination_signal_keeps_rows_and_stops_runner_and_engine(tmp_path, sig
     proc.send_signal(sig)
     proc.communicate(timeout=30)
     df = pl.read_parquet(next((tmp_path / "results").rglob("runs.parquet")))
-    assert df["invalid_reason"][-1] == "series interrupted"  # kontrola przerwanego bloku Ballisty
+    assert df["invalid_reason"][-1] == "series interrupted"  # control of the interrupted Ballista block
     assert "('stop', 'ballista', 1)" in (tmp_path / "journal.txt").read_text()
     assert not [p for p in Path("/proc").glob("[0-9]*") if _cmdline_contains(p, str(started))]
 
@@ -492,7 +493,7 @@ def test_dead_server_process_invalidates_run_and_restarts_engine(tmp_path):
     )
     reasons = block(rows(summary), "ballista")["invalid_reason"].to_list()
     died = "process executor_1 exited during the run"
-    assert reasons.count(died) == 2  # pierwszy przebieg każdego scenariusza
+    assert reasons.count(died) == 2  # first run of every scenario
     assert all(r in (died, f"skipped: {died}") for r in reasons)
     assert factory.log.count(("restart", "ballista", 1)) == 2
 
@@ -531,8 +532,8 @@ def test_main_reports_config_error_with_code_2(tmp_path, capsys):
 
 
 def test_main_refuses_to_start_with_used_swap(tmp_path, monkeypatch, capsys):
-    """Niepusty swap na starcie: każdy przebieg mógłby wczytywać cudze strony — seria nie startuje
-    (kod 2), zanim powstanie katalog wyników."""
+    """Non-empty swap at start: every run could be swapping in foreign pages, so the series does
+    not start (exit code 2) before the results directory is created."""
     monkeypatch.setattr(preflight, "check_cpus", lambda *args, **kwargs: [])
     root = _fixture_data(tmp_path / "data")
     cfg = tmp_path / "series.yaml"
@@ -549,7 +550,7 @@ def test_main_refuses_to_start_with_used_swap(tmp_path, monkeypatch, capsys):
 
 
 def test_engine_log_metrics_reach_results(tmp_path):
-    """Liczniki z logów silnika: broadcast_bytes → kolumna, pozostałe (np. sail_workers) → extra."""
+    """Counters from the engine log: broadcast_bytes goes to a column, the rest (e.g. sail_workers) to extra."""
     def customize(engine):
         if engine.variant == "ballista":
             engine.logged = {"broadcast_bytes": 10, "sail_workers": 2}
@@ -567,7 +568,7 @@ def test_explain_pass_writes_plans_of_ballista_blocks(tmp_path):
     assert sorted(p.relative_to(explain).as_posix() for p in explain.rglob("*.txt")) == [
         "ballista-p1/merge_1.txt", "ballista-p1/overlap_1-2.txt",
     ]
-    assert rows(summary).height == 2 + 2 * (2 + 2 + 4)  # przebiegi explain nie trafiają do wyników
+    assert rows(summary).height == 2 + 2 * (2 + 2 + 4)  # explain runs do not go into the results
     assert summary.ok
 
 
@@ -584,9 +585,9 @@ def test_failed_explain_is_reported_as_series_failure(tmp_path):
 
 
 def test_engine_death_during_explain_stops_runner_at_once(tmp_path):
-    """Śmierć procesu silnika w przebiegu EXPLAIN ANALYZE przerywa runner od razu, a nie po
-    timeoucie; każdy scenariusz EXPLAIN dostaje własną porażkę (runner za każdym razem tworzy
-    znacznik od nowa, więc `dead_once` zgłasza śmierć przy każdym), wyniki pomiarów bez zmian."""
+    """An engine process dying during an EXPLAIN ANALYZE run aborts the runner at once rather
+    than after the timeout; every EXPLAIN scenario gets its own failure (the runner recreates
+    the marker each time, so `dead_once` reports a death for each), measurement results unchanged."""
     marker = tmp_path / "executor_died"
 
     def customize(engine):
@@ -608,8 +609,8 @@ def test_engine_death_during_explain_stops_runner_at_once(tmp_path):
 
 
 def test_explain_pass_skips_scenarios_skipped_in_measured_runs(tmp_path):
-    """Scenariusz pominięty w pomiarach (timeout) nie jest uruchamiany w EXPLAIN ANALYZE i nie
-    dodaje porażki serii; drugi scenariusz dostaje swój plan."""
+    """A scenario skipped in the measurements (timeout) is not run under EXPLAIN ANALYZE and does
+    not add a series failure; the second scenario gets its plan."""
     def args_for(variant, n, scenario):
         return ["--sleep", "60"] if (variant, scenario.op) == ("ballista", "overlap") else []
 
@@ -622,8 +623,8 @@ def test_explain_pass_skips_scenarios_skipped_in_measured_runs(tmp_path):
 
 
 def test_killed_explain_run_restarts_the_engine(tmp_path):
-    """Zabity przebieg EXPLAIN ANALYZE (tu: śmierć executora) kończy się restartem silnika
-    z twardym zatrzymaniem, żeby kolejny scenariusz nie konkurował z osieroconym zadaniem."""
+    """A killed EXPLAIN ANALYZE run (here: executor death) ends with an engine restart using a
+    hard stop, so that the next scenario does not compete with an orphaned task."""
     marker = tmp_path / "executor_died"
     engines_by_variant = {}
 
@@ -661,8 +662,8 @@ def test_engine_versions_record_algorithm_crate_and_binary_hashes(tmp_path, monk
 
 
 def test_engine_versions_without_a_ballista_checkout(tmp_path, monkeypatch):
-    """Niezainicjowany submoduł Ballisty (brak Cargo.lock): seria bez Ballisty ma ruszyć,
-    a wersje Ballisty są „unknown” — nie FileNotFoundError."""
+    """Uninitialized Ballista submodule (no Cargo.lock): a series without Ballista must start,
+    and the Ballista versions are "unknown", not a FileNotFoundError."""
     monkeypatch.setattr(orch, "BALLISTA_DIR", tmp_path / "missing")
     monkeypatch.setattr(engines, "BALLISTA_DIR", tmp_path / "missing")
     versions = orch.engine_versions("release", ballista=False)
@@ -670,8 +671,8 @@ def test_engine_versions_without_a_ballista_checkout(tmp_path, monkeypatch):
 
 
 def test_engine_death_during_run_kills_runner_at_once(tmp_path):
-    """Śmierć procesu silnika w trakcie przebiegu: runner przerwany od razu (nie po timeoucie),
-    scenariusz pominięty do końca bloku, silnik zatrzymany twardo i uruchomiony od nowa."""
+    """Engine process death during a run: the runner is aborted at once (not after the timeout),
+    the scenario is skipped until the end of the block, and the engine is hard-stopped and restarted."""
     marker = tmp_path / "executor_died"
     engines_by_variant = {}
 
@@ -709,7 +710,7 @@ def test_stderr_of_failed_runs_is_kept(tmp_path):
 
     summary = run(tmp_path, factory=make_factory(args_for))
     kept = sorted((summary.directory / "logs" / "failed").iterdir())
-    assert len(kept) == 3  # rozgrzewka i dwie rundy
+    assert len(kept) == 3  # warm-up and two rounds
     assert kept[0].name.endswith("-ballista-p1-overlap_1-2.stderr.txt")
     assert "engine crashed: test error" in kept[0].read_text()
 
@@ -760,7 +761,7 @@ def test_unexpected_invalid_runs_fail_the_series_and_are_listed(tmp_path):
 
 
 def _record_settle(monkeypatch, events: list) -> list:
-    """Podmienia pauzę na zapis zdarzenia; zwraca listę czasów pauz."""
+    """Replaces the pause with an event record; returns the list of pause durations."""
     pauses: list[float] = []
 
     def settle(seconds):
@@ -785,7 +786,7 @@ def test_settle_pause_precedes_every_measured_run(tmp_path, monkeypatch):
         engine.server_pids = server_pids
 
     summary = run(tmp_path, cfg=config(settle_s=3), factory=make_factory(customize=customize))
-    # Referencyjne, rozgrzewkowe, pomiarowe i kontrolne — każdy przebieg raz.
+    # Reference, warm-up, measurement and control runs, each run once.
     assert pauses == [3.0] * rows(summary).height
     assert events == ["settle", "run"] * rows(summary).height
 
@@ -801,7 +802,7 @@ def test_explain_pass_has_no_settle_pause(tmp_path, monkeypatch):
     pauses = _record_settle(monkeypatch, [])
     summary = run(tmp_path, cfg=config(explain=True, settle_s=1.5))
     assert (summary.directory / "explain").exists()
-    assert len(pauses) == rows(summary).height  # explain (2 przebiegi) nie dolicza pauz
+    assert len(pauses) == rows(summary).height  # explain (2 runs) adds no pauses
 
 
 def test_laptop_constant_matches_the_fake_sysfs(tmp_path):
@@ -813,9 +814,9 @@ SKIPPED_P = "skipped: P exceeds available CPUs"
 
 
 def test_oversized_parallelism_is_skipped_not_failed(tmp_path):
-    """Maszyna z 4 CPU poza rdzeniem systemowym (3 rdzenie SMT), seria z P = 4 i 8: blok P = 8
-    nie startuje silnika, dostaje po wierszu na scenariusz z powodem pominięcia, a seria jest
-    zaliczona (kod wyjścia 0) — raport pokaże lukę."""
+    """Machine with 4 CPUs outside the system core (3 SMT cores), series with P = 4 and 8: the
+    P = 8 block does not start the engine, gets one row per scenario with a skip reason, and
+    the series counts as passed (exit code 0); the report will show the gap."""
     small = read_layout(make(tmp_path, [[0, 1], [2, 3], [4, 5]]), affinity=set(range(6)))
     factory = make_factory(layout=small)
     lines: list[str] = []
@@ -836,8 +837,9 @@ def test_oversized_parallelism_is_skipped_not_failed(tmp_path):
 
 
 def test_rows_record_cpus_and_smt(tmp_path):
-    """P = 8 na laptopie sięga po drugie wątki rdzeni 1–3 — wiersze niosą listę CPU i flagę SMT;
-    wzorzec (1 CPU) bez SMT, przebieg kontrolny (oba wątki pierwszego rdzenia) z SMT."""
+    """P = 8 on the laptop reaches for the second threads of cores 1-3; rows carry the CPU list
+    and the SMT flag; the reference (1 CPU) has no SMT, the control run (both threads of the
+    first core) has SMT."""
     df = rows(run(tmp_path, cfg=config(variants=["ballista"], parallelism=[8])))
     measured = block(df, "ballista")
     assert set(measured["parallelism"]) == {8}

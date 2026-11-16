@@ -1,4 +1,4 @@
-"""Liczniki z logów procesów silników z czasu jednego przebiegu (plan 3b-2, Zadanie 11)."""
+"""Counters from the engine process logs over the duration of a single run."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def test_text_since_reads_only_new_lines(tmp_path):
 
 
 def test_text_since_rereads_a_file_shorter_than_the_mark(tmp_path):
-    """Plik zastąpiony albo skrócony (np. po restarcie silnika) — czytamy od początku."""
+    """File replaced or truncated (e.g. after an engine restart): read from the start."""
     log = tmp_path / "engine.log"
     log.write_text("a long line written before the mark\n")
     mark = logscan.mark([log])

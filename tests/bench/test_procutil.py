@@ -1,4 +1,4 @@
-"""Pomocnicze funkcje procesów silników (plan 3a, Zadanie 5)."""
+"""Helper functions for engine processes."""
 
 from __future__ import annotations
 

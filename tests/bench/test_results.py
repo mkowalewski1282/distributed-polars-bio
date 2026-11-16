@@ -1,4 +1,4 @@
-"""Zapis wyników serii (plan 3a, Zadanie 8; specyfikacja 8.5)."""
+"""Writing the series results."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def test_rows_round_trip_through_jsonl_and_parquet(tmp_path):
     first = full_row()
     second = full_row(rep=2, valid=False, invalid_reason="timeout", rows=None, checksum=None, t_total_s=None)
     ResultsWriter(tmp_path / "runs.jsonl").write(first)
-    ResultsWriter(tmp_path / "runs.jsonl").write(second)  # dopisywanie (kolejny blok)
+    ResultsWriter(tmp_path / "runs.jsonl").write(second)  # appending (next block)
     assert to_parquet(tmp_path / "runs.jsonl", tmp_path / "runs.parquet") == 2
     df = pl.read_parquet(tmp_path / "runs.parquet")
     assert df.schema == pl.Schema(SCHEMA)
@@ -38,7 +38,7 @@ def test_rows_round_trip_through_jsonl_and_parquet(tmp_path):
 
 
 def test_schema_records_parallelism_and_cpu_layout():
-    """Etap 4: P bloku zamiast liczby węzłów, lista CPU (JSON) i flaga SMT."""
+    """Block P instead of a node count, CPU list (JSON) and SMT flag."""
     assert "n_nodes" not in SCHEMA
     assert (SCHEMA["parallelism"], SCHEMA["cpus"], SCHEMA["smt"]) == (pl.Int64, pl.Utf8, pl.Boolean)
 

@@ -1,5 +1,5 @@
-"""Pobieranie i weryfikacja databio-8p (plan 2, Zadanie 2) — na syntetycznym
-archiwum o układzie databio-8p.zip i lokalnym serwerze HTTP, bez sieci."""
+"""Download and verification of databio-8p, on a synthetic archive with the
+databio-8p.zip layout and a local HTTP server, without network access."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def _parquet_bytes(table: pa.Table) -> bytes:
 
 
 def _make_zip(path: Path, pos_type=pa.int32()) -> None:
-    """Archiwum o układzie databio-8p.zip: dane i śmieci, które trzeba pominąć."""
+    """Archive with the databio-8p.zip layout: data and junk that must be skipped."""
     with zipfile.ZipFile(path, "w") as zf:
         for name in NAMES:
             for i in range(8):
@@ -85,7 +85,7 @@ def test_extract_keeps_only_data_parts(extracted, tmp_path):
         files = sorted(p.name for p in (extracted / name).iterdir())
         assert files == [f"part-{i:05d}-abc-c000.snappy.parquet" for i in range(8)]
         for f in files:
-            pq.ParquetFile(extracted / name / f)  # każdy plik to prawdziwy Parquet
+            pq.ParquetFile(extracted / name / f)  # every file is a real Parquet file
     assert not (tmp_path / "databio-8p.tmp").exists()
 
 
@@ -122,7 +122,7 @@ def test_failed_extraction_keeps_previous_dataset(tmp_path):
     zip_path = tmp_path / "databio-8p.zip"
     _make_zip(zip_path)
     data = bytearray(zip_path.read_bytes())
-    data[data.index(b"PAR1") + 16] ^= 0xFF  # uszkodzenie wnętrza pierwszego pliku danych
+    data[data.index(b"PAR1") + 16] ^= 0xFF  # corrupt the interior of the first data file
     zip_path.write_bytes(bytes(data))
     dest = tmp_path / "databio-8p"
     dest.mkdir()
@@ -184,7 +184,7 @@ def test_ensure_dataset_skips_download_when_complete(tmp_path, monkeypatch):
 
 
 def test_ensure_dataset_reuses_downloaded_zip(tmp_path, monkeypatch):
-    """Archiwum pobrane ręcznie (np. przez przeglądarkę) wystarcza."""
+    """An archive downloaded manually (e.g. with a browser) is enough."""
     root = tmp_path / "root"
     root.mkdir()
     zip_path = root / "databio-8p.zip"

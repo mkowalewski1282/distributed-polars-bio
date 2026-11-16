@@ -1,4 +1,4 @@
-"""Wspólny schemat wyników i porównanie niezależne od kolejności (plan 2, Zadanie 3)."""
+"""Shared result schema and order-independent comparison."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def test_output_columns_follow_spec_8_4():
         "merge": ("chrom", "start", "end", "n_intervals"),
         "subtract": ("chrom", "start", "end"),
     }
-    # nearest bez tożsamości sąsiada — przy remisach silniki wybierają różnie.
+    # nearest without the neighbour's identity: engines break ties differently.
     assert ops.KEY_COLUMNS["nearest"] == ("chrom_1", "start_1", "end_1", "distance")
     assert set(ops.OPS) == set(ops.OUTPUT_COLUMNS) and ops.UNARY_OPS == {"merge"}
 

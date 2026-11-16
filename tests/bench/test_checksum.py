@@ -1,4 +1,4 @@
-"""Suma kontrolna niezależna od kolejności wierszy (plan 3a, Zadanie 1; specyfikacja 8.4)."""
+"""Row-order-independent checksum."""
 
 from __future__ import annotations
 
@@ -42,8 +42,8 @@ def test_order_and_batching_do_not_matter(op):
 
 
 def test_detects_values_swapped_between_rows():
-    """Suma liniowa zależałaby tylko od sum kolumn — zamiana końców między wierszami
-    (te same sumy kolumn) musi zmienić wynik."""
+    """A linear sum would depend only on column sums; swapping ends between rows
+    (same column sums) must change the result."""
     rows = [("chr1", 100, 200, "chr1", 150, 300), ("chr1", 400, 500, "chr1", 450, 600)]
     swapped = [("chr1", 100, 500, "chr1", 150, 300), ("chr1", 400, 200, "chr1", 450, 600)]
     assert cs.checksum_rows("overlap", rows) != cs.checksum_rows("overlap", swapped)
@@ -75,8 +75,8 @@ def test_missing_value_differs_from_zero():
 
 
 def test_accumulator_matches_definition_on_mixed_types():
-    """string_view (tak DataFusion 53 czyta napisy z Parquet), int32/int64, braki wartości
-    i tabela z kilku kawałków — wynik jak z definicji liczonej wiersz po wierszu."""
+    """string_view (how DataFusion 53 reads strings from Parquet), int32/int64, missing values
+    and a table made of several chunks; the result matches the row-by-row definition."""
     rng = random.Random(7)
     rows = [
         (rng.choice(["chr1", "chr2", "chrX", "chr10", None]), rng.randrange(2**31),
@@ -128,8 +128,8 @@ def _coverage_rows_and_table(n: int = 5000):
 
 
 def test_update_all_matches_definition_for_many_small_parts(monkeypatch):
-    """Sail oddaje wynik w partiach po ~1,5 tys. wierszy — update_all łączy je przed liczeniem
-    (mały GROUP_ROWS wymusza kilka grup i resztę); części to na przemian Table i RecordBatch."""
+    """Sail returns the result in batches of ~1.5k rows; update_all merges them before computing
+    (a small GROUP_ROWS forces several groups and a remainder); parts alternate Table and RecordBatch."""
     monkeypatch.setattr(cs, "GROUP_ROWS", 700)
     rows, table = _coverage_rows_and_table()
     parts = [table.slice(i, 100) for i in range(0, table.num_rows, 100)]

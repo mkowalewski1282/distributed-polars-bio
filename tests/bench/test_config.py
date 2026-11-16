@@ -1,5 +1,5 @@
-"""Konfiguracja serii (plan 3a, Zadanie 6; specyfikacja 8.2; etap 4: semantyka P): walidacja
-przed pierwszym pomiarem, rozwinięcie w bloki (wariant × P) i odtwarzalna kolejność scenariuszy."""
+"""Series configuration (P semantics): validation before the first measurement, expansion
+into blocks (variant × P) and a reproducible scenario order."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def test_minimal_config_gets_spec_defaults():
     assert [s.id for s in cfg.scenarios] == ["overlap/1-2", "merge/1"]
     assert (cfg.repeats, cfg.warmup, cfg.timeout_s, cfg.control_tolerance) == (5, 1, 1200.0, 0.10)
     assert (cfg.parallelism, cfg.seed) == ((1, 4), 7)
-    # Przebieg kontrolny (specyfikacja 3b-2, 4.2): overlap 7-0, 10 przebiegów na każdym końcu bloku.
+    # Control run: overlap 7-0, 10 runs at each end of the block.
     assert (cfg.control, cfg.control_repeats) == (Scenario("overlap", "7-0"), 10)
     assert cfg.explain is False
     assert cfg.settle_s == 0.0
@@ -135,7 +135,7 @@ def test_nodes_key_reports_rename():
 
 
 def test_blocks_are_variants_times_parallelism():
-    """Każdy wariant dla każdego P; kolejność wariantów stała (VARIANTS), P rosnąco."""
+    """Every variant for every P; variant order fixed (VARIANTS), P ascending."""
     cfg = parse(raw(variants=["sail", "polars_bio", "ballista"], parallelism=_DELETE))
     assert VARIANTS == ("polars_bio", "ballista", "sail")
     assert blocks(cfg) == [Block(v, p) for v in VARIANTS for p in (1, 2, 4, 8)]
@@ -176,7 +176,7 @@ def test_control_can_be_overridden():
 
 def test_check_data_requires_parts_for_scenarios_and_control_pair(tmp_path):
     cfg = parse(raw(scenarios=[{"op": "merge", "dataset": 1}]))
-    with pytest.raises(ConfigError, match="chainRn4"):  # zbiór 0 — z pary kontrolnej 7-0
+    with pytest.raises(ConfigError, match="chainRn4"):  # dataset 0, from the 7-0 control pair
         check_data(cfg, tmp_path)
     for idx in (1, 7, 0):
         d = tmp_path / "databio-8p" / DATASETS[idx]

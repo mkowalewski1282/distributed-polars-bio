@@ -1,4 +1,4 @@
-"""Sztuczny sysfs z topologią CPU do testów układu rdzeni."""
+"""Fake sysfs with a CPU topology for the core-layout tests."""
 
 from __future__ import annotations
 
@@ -6,10 +6,10 @@ from pathlib import Path
 
 
 def make(tmp_path: Path, cores: list[list[int]], package: int = 0) -> Path:
-    """Tworzy cpuN/topology/{core_id,physical_package_id,thread_siblings_list}; rdzeń = lista wątków."""
+    """Creates cpuN/topology/{core_id,physical_package_id,thread_siblings_list}; core = list of threads."""
     root = tmp_path / "cpu"
     root.mkdir()
-    # wpisy niebędące CPU, jak w prawdziwym sysfs
+    # entries that are not CPUs, as in a real sysfs
     (root / "cpufreq").mkdir()
     (root / "online").write_text("0-%d\n" % (sum(len(c) for c in cores) - 1))
     for core_id, threads in enumerate(cores):

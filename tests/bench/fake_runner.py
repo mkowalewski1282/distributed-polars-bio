@@ -1,5 +1,5 @@
-"""Fałszywy runner do testów orkiestratora (tests/bench/test_orchestrator.py): zachowanie
-sterowane argumentami, wynik w protokole 8.3."""
+"""Fake runner for the orchestrator tests (tests/bench/test_orchestrator.py): behaviour
+controlled by arguments, result reported in the runner result protocol."""
 
 import argparse
 import json

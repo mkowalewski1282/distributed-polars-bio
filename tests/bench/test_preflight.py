@@ -1,6 +1,5 @@
-"""Sprawdzenia przed serią (plan 3b-2, Zadanie 19; przegląd 3a, pozycja 4; etap 4: układ CPU
-z topologii): czytelna topologia, miejsce co najmniej na P = 1 i przebieg kontrolny, za duże P
-pominięte z ostrzeżeniem; taskset i pysail, pusty swap."""
+"""Pre-series checks (CPU layout from the topology): readable topology, room for at least
+P = 1 and the control run, too-large P skipped with a warning; taskset and pysail, empty swap."""
 
 from __future__ import annotations
 
@@ -24,15 +23,15 @@ def layout(tmp_path, cores):
 
 
 def test_check_cpus_returns_skipped_parallelism(tmp_path):
-    """3 rdzenie SMT: rdzeń systemowy + 4 CPU, więc P = 8 zostanie pominięte, reszta mieści się."""
+    """3 SMT cores: system core + 4 CPUs, so P = 8 is skipped and the rest fits."""
     small = layout(tmp_path, [[0, 1], [2, 3], [4, 5]])
     assert preflight.check_cpus(config([1, 2, 4, 8]), small) == [8]
     assert preflight.check_cpus(config([1, 2, 4]), small) == []
 
 
 def test_check_cpus_fails_without_control_cpus(tmp_path):
-    """Jeden CPU poza rdzeniem systemowym: P = 1 by się zmieściło, ale przebieg kontrolny
-    (2 wątki) nie ma gdzie działać."""
+    """One CPU outside the system core: P = 1 would fit, but the control run
+    (2 threads) has nowhere to run."""
     with pytest.raises(ConfigError, match="control run needs 2 CPUs"):
         preflight.check_cpus(config([1]), layout(tmp_path, [[0], [1]]))
 
@@ -81,5 +80,5 @@ def test_used_swap_is_rejected():
 
 
 def test_this_machine_fits_the_smallest_series():
-    """Na maszynie testów (laptop albo CI) mieszczą się P = 1 i przebieg kontrolny."""
+    """On the test machine (laptop or CI), P = 1 and the control run fit."""
     assert preflight.check_cpus(config([1]), preflight.cpu_layout()) == []
