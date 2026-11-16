@@ -1,8 +1,8 @@
 """
-Formalne testy poprawności dla coverage i subtract (Faza C) — Ballista
-(lokalnie).
+Formal correctness tests for coverage and subtract on Ballista
+(local).
 
-Uruchomienie: pytest tests/test_coverage_subtract_correctness.py -v
+Run: pytest tests/test_coverage_subtract_correctness.py -v
 """
 
 from __future__ import annotations

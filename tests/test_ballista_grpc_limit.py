@@ -1,11 +1,11 @@
-"""Strażnik broadcastu (plan 3b-2, Zadanie 14; specyfikacja 6.2): gdy ładunki z tabelą rozsyłaną
-nie mieszczą się w limicie wiadomości gRPC, zapytanie kończy się czytelnym błędem — zamiast
-wisieć do timeoutu, jak robi to Ballista w trybie push (53 i, sprawdzone, 55: uznaje executor za
-utraconego i ponawia).
+"""Broadcast guard: when payloads carrying the broadcast table do not fit in the gRPC message
+limit, the query ends with a readable error instead of hanging until the timeout, as Ballista
+does in push mode (53 and, as verified, 55: it treats the executor as lost and retries).
 
-Tabela rozsyłana w coverage to prawa strona (df2): 1,2 mln przedziałów ≈ 23 MiB w Arrow IPC
-(string + int32; po odczycie w Ballisście Utf8View/Int64 ≈ 37 MiB), czyli ponad domyślne 16 MiB
-Ballisty także bez marginesu 2 — test dodatni dowodzi więc, że podniesiony limit 512 MiB dociera do transportu. Wymaga binarek debug (brak = BŁĄD, jak w P0)."""
+The broadcast table in coverage is the right side (df2): 1.2 million intervals are about 23 MiB in
+Arrow IPC (string + int32; about 37 MiB after reading in Ballista as Utf8View/Int64), i.e. above
+Ballista's default 16 MiB even without a safety margin of 2. The positive test therefore shows that
+the raised 512 MiB limit reaches the transport. Requires the debug binaries (missing = ERROR)."""
 
 from __future__ import annotations
 
@@ -78,4 +78,4 @@ def test_same_broadcast_fits_under_the_default_limit(pair, tmp_path):
     finally:
         engine.stop()
     assert r.returncode == 0, r.stderr[-3000:]
-    assert '"rows": 12' in r.stdout  # coverage: wiersz na każdy przedział lewej tabeli (FIXTURE_A)
+    assert '"rows": 12' in r.stdout  # coverage: one row per interval of the left table (FIXTURE_A)

@@ -1,7 +1,7 @@
 """
-Formalne testy poprawności dla operacji nearest (Faza C) — Ballista (lokalnie).
+Formal correctness tests for the nearest operation on Ballista (local).
 
-Uruchomienie: pytest tests/test_nearest_correctness.py -v
+Run: pytest tests/test_nearest_correctness.py -v
 """
 
 from __future__ import annotations
@@ -40,11 +40,11 @@ NEAREST_OUTPUT_CSV = BALLISTA_DIR / "output" / "nearest_local_result.csv"
 )
 def test_ballista_local_nearest_matches_oracle():
     """
-    Porównuje ODLEGŁOŚCI (name_a -> distance), nie wybranych partnerów:
-    reguły rozstrzygania remisów (kilku kandydatów w tej samej odległości)
-    nie są udokumentowane w żadnym z silników, więc porównanie odporne na
-    remisy jest bezpieczniejsze. Liczba wierszy = liczba przedziałów A
-    pilnuje orientacji (wiersz na każdy przedział A, jak pb.nearest).
+    Compares DISTANCES (name_a -> distance), not the chosen partners:
+    the tie-breaking rules (several candidates at the same distance)
+    are not documented for either engine, so a tie-robust comparison
+    is safer. Row count = number of intervals in A, which
+    guards the orientation (one row per interval of A, like pb.nearest).
     """
     result = subprocess.run(
         [str(NEAREST_BINARY)], cwd=BALLISTA_DIR, capture_output=True, text=True, timeout=30
@@ -52,9 +52,9 @@ def test_ballista_local_nearest_matches_oracle():
     assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
     assert NEAREST_OUTPUT_CSV.exists()
 
-    # Konwencja dostawcy: wynik ma wiersz na każdy wiersz PRAWEJ tabeli (odpytywanej), z
-    # najbliższym sąsiadem z lewej (indeksowanej). Żeby odpowiadało pb.nearest(A, B),
-    # A jest prawą tabelą — nazwy A są w `right_name`, wybrani sąsiedzi z B w `left_name`.
+    # Provider convention: the result has a row for each row of the RIGHT (queried) table, with
+    # the nearest neighbour from the left (indexed) one. To match pb.nearest(A, B), A is the
+    # right table: the names from A are in `right_name`, the chosen neighbours from B in `left_name`.
     df = pd.read_csv(NEAREST_OUTPUT_CSV)
     assert len(df) == len(INTERVALS_A), "nearest must return one row per interval of A"
     actual_distances = dict(zip(df["right_name"].tolist(), df["distance"].tolist()))
@@ -69,15 +69,14 @@ def test_ballista_local_nearest_matches_oracle():
 
 def test_ballista_and_pb_nearest_pick_same_neighbours():
     """
-    KOREKTA (plan 2): w Fazie C zapisano znalezisko „przy remisie pb.nearest()
-    wybiera B1, Ballista B2” — i test wymagał tej różnicy. Okazało się, że było
-    to artefaktem odwróconej orientacji: nearest() z datafusion-bio-function-ranges
-    zwraca wiersz na każdy wiersz PRAWEJ tabeli, więc wołanie nearest(A, B)
-    liczyło „dla każdego B najbliższy A”, a nie to, co pb.nearest(A, B).
-    Przy poprawnej orientacji (A jako prawa) oba silniki wybierają na tych
-    danych DOKŁADNIE tych samych sąsiadów, także przy remisie A2 (B1 i B2 w
-    odległości 0). Jeśli ten test zacznie failować, reguły remisów silników
-    się rozeszły — wtedy porównania i tak pozostają poprawne (odległości).
+    An earlier version recorded the finding "on a tie pb.nearest() picks B1, Ballista
+    picks B2", and the test required that difference. That turned out to be an artefact of
+    a reversed orientation: nearest() from datafusion-bio-function-ranges returns a row
+    for each row of the RIGHT table, so calling nearest(A, B) computed "the nearest A for
+    each B", not what pb.nearest(A, B) does. With the correct orientation (A as the right
+    table) both engines pick EXACTLY the same neighbours on this data, also on the tie of
+    A2 (B1 and B2 at distance 0). If this test starts failing, the engines' tie rules
+    have diverged; the comparisons remain correct anyway (distances).
     """
     result = subprocess.run(
         [str(NEAREST_BINARY)], cwd=BALLISTA_DIR, capture_output=True, text=True, timeout=30

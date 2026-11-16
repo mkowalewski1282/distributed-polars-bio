@@ -1,8 +1,9 @@
-"""Plan 3a, Zadanie 3: protokół runnera Ballisty (specyfikacja 8.3) — czas, suma kontrolna
-zgodna z bench/checksum.py (8.4), szczyt pamięci, liczba partycji z BIO_TARGET_PARTITIONS —
-oraz zgodność implementacji sumy w Rust z Pythonem na wspólnych wartościach wzorcowych.
+"""The protocol of the Ballista runner: time, a checksum that agrees with
+bench/checksum.py, peak memory, the number of partitions from BIO_TARGET_PARTITIONS,
+plus agreement of the Rust checksum implementation with the Python one on shared
+golden values.
 
-Brak binarki to BŁĄD (jak w P0). Budowanie:
+A missing binary is an ERROR. Build:
 cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bins
 """
 
@@ -72,7 +73,7 @@ def test_report_follows_protocol_and_matches_oracle(op, parquet_dirs, parquet_ex
     assert got["t_total_s"] > 0 and set(got["phases"]) == {"first_batch_s"}
     assert set(got["extra"]) == {"target_partitions", "checksum_s"}
     assert got["extra"]["target_partitions"] == 4
-    # Suma kontrolna liczona PO zatrzymaniu zegara (specyfikacja 3b-2, 4.1).
+    # The checksum is computed AFTER the clock is stopped.
     assert got["extra"]["checksum_s"] > 0
     assert 0 < got["phases"]["first_batch_s"] <= got["t_total_s"]
     assert got["peak_rss_bytes"] > 10 * 2**20

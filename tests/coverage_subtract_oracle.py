@@ -1,4 +1,4 @@
-"""Golden oracle dla operacji coverage i subtract."""
+"""Golden oracle for the coverage and subtract operations."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def reference_coverage(
     reads: list[tuple[str, int, int, str]],
     targets: list[tuple[str, int, int, str]],
 ) -> set[tuple[str, int, int, int]]:
-    """(chrom, start, end, coverage) dla każdego targetu."""
+    """(chrom, start, end, coverage) for each target."""
     if not reads or not targets:
         return set()
 
@@ -54,7 +54,7 @@ def reference_subtract(
     left: list[tuple[str, int, int, str]],
     right: list[tuple[str, int, int, str]],
 ) -> set[tuple[str, int, int]]:
-    """(chrom, start, end) dla fragmentów left minus right."""
+    """(chrom, start, end) of the fragments of left minus right."""
     if not left:
         return set()
 

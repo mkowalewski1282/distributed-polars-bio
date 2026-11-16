@@ -1,11 +1,11 @@
-"""Pula kontekstów polars-bio — rozwiązanie pomostowe (plan 3b-2, Zadanie 8; specyfikacja 5.1).
+"""A pool of polars-bio contexts: a bridging solution.
 
-Podmiana polars_bio.range_op.range_operation (sail_genomics.pb_context) ma dawać wyniki identyczne
-z publicznym pb.*(), także przy równoczesnych wywołaniach w wątkach bez blokady. Test pilnuje też
-wnętrza polars-bio: gdy nowa wersja zmieni sposób wywołania range_operation, wyniki się rozjadą.
+Replacing polars_bio.range_op.range_operation (sail_genomics.pb_context) must give results identical
+to the public pb.*(), also for concurrent calls from threads without a lock. The test also guards
+polars-bio internals: when a new version changes how range_operation is called, the results diverge.
 
-Bez podmiany równoczesne wywołania kończą się błędem „The table s1 already exists” (sonda 3b-2) —
-tego nie testujemy wprost, bo wyścig na małych danych bywa niewidoczny."""
+Without the replacement, concurrent calls fail with "The table s1 already exists" (seen in a probe);
+we do not test that directly, because a race on small data can be invisible."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ LEFT, RIGHT = _by_chrom(FIXTURE_A), _by_chrom(FIXTURE_B)
 
 
 def _call(op: str, chrom: str) -> pl.DataFrame:
-    """Jedna operacja polars-bio na jednym chromosomie — jak funkcja Saila na jednej grupie."""
+    """One polars-bio operation on one chromosome, like a Sail function on one group."""
     left = LEFT[chrom]
     right = RIGHT[chrom] if chrom in RIGHT else _zero_based(pl.DataFrame(schema=SCHEMA))
     if op in UNARY_OPS:
@@ -55,11 +55,11 @@ def _call(op: str, chrom: str) -> pl.DataFrame:
 
 @pytest.fixture
 def bridge():
-    """Moduł pomostu z WYŁĄCZONĄ podmianą — test włącza ją jawnie; po teście przywracany oryginał,
-    żeby pozostałe testy w tym procesie liczyły na globalnym kontekście polars-bio."""
+    """The bridge module with the replacement DISABLED; a test enables it explicitly. After the test the
+    original is restored, so that the remaining tests in this process compute on the global polars-bio context."""
     from sail_genomics import pb_context as sail_pb_context
 
-    sail_pb_context.uninstall()  # na wszelki wypadek: start bez podmiany
+    sail_pb_context.uninstall()  # just in case: start without the replacement
     yield sail_pb_context
     sail_pb_context.uninstall()
 
@@ -75,7 +75,7 @@ def test_threads_without_lock_match_plain_polars_bio(op, bridge):
             results = list(pool.map(lambda chrom: (chrom, _call(op, chrom)), jobs))
         mismatched = sorted({chrom for chrom, got in results if not got.equals(expected[chrom])})
         assert not mismatched, f"{op}: results differ for {mismatched}"
-    # Nigdy więcej kontekstów niż równoczesnych wywołań (6 wątków roboczych).
+    # Never more contexts than concurrent calls (6 worker threads).
     assert bridge.contexts_created() - before <= 6
 
 
@@ -89,8 +89,8 @@ def test_install_is_idempotent_and_uninstall_restores_polars_bio(bridge):
 
 
 def test_sequential_calls_from_new_threads_reuse_one_context(bridge):
-    """Jak w Sailu: kolejne wywołania, każde z nowego, krótkotrwałego wątku — pula ma utworzyć
-    najwyżej jeden kontekst (implementacja na wątek utworzyłaby 10)."""
+    """As in Sail: successive calls, each from a new, short-lived thread; the pool must create
+    at most one context (a per-thread implementation would create 10)."""
     chrom = next(iter(LEFT))
     expected = _call("overlap", chrom)
     bridge.install()
@@ -105,11 +105,11 @@ def test_sequential_calls_from_new_threads_reuse_one_context(bridge):
 
 
 def test_context_after_failed_call_does_not_return_to_pool(bridge, monkeypatch):
-    """Nieudane wywołanie może zostawić zarejestrowane s1/s2 — jego kontekst ma zostać wyrzucony."""
+    """A failed call may leave s1/s2 registered; its context must be discarded."""
     chrom = next(iter(LEFT))
     expected = _call("overlap", chrom)
     bridge.install()
-    while True:  # pusta pula: kontekst nieudanego wywołania jest wtedy jedynym kandydatem
+    while True:  # empty pool: the failed call's context is then the only candidate
         try:
             bridge._pool.get_nowait()
         except Exception:
@@ -131,7 +131,7 @@ def test_context_after_failed_call_does_not_return_to_pool(bridge, monkeypatch):
 
 
 def test_install_is_explicit_and_idempotent():
-    """Import nie włącza podmiany; install() włącza ją w świeżym procesie, a drugie wywołanie nic nie zmienia."""
+    """Importing does not enable the replacement; install() enables it in a fresh process, and a second call changes nothing."""
     code = (
         "import polars_bio.range_op as r; from sail_genomics import pb_context as s; "
         "before = s.installed(); s.install(); s.install(); "
@@ -143,7 +143,7 @@ def test_install_is_explicit_and_idempotent():
 
 
 def test_evaluate_installs_the_bridge():
-    """Ścieżka serwera: evaluate() ma sam włączyć pulę w świeżym procesie (bez jawnego install())."""
+    """Server path: evaluate() must enable the pool itself in a fresh process (without an explicit install())."""
     code = (
         "import pyarrow as pa; "
         "from sail_genomics import arrow, pb_context as s; "

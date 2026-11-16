@@ -1,21 +1,21 @@
 """
-Faza H: testy poprawności operacji wykonanych W PEŁNI ROZPROSZONE w Ballistrze
-(binarka `dist_ops`), porównane z wyrocznią — lokalnym polars-bio.
+Correctness tests of operations executed FULLY DISTRIBUTED in Ballista
+(the `dist_ops` binary), compared with the oracle, a local polars-bio.
 
-Różnica względem tests/test_*_correctness.py: tamte testy sprawdzają operacje
-liczone LOKALNIE (zwykły DFSessionContext, binarki `*_local`). Tutaj każda
-operacja przechodzi przez prawdziwy klaster Ballista (scheduler + executor),
-z serializacją planu logicznego I fizycznego.
+Difference from tests/test_*_correctness.py: those tests check operations
+computed LOCALLY (a plain DFSessionContext, the `*_local` binaries). Here every
+operation goes through a real Ballista cluster (scheduler + executor), with
+serialization of both the logical AND the physical plan.
 
-Wyrocznie są REUŻYTE bez zmian z testów lokalnych — dzięki temu porównujemy się
-z dokładnie tym samym punktem odniesienia.
+The oracles are REUSED unchanged from the local tests, so we compare against
+exactly the same reference point.
 
-Uzupełnienie: tests/test_ballista_distribution_evidence.py sprawdza, że wynik
-powstał faktycznie rozproszony (asercje na EXPLAIN ANALYZE), a nie tylko że
-jest poprawny.
+Complement: tests/test_ballista_distribution_evidence.py checks that the result
+was actually produced in a distributed way (assertions on EXPLAIN ANALYZE), not
+just that it is correct.
 
-Uruchomienie: pytest tests/test_ballista_distributed_ops.py -v
-UWAGA: import polars_bio trwa ~4.5 min — nie przerywać przedwcześnie.
+Run: pytest tests/test_ballista_distributed_ops.py -v
+NOTE: importing polars_bio takes ~4.5 min; do not interrupt it prematurely.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ DIST_BINARY = BALLISTA_DIR / "target" / "debug" / "dist_ops"
 OUTPUT_DIR = BALLISTA_DIR / "output"
 DATA_DIR = BALLISTA_DIR / "data"
 
-# Kanoniczny zestaw danych, wspólny dla WSZYSTKICH testów i obu silników.
+# Canonical dataset, shared by ALL tests and both engines.
 INTERVALS_A = [
     ("chr1", 100, 200, "gene_A1"),
     ("chr1", 150, 300, "gene_A2"),
@@ -88,16 +88,16 @@ def _read_parts(subdir: str) -> set[tuple[str, int, int, str]]:
 
 def test_part_files_union_equals_canonical_intervals():
     """
-    Strażnik przeciw cichemu rozjazdowi danych.
+    Guard against a silent divergence of the data.
 
-    Wariant rozproszony czyta z katalogów data/parts_a i data/parts_b (rozbicie
-    na wiele plików jest KONIECZNE, żeby stage źródłowy miał >1 partycji — bez
-    tego Ballista może w ogóle nie wstawić shuffle). Wyrocznia liczy natomiast
-    na listach INTERVALS_A/INTERVALS_B zaszytych w Pythonie.
+    The distributed variant reads from the data/parts_a and data/parts_b directories
+    (splitting into multiple files is NECESSARY so that the source stage has >1
+    partitions; without it Ballista may not insert a shuffle at all). The oracle,
+    in contrast, computes on the INTERVALS_A/INTERVALS_B lists embedded in Python.
 
-    Gdyby te dwa zestawy się rozjechały, testy poprawności porównywałyby wynik
-    rozproszony z wyrocznią policzoną na INNYCH danych — i mogłyby przechodzić
-    lub padać z zupełnie mylącym powodem.
+    If these two sets diverged, the correctness tests would compare the distributed
+    result with an oracle computed on DIFFERENT data, and could pass or fail for a
+    completely misleading reason.
     """
     assert _read_parts("parts_a") == set(INTERVALS_A), "data/parts_a != INTERVALS_A"
     assert _read_parts("parts_b") == set(INTERVALS_B), "data/parts_b != INTERVALS_B"
@@ -105,15 +105,15 @@ def test_part_files_union_equals_canonical_intervals():
 
 def test_ballista_distributed_merge_matches_oracle():
     """
-    Merge w pełni rozproszony: hash-shuffle po chromosomie + MergeExec na
-    executorze, wynik porównany z lokalnym pb.merge().
+    Fully distributed merge: hash shuffle by chromosome + MergeExec on the
+    executor, with the result compared with the local pb.merge().
 
-    Ten test jest jednocześnie TESTEM DYSTRYBUCJI, nie tylko poprawności:
-    nakładające się gene_A1=[100,200) i gene_A2=[150,300) leżą w RÓŻNYCH plikach
-    wejściowych (a_part1.csv / a_part2.csv), więc trafiają do różnych partycji
-    źródłowych. Poprawny wynik [100,300) może powstać TYLKO wtedy, gdy hash-shuffle
-    po `chrom` faktycznie przeniósł je do jednej partycji. Gdyby dystrybucja
-    przestała działać, dostalibyśmy dwa osobne interwały zamiast jednego.
+    This test is also a DISTRIBUTION TEST, not only a correctness test:
+    the overlapping gene_A1=[100,200) and gene_A2=[150,300) lie in DIFFERENT
+    input files (a_part1.csv / a_part2.csv), so they land in different source
+    partitions. The correct result [100,300) can arise ONLY if the hash shuffle
+    by `chrom` actually moved them into one partition. If distribution stopped
+    working, we would get two separate intervals instead of one.
     """
     _run_dist("merge")
     out = OUTPUT_DIR / "dist_merge_result.csv"
@@ -136,13 +136,13 @@ def test_ballista_distributed_merge_matches_oracle():
 
 def test_ballista_distributed_subtract_matches_oracle():
     """
-    Subtract w pełni rozproszony: DWUSTRONNY hash-shuffle po chromosomie.
+    Fully distributed subtract: a TWO-SIDED hash shuffle by chromosome.
 
-    To najsilniejszy demonstrator dystrybucji w tym zestawie — SubtractExec jest
-    węzłem binarnym, a `execute(partition)` sięga po TĘ SAMĄ partycję z lewej
-    i z prawej strony. Poprawny wynik wymaga więc, żeby obie strony zostały
-    ko-partycjonowane po `chrom` na tę samą liczbę partycji. Obie tabele są
-    rozbite na po 2 pliki, więc obie mają równoległy stage źródłowy.
+    This is the strongest demonstration of distribution in this suite: SubtractExec
+    is a binary node, and `execute(partition)` reaches for the SAME partition on the
+    left and on the right. A correct result therefore requires both sides to be
+    co-partitioned by `chrom` into the same number of partitions. Both tables are
+    split into 2 files each, so both have a parallel source stage.
     """
     _run_dist("subtract")
     out = OUTPUT_DIR / "dist_subtract_result.csv"
@@ -161,24 +161,24 @@ def test_ballista_distributed_subtract_matches_oracle():
 
 def test_ballista_distributed_nearest_matches_oracle_distances():
     """
-    Nearest w pełni rozproszony, wzorzec BROADCAST: lewa (indeksowana) tabela
-    jedzie w całości w ładunku planu fizycznego (Arrow IPC), a równoległość
-    bierze się z partycjonowania prawej strony.
+    Fully distributed nearest, BROADCAST pattern: the left (indexed) table
+    travels whole in the physical-plan payload (Arrow IPC), and parallelism
+    comes from partitioning the right side.
 
-    Porównujemy ODLEGŁOŚCI, nie konkretne pary — to znane, udokumentowane
-    znalezisko z Fazy C: natywny nearest() z bio-function-ranges i pb.nearest()
-    inaczej rozstrzygają remisy (gdy kilku kandydatów ma tę samą, zerową
-    odległość). Obie odpowiedzi są poprawne co do dystansu.
-    Patrz tests/test_nearest_correctness.py.
+    We compare DISTANCES, not specific pairs. This is a known, documented
+    finding: the native nearest() from bio-function-ranges and pb.nearest()
+    break ties differently (when several candidates have the same, zero,
+    distance). Both answers are correct as far as the distance goes.
+    See tests/test_nearest_correctness.py.
     """
     _run_dist("nearest")
     out = OUTPUT_DIR / "dist_nearest_result.csv"
     assert out.exists(), f"not found: {out}"
 
     df = pd.read_csv(out)
-    # Konwencja dostawcy: wynik ma wiersz na każdy wiersz PRAWEJ tabeli (odpytywanej), z
-    # najbliższym sąsiadem z lewej (indeksowanej). Żeby odpowiadało pb.nearest(A, B),
-    # A jest prawą tabelą — nazwy A są w `right_name`, wybrani sąsiedzi z B w `left_name`.
+    # Provider convention: the result has a row for each row of the RIGHT (queried) table, with
+    # the nearest neighbour from the left (indexed) one. To match pb.nearest(A, B), A is the
+    # right table: the names from A are in `right_name`, the chosen neighbours from B in `left_name`.
     assert len(df) == len(INTERVALS_A), "nearest must return one row per interval of A"
     actual = dict(zip(df["right_name"].tolist(), df["distance"].tolist()))
     expected = reference_nearest_min_distances(INTERVALS_A, INTERVALS_B)
@@ -197,18 +197,18 @@ def test_ballista_distributed_nearest_matches_oracle_distances():
 
 def test_distributed_nearest_agrees_with_local_nearest():
     """
-    Warunek OSTRZEJSZY niż zgodność odległości: rozproszony nearest musi wybrać
-    DOKŁADNIE tych samych partnerów co lokalny `nearest_local` — ten sam silnik,
-    ta sama funkcja build_nearest_indexes, ten sam left_batch (tyle że po
-    round-tripie przez Arrow IPC).
+    A STRICTER condition than distance agreement: the distributed nearest must pick
+    EXACTLY the same partners as the local `nearest_local`: the same engine, the
+    same build_nearest_indexes function, the same left_batch (only after a round
+    trip through Arrow IPC).
 
-    To jest właściwy test broadcastu: gdyby na executor trafiła tylko CZĘŚĆ
-    lewej tabeli, odległości mogłyby wyjść zawyżone, a wybór partnera inny —
-    a porównanie samych odległości z pb tego by nie wyłapało, bo pb liczy na
-    pełnych danych po swojej stronie.
+    This is the actual broadcast test: if only PART of the left table reached the
+    executor, the distances could come out inflated and the partner choice
+    different, and comparing just the distances with pb would not catch that,
+    because pb computes on the full data on its side.
     """
-    # Wynik lokalny liczony tutaj, a nie brany z pliku innego testu — w CI kolejność testów
-    # pomijała ten test (przegląd 3b-1).
+    # The local result is computed here rather than taken from another test's file: in CI the
+    # test order skipped that test.
     local_binary = BALLISTA_DIR / "target" / "debug" / "nearest_local"
     assert local_binary.exists(), "build it: cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bins"
     local = subprocess.run([str(local_binary)], cwd=BALLISTA_DIR, capture_output=True, text=True, timeout=60)
@@ -234,14 +234,14 @@ def test_distributed_nearest_agrees_with_local_nearest():
 
 def test_ballista_distributed_coverage_matches_oracle():
     """
-    Coverage w pełni rozproszony — jedyna operacja wymagająca WŁASNEGO
-    węzła-nośnika (DistCoverageExec), bo CountOverlapsProvider::scan() gubi
-    dane lewej tabeli, nazwy jej kolumn i flagę coverage (patrz coverage_node.rs).
+    Fully distributed coverage: the only operation that needs its OWN carrier
+    node (DistCoverageExec), because CountOverlapsProvider::scan() loses the left
+    table's data, its column names and the coverage flag (see coverage_node.rs).
 
-    Uwaga na ODWRÓCONĄ KONWENCJĘ ARGUMENTÓW, udokumentowaną w Fazie C:
-    pb.coverage(a, b) raportuje pokrycie interwałów `a` przez `b`, a SQL-owe
-    coverage('reads','targets') odwrotnie — dlatego dist_coverage jest wołane
-    z intervals_b jako 'reads' i intervals_a jako 'targets'.
+    Mind the REVERSED ARGUMENT CONVENTION: pb.coverage(a, b) reports the coverage
+    of intervals `a` by `b`, while the SQL coverage('reads','targets') does the
+    opposite, so dist_coverage is called with intervals_b as 'reads' and
+    intervals_a as 'targets'.
     """
     _run_dist("coverage")
     out = OUTPUT_DIR / "dist_coverage_result.csv"

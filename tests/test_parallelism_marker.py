@@ -1,6 +1,6 @@
-"""Znacznik parallelism(p) (plan 3b-1, etap 7; etap 4: semantyka P): test potrzebujący P CPU poza
-rdzeniem systemowym jest pomijany, gdy układ CPU maszyny ich nie ma (bench/cpus.py) albo gdy
-topologii nie da się odczytać — np. runner CI z 4 vCPU (2 rdzenie SMT) mieści tylko P ≤ 2."""
+"""The parallelism(p) marker: a test that needs P CPUs outside the system core is skipped when
+the machine's CPU layout does not have them (bench/cpus.py) or when the topology cannot be
+read; e.g. a CI runner with 4 vCPUs (2 SMT cores) fits only P <= 2."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from tests.bench.fake_sysfs import make
 
 
 class _Item:
-    """Minimalny zamiennik pytest.Item — hook używa tylko get_closest_marker."""
+    """A minimal stand-in for pytest.Item; the hook uses only get_closest_marker."""
 
     def __init__(self, mark):
         self._mark = mark
@@ -27,7 +27,7 @@ def _layout(monkeypatch, tmp_path, cores) -> None:
 
 
 def test_parallelism_beyond_the_layout_is_skipped(monkeypatch, tmp_path):
-    _layout(monkeypatch, tmp_path, [[0, 1], [2, 3]])  # 4 vCPU: rdzeń systemowy + 2 CPU
+    _layout(monkeypatch, tmp_path, [[0, 1], [2, 3]])  # 4 vCPUs: the system core + 2 CPUs
     with pytest.raises(pytest.skip.Exception, match=r"P = 4 .*2 CPUs outside the system core"):
         conftest.pytest_runtest_setup(_Item(pytest.mark.parallelism(4).mark))
 

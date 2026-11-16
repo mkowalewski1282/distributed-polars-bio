@@ -1,8 +1,8 @@
-"""Wyrocznia dla danych w układzie databio-8p: polars-bio lokalnie, wynik
-w schemacie znormalizowanym (bench/ops.py, specyfikacja 8.4).
+"""Oracle for data in the databio-8p layout: local polars-bio, result in the
+normalized schema (bench/ops.py).
 
-Uzupełnia wyrocznie z tests/*_oracle.py, które działają na zbiorze pięciu
-przedziałów z kolumną `name`; ta działa na dowolnych plikach Parquet.
+Complements the oracles in tests/*_oracle.py, which work on a set of five
+intervals with a `name` column; this one works on arbitrary Parquet files.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from bench.ops import normalize_polars_bio
 
 
 def _reset_pb_context() -> None:
-    """polars-bio trzyma globalny kontekst z tabelami s1/s2 — jak w pozostałych wyroczniach."""
+    """polars-bio keeps a global context with tables s1/s2, as in the other oracles."""
     from polars_bio.context import ctx as _pb_ctx
 
     for table in ["s1", "s2"]:
@@ -28,7 +28,7 @@ def _reset_pb_context() -> None:
 
 
 def read_intervals(path: Path) -> pl.DataFrame:
-    """Plik Parquet albo katalog plików Parquet -> DataFrame oznaczony jako 0-based."""
+    """Parquet file or directory of Parquet files -> DataFrame marked as 0-based."""
     path = Path(path)
     df = pl.read_parquet(str(path / "*.parquet") if path.is_dir() else str(path))
     df.config_meta.set(coordinate_system_zero_based=True)
@@ -41,7 +41,7 @@ def reference(
     right: pl.DataFrame | None,
     cols: tuple[str, str, str] = COLUMNS,
 ) -> pl.DataFrame:
-    """Wynik polars-bio dla operacji, w schemacie znormalizowanym."""
+    """polars-bio result for an operation, in the normalized schema."""
     c = list(cols)
     _reset_pb_context()
     if op == "merge":

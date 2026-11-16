@@ -1,5 +1,5 @@
-"""Ścieżka Arrow w Sailu (plan 3b-2, Zadanie 9; specyfikacja 5.2): groupBy/cogroup(...).applyInArrow
-z polars-bio w trybie „pula kontekstów” — wynik zgodny z polars-bio, plik faz."""
+"""The Arrow path in Sail: groupBy/cogroup(...).applyInArrow with polars-bio in the
+"context pool" mode; the result agrees with polars-bio, plus the phase file."""
 
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ from bench.procutil import free_port, wait_for_port
 from bench.runners.sail_server import sail_env
 
 REPO = Path(__file__).resolve().parent.parent
-#: Chromosomy lewej strony zbioru testowego (tests/parquet_fixture.py): chr1, chr2, chr10, chrA —
-#: tylu wywołań polars-bio oczekujemy (chrB jest tylko po prawej, więc grupa ma pustą lewą stronę).
+#: Left-side chromosomes of the test dataset (tests/parquet_fixture.py): chr1, chr2, chr10, chrA;
+#: this many polars-bio calls are expected (chrB is only on the right, so its group has an empty left side).
 LEFT_CHROMOSOMES = 4
 
 

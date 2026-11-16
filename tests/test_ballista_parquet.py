@@ -1,16 +1,15 @@
-"""Plan 2, Zadanie 4: Ballista czyta dane w układzie databio-8p (katalog plików
-Parquet, contig: string, pos_start/pos_end: int32) przez runner `bench_client`.
+"""Ballista reads data in the databio-8p layout (a directory of Parquet files,
+contig: string, pos_start/pos_end: int32) through the `bench_client` runner.
 
-Wynik każdej z pięciu operacji ma być zgodny z polars-bio na tych samych
-plikach (multizbiór wierszy w schemacie znormalizowanym, specyfikacja 8.4) —
-w trybie standalone i na klastrze z osobnych procesów (P0). Zbiór testowy
-(tests/parquet_fixture.py) zawiera przypadki, na których silniki mogą się
-rozjechać: chromosom tylko po jednej stronie, duplikat, przedziały stykające
-się, chr10 obok chr2.
+The result of each of the five operations must agree with polars-bio on the same
+files (a row multiset in the normalized schema), both in standalone mode and on a
+cluster of separate processes. The test dataset (tests/parquet_fixture.py)
+contains cases on which the engines may diverge: a chromosome on one side only,
+a duplicate, touching intervals, chr10 next to chr2.
 
-Brak binarki to BŁĄD, nie pominięcie (jak w P0). Budowanie:
+A missing binary is an ERROR, not a skip. Build:
 cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bin bench_client --bin ballista_node
-Uruchomienie: pytest tests/test_ballista_parquet.py -v
+Run: pytest tests/test_ballista_parquet.py -v
 """
 
 from __future__ import annotations
@@ -58,7 +57,7 @@ def check_result(op: str, r: subprocess.CompletedProcess, out: Path, expected) -
     report = json.loads(lines[0])
     df = pl.read_parquet(out)
     assert report["rows"] == df.height
-    # Suma kontrolna z runnera = suma kontrolna wyniku wyroczni (specyfikacja 8.4).
+    # The runner's checksum = the checksum of the oracle result.
     assert report["checksum"] == format_checksum(checksum_rows(op, expected.elements()))
     assert tuple(df.columns) == OUTPUT_COLUMNS[op]
     actual = row_multiset(op, df)
@@ -103,7 +102,7 @@ def test_bench_client_matches_polars_bio_on_parquet(op, parquet_dirs, parquet_ex
 
 
 def test_bench_client_reads_csv_with_reserved_column_names(tmp_path):
-    """Dotychczasowe dane CSV — kolumny chrom, start, end (`end` to słowo kluczowe SQL)."""
+    """The existing CSV data: columns chrom, start, end (`end` is an SQL keyword)."""
     from tests.merge_oracle import reference_merge_intervals
     from tests.test_ballista_distributed_ops import INTERVALS_A
 

@@ -1,5 +1,5 @@
-"""Plan 3a, Zadanie 5: Sail jako osobny proces serwera (local-cluster, P workerów) i runner-
--klient (specyfikacja 8.3): wynik zgodny z polars-bio, protokół jak w bench_client."""
+"""Sail as a separate server process (local-cluster, P workers) and a client runner:
+the result agrees with polars-bio, and the protocol is the same as in bench_client."""
 
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ def test_sail_env_for_parallelism_3():
     }
 
 
-#: Fazy i dodatki linii JSON runnera (specyfikacja 3b-2, 5.5).
+#: Phases and extras of the runner's JSON line.
 PHASE_KEYS = {"first_batch_s", "pb_s"}
 EXTRA_KEYS = {"checksum_s", "udf_groups"}
 
@@ -84,7 +84,7 @@ def test_runner_matches_polars_bio(op, server, parquet_dirs, parquet_expected):
     assert set(got["phases"]) == PHASE_KEYS and set(got["extra"]) == EXTRA_KEYS
     assert got["t_total_s"] > 0 and got["extra"]["checksum_s"] > 0
     assert 0 < got["phases"]["first_batch_s"] <= got["t_total_s"]
-    # chr1, chr2, chr10, chrA — chromosomy z niepustą lewą stroną
+    # chr1, chr2, chr10, chrA: chromosomes with a non-empty left side
     assert got["extra"]["udf_groups"] == 4 and got["phases"]["pb_s"] > 0
     assert got["peak_rss_bytes"] > 10 * 2**20
 
@@ -98,13 +98,13 @@ def test_empty_result_reports_zero_rows(server, tmp_path):
 
 
 def test_server_keeps_exactly_n_workers(server, parquet_dirs):
-    """Przy 2 slotach Sail dokładałby workery ponad liczbę zadaną (sonda 01.10.2026); tu P = 2.
+    """With 2 slots Sail would add workers beyond the requested number (probe of 2026-10-01); here P = 2.
 
-    Sail tworzy driver i pulę workerów dla KAŻDEJ sesji Spark Connect (przy pierwszym RPC
-    sesji — w runnerze rozgrzewka `warm_up` przed zegarem) i zamyka je razem z sesją, więc
-    numeracja workerów zaczyna się w każdej sesji od 1. Sprawdzana jest sesja otwarta przez ten test: pierwsza
-    sesja na świeżym serwerze dostała raz jednego workera więcej (wyścig przy starcie puli,
-    02.10.2026)."""
+    Sail creates a driver and a worker pool for EVERY Spark Connect session (on the session's
+    first RPC; in the runner the `warm_up` warm-up before the clock) and closes them together with
+    the session, so worker numbering starts from 1 in every session. The session opened by this
+    test is the one checked: the first session on a fresh server once got one worker more
+    (a race at pool startup, 2026-10-02)."""
     report(run_runner([*scenario_args("overlap", *parquet_dirs), "--remote", server.url]))
     log = server.log.read_text()
     session = log[log.rindex("creating session"):]

@@ -1,9 +1,10 @@
-"""Ballista i polars-bio liczą tą samą wersją algorytmów przedziałowych (plan 3b-1, etap 3).
+"""Ballista and polars-bio compute with the same version of the interval algorithms.
 
-polars-bio jest budowany z datafusion-bio-function-ranges z gita (tag w Cargo.toml polars-bio);
-Ballista używa zwendorowanej kopii tego crate'a z łatkami widoczności (vendor/PATCH.md). Gdy wersje
-się rozjadą, porównanie silników miesza efekt silnika z efektem wersji biblioteki — np. upstream
-poprawił między 0.18.0 a 0.22.2 przedziały jednozasadowe w nearest i coverage."""
+polars-bio is built from datafusion-bio-function-ranges from git (a tag in the polars-bio
+Cargo.toml); Ballista uses a vendored copy of that crate with visibility patches (vendor/PATCH.md).
+If the versions diverge, an engine comparison mixes the engine effect with the library-version
+effect; for example, upstream fixed single-base intervals in nearest and coverage between 0.18.0
+and 0.22.2."""
 
 from __future__ import annotations
 
@@ -14,13 +15,13 @@ from pathlib import Path
 BALLISTA_DIR = Path(__file__).resolve().parent.parent / "ballista_genomics"
 CRATE = "datafusion-bio-function-ranges"
 
-#: Wersja crate'a algorytmów, z którą zbudowano daną wersję polars-bio — Cargo.toml polars-bio pod
-#: tagiem wydania (0.36.0: tag = "v0.22.2"). Nowa wersja polars-bio = nowy wpis tutaj i, gdy wersja
-#: crate'a się zmienia, aktualizacja vendora według vendor/PATCH.md.
+#: Version of the algorithms crate that a given polars-bio version was built with: the polars-bio
+#: Cargo.toml at the release tag (0.36.0: tag = "v0.22.2"). A new polars-bio version means a new entry
+#: here and, when the crate version changes, an update of the vendored copy per vendor/PATCH.md.
 RANGES_IN_POLARS_BIO = {"0.36.0": "0.22.2", "0.37.0": "0.24.0"}
 
-#: Wyjątki od równości wersji: (oczekiwana wg polars-bio, wersja vendora) -> powód równoważności.
-#: Para jest dopuszczona tylko z powodem; inne wersje (np. 0.23.0) nie są równoważne.
+#: Exceptions to version equality: (expected per polars-bio, vendored version) -> reason for equivalence.
+#: A pair is allowed only with a reason; other versions (e.g. 0.23.0) are not equivalent.
 EQUIVALENT_RANGES: dict[tuple[str, str], str] = {
     ("0.24.0", "0.22.2"): "0.22.2 and 0.24.0 differ only in DataFusion version bumps; the interval algorithms are identical",
     ("0.24.0", "0.25.0"): "0.25.0 only moves to the DataFusion 55 API; the interval algorithms are identical to 0.24.0",

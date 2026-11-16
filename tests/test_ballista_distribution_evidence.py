@@ -1,21 +1,21 @@
 """
-Faza H: asercje na DOWODZIE dystrybucji, nie tylko na poprawności wyniku.
+Assertions on the EVIDENCE of distribution, not only on the correctness of the result.
 
-Motywacja: zapytanie może dać w 100% poprawny wynik i jednocześnie policzyć się
-w jednym query stage'u, bez żadnej równoległości — objawu brak, a teza pracy
-o "wykonaniu rozproszonym" byłaby wtedy pusta. Dokładnie to wykryto przy
-overlapie w Fazie H (patrz `test_overlap_crosses_serialization_boundary` niżej).
+Motivation: a query can give a 100% correct result and still be computed in a
+single query stage, with no parallelism at all. There would be no visible symptom,
+and the claim of "distributed execution" would be empty. This is exactly what was
+found for overlap (see `test_overlap_crosses_serialization_boundary` below).
 
-Ballista implementuje `EXPLAIN ANALYZE` tak, że zwraca sekcje
-`=========SuccessfulStage[stage_id=N, partitions=M]=========` z drzewem
-operatorów i metrykami per stage. Binarka `dist_ops` zrzuca to do
-`output/dist_<op>_explain.txt`, a ten plik parsujemy tutaj.
+Ballista implements `EXPLAIN ANALYZE` so that it returns sections
+`=========SuccessfulStage[stage_id=N, partitions=M]=========` with the operator
+tree and per-stage metrics. The `dist_ops` binary dumps this to
+`output/dist_<op>_explain.txt`, and this file is parsed here.
 
-Ten moduł CELOWO nie importuje polars_bio — dzięki temu działa w kilka sekund
-(import polars_bio trwa ~4.5 min) i daje szybką pętlę sprzężenia zwrotnego przy
-pracy nad kodekami. Pełne testy poprawności: test_ballista_distributed_ops.py
+This module deliberately does not import polars_bio, so it runs in a few seconds
+(importing polars_bio takes ~4.5 min) and gives a fast feedback loop when working
+on the codecs. The full correctness tests are in test_ballista_distributed_ops.py
 
-Uruchomienie: pytest tests/test_ballista_distribution_evidence.py -v
+Run: pytest tests/test_ballista_distribution_evidence.py -v
 """
 
 from __future__ import annotations
@@ -33,13 +33,13 @@ OPIS = BALLISTA_DIR / "OPIS.md"
 CLIENT_BINARY = BALLISTA_DIR / "target" / "debug" / "bench_client"
 
 STAGE_RE = re.compile(r"SuccessfulStage\[stage_id=(\d+), partitions=(\d+)\]")
-#: Czytnik shuffle po kluczu w Ballistcie 55: `ShuffleReaderExec: upstream_stage: N,
-#: partitioning: Hash([chrom@0], 4)` (w 53 bez `upstream_stage`).
+#: Keyed shuffle reader in Ballista 55: `ShuffleReaderExec: upstream_stage: N,
+#: partitioning: Hash([chrom@0], 4)` (in 53 without `upstream_stage`).
 HASH_READER_RE = re.compile(r"ShuffleReaderExec: upstream_stage: \d+, partitioning: Hash\(\[chrom")
 
 
 def _run_client(args: list[str], timeout: int) -> subprocess.CompletedProcess:
-    """Uruchamia `bench_client` (tryb standalone); brak binarki to błąd, nie pominięcie."""
+    """Runs `bench_client` (standalone mode); a missing binary is an error, not a skip."""
     if not CLIENT_BINARY.exists():
         pytest.fail(
             f"missing binary {CLIENT_BINARY.name} - build it: "
@@ -55,7 +55,7 @@ def _run_client(args: list[str], timeout: int) -> subprocess.CompletedProcess:
 
 
 def _explain(op: str) -> tuple[str, list[tuple[int, int]]]:
-    """Zwraca (surowy tekst planu, [(stage_id, liczba_partycji), ...])."""
+    """Returns (raw plan text, [(stage_id, number_of_partitions), ...])."""
     path = OUTPUT_DIR / f"dist_{op}_explain.txt"
     if not path.exists():
         pytest.skip(
@@ -68,21 +68,21 @@ def _explain(op: str) -> tuple[str, list[tuple[int, int]]]:
 
 
 # --------------------------------------------------------------------------
-# merge — wzorzec hash-shuffle (najmocniejszy dowód dystrybucji)
+# merge: hash-shuffle pattern (the strongest evidence of distribution)
 # --------------------------------------------------------------------------
 
 
 def test_merge_plan_is_split_into_stages():
-    """Plan musi zostać pocięty na etapy — inaczej nie było żadnego shuffle."""
+    """The plan must be cut into stages; otherwise there was no shuffle at all."""
     txt, stages = _explain("merge")
     assert len(stages) >= 2, f"merge ran in a single stage:\n{txt}"
 
 
 def test_merge_has_hash_shuffle_on_contig():
     """
-    Shuffle musi być HASH-owy PO KOLUMNIE KONTIGU, nie round-robin.
-    To warunek konieczny poprawności: wiersze tego samego chromosomu muszą
-    trafić do tej samej partycji, żeby MergeExec mógł je scalić.
+    The shuffle must be HASH-based ON THE CONTIG COLUMN, not round-robin.
+    This is a necessary condition for correctness: rows of the same chromosome
+    must land in the same partition so that MergeExec can merge them.
     """
     txt, _ = _explain("merge")
     assert re.search(r"ShuffleWriterExec: partitioning=Hash\(\[chrom", txt), txt
@@ -90,8 +90,8 @@ def test_merge_has_hash_shuffle_on_contig():
 
 def test_merge_operator_reads_from_network():
     """
-    MergeExec musi mieć ShuffleReaderExec jako źródło — czyli konsumować dane
-    Z SIECI (z innego stage'a), a nie z lokalnego skanu pliku.
+    MergeExec must have ShuffleReaderExec as its source, i.e. consume data
+    FROM THE NETWORK (from another stage), not from a local file scan.
     """
     txt, _ = _explain("merge")
     assert "MergeExec" in txt, txt
@@ -105,9 +105,9 @@ def test_merge_operator_reads_from_network():
 
 def test_merge_source_stage_is_parallel():
     """
-    Stage źródłowy musi mieć >1 partycji, a skan musi widzieć oba pliki
-    wejściowe jako osobne grupy. Bez tego test poprawności (nakładające się
-    gene_A1/gene_A2 w różnych plikach) nie testowałby dystrybucji.
+    The source stage must have >1 partitions, and the scan must see both input
+    files as separate groups. Without this the correctness test (overlapping
+    gene_A1/gene_A2 in different files) would not test distribution.
     """
     txt, stages = _explain("merge")
     assert stages[0][1] >= 2, f"source stage is not parallel:\n{txt}"
@@ -117,21 +117,21 @@ def test_merge_source_stage_is_parallel():
 
 
 def test_merge_compute_stage_is_parallel():
-    """Stage liczący MergeExec musi mieć >1 partycji."""
+    """The stage that runs MergeExec must have >1 partitions."""
     txt, stages = _explain("merge")
     assert max(p for _, p in stages) > 1, f"all stages have a single partition:\n{txt}"
 
 
 # --------------------------------------------------------------------------
-# subtract — wzorzec DWUSTRONNEGO hash-shuffle (węzeł binarny)
+# subtract: TWO-SIDED hash-shuffle pattern (binary node)
 # --------------------------------------------------------------------------
 
 
 def test_subtract_has_two_shuffled_inputs():
     """
-    SubtractExec jest węzłem binarnym: `execute(partition)` sięga po tę samą
-    partycję z OBU stron. Obie muszą więc zostać ko-partycjonowane po `chrom`
-    — w planie widać to jako dwa osobne stage'e źródłowe z hash-shuffle.
+    SubtractExec is a binary node: `execute(partition)` reaches for the same
+    partition on BOTH sides. Both must therefore be co-partitioned by `chrom`;
+    in the plan this shows up as two separate source stages with a hash shuffle.
     """
     txt, stages = _explain("subtract")
     assert len(stages) >= 3, f"subtract needs >=3 stages:\n{txt}"
@@ -141,11 +141,11 @@ def test_subtract_has_two_shuffled_inputs():
 
 
 def test_subtract_operator_reads_both_sides_from_network():
-    """SubtractExec musi mieć DWA ShuffleReaderExec jako dzieci."""
+    """SubtractExec must have TWO ShuffleReaderExec as children."""
     txt, _ = _explain("subtract")
     assert "SubtractExec" in txt, txt
     after = txt[txt.index("SubtractExec"):]
-    # obcinamy do konca tego stage'a, zeby nie liczyc czytnikow z nastepnych
+    # cut off at the end of this stage so that readers from later stages are not counted
     stage_end = after.find("=========SuccessfulStage")
     block = after if stage_end == -1 else after[:stage_end]
     readers = len(HASH_READER_RE.findall(block))
@@ -156,7 +156,7 @@ def test_subtract_operator_reads_both_sides_from_network():
 
 
 def test_subtract_both_source_stages_are_parallel():
-    """Oba stage'e źródłowe (parts_a i parts_b) muszą być równoległe."""
+    """Both source stages (parts_a and parts_b) must be parallel."""
     txt, stages = _explain("subtract")
     assert stages[0][1] >= 2 and stages[1][1] >= 2, (
         f"both source stages should have >=2 partitions:\n{txt}"
@@ -165,16 +165,16 @@ def test_subtract_both_source_stages_are_parallel():
 
 
 # --------------------------------------------------------------------------
-# nearest — wzorzec BROADCAST (równoległość po prawej stronie, bez shuffle)
+# nearest: BROADCAST pattern (parallelism on the right side, no shuffle)
 # --------------------------------------------------------------------------
 
 
 def test_nearest_is_broadcast_not_shuffle():
     """
-    NearestExec nie nadpisuje `required_input_distribution()`, więc hash-shuffle
-    NIE wystąpi i nie powinien. Dowodem dystrybucji jest tu inny wzorzec:
-    równoległość po stronie prawej tabeli plus lewa tabela przeniesiona
-    w ładunku planu.
+    NearestExec does not override `required_input_distribution()`, so a hash
+    shuffle does NOT occur and should not. The evidence of distribution here is
+    a different pattern: parallelism on the right-table side plus the left table
+    carried in the plan payload.
     """
     txt, stages = _explain("nearest")
     assert "NearestExec" in txt, txt
@@ -184,7 +184,7 @@ def test_nearest_is_broadcast_not_shuffle():
 
 
 def test_nearest_compute_stage_is_parallel():
-    """NearestExec musi liczyć się na >1 partycji (równoległość z prawej strony)."""
+    """NearestExec must run on >1 partitions (parallelism from the right side)."""
     txt, stages = _explain("nearest")
     assert max(p for _, p in stages) >= 2, (
         f"NearestExec does not run in parallel:\n{txt}"
@@ -196,12 +196,12 @@ def test_nearest_compute_stage_is_parallel():
 
 def test_nearest_left_table_travels_in_plan_not_as_scan():
     """
-    Dowód BROADCASTU: lewa (indeksowana) tabela NIE pojawia się w planie jako
-    osobny DataSourceExec — jej dane pojechały wewnątrz ładunku planu
-    fizycznego (Arrow IPC), a executor odbudował z nich indeks lokalnie.
-    Lewą (broadcastowaną) jest B (parts_b), bo wynik ma wiersz na każdy wiersz
-    PRAWEJ tabeli, a pb.nearest(A, B) — na każdy przedział A; w planie widać
-    więc wyłącznie skan A (parts_a).
+    Evidence of the BROADCAST: the left (indexed) table does NOT appear in the plan
+    as a separate DataSourceExec; its data travelled inside the physical-plan
+    payload (Arrow IPC), and the executor rebuilt the index from it locally.
+    The left (broadcast) table is B (parts_b), because the result has a row for each
+    row of the RIGHT table, while pb.nearest(A, B) has one for each interval of A;
+    so only the scan of A (parts_a) is visible in the plan.
     """
     txt, _ = _explain("nearest")
     assert "parts_a" in txt, f"no scan of the right table (A):\n{txt}"
@@ -212,23 +212,23 @@ def test_nearest_left_table_travels_in_plan_not_as_scan():
 
 
 # --------------------------------------------------------------------------
-# coverage — broadcast + własny węzeł-nośnik
+# coverage: broadcast + our own carrier node
 # --------------------------------------------------------------------------
 
 
 def test_coverage_uses_carrier_node_with_broadcast():
     """
-    W planie musi być NASZ węzeł-nośnik z widoczną liczbą broadcastowanych
-    wierszy. `broadcast_rows` w DisplayAs jest celowe: to jednocześnie dowód,
-    że lewa tabela pojechała w ładunku planu, i materiał do oceny, jak blisko
-    jesteśmy limitu 16 MB na wiadomość gRPC.
+    The plan must contain OUR carrier node with a visible number of broadcast
+    rows. `broadcast_rows` in DisplayAs is deliberate: it is both evidence that
+    the left table travelled in the plan payload and material for judging how
+    close we are to the 16 MB gRPC message limit.
     """
     txt, _ = _explain("coverage")
     assert re.search(r"DistCoverageExec: coverage=true, broadcast_rows=\d+", txt), txt
 
 
 def test_coverage_compute_stage_is_parallel():
-    """Węzeł coverage musi liczyć się na >1 partycji (równoległość ze źródła)."""
+    """The coverage node must run on >1 partitions (parallelism from the source)."""
     txt, stages = _explain("coverage")
     assert max(p for _, p in stages) >= 2, txt
     assert re.search(r"file_groups=\{2 groups:", txt), txt
@@ -236,17 +236,17 @@ def test_coverage_compute_stage_is_parallel():
 
 def test_coverage_roundrobin_is_absent():
     """
-    ASERCJA DOKUMENTUJĄCA ZNALEZISKO: `CountOverlapsProvider::scan()` w vendorze
-    wstawia RepartitionExec(RoundRobinBatch), a statyczny planista Ballisty 53
-    usuwał z planu rozproszonego każdą repartycję inną niż hash
-    (ballista-scheduler/src/planner.rs). Nasz DistCoverageProvider celowo jej
-    więc nie wstawia — dzięki temu plan lokalny i rozproszony mają ten sam
-    kształt, a równoległość bierze się z partycjonowania źródła.
+    AN ASSERTION DOCUMENTING A FINDING: `CountOverlapsProvider::scan()` in the vendored
+    code inserts RepartitionExec(RoundRobinBatch), and the static planner of Ballista 53
+    removed from the distributed plan every repartition other than a hash one
+    (ballista-scheduler/src/planner.rs). Our DistCoverageProvider therefore deliberately
+    does not insert it, so the local and distributed plans have the same shape and
+    parallelism comes from partitioning the source.
 
-    Ballista 55 z AQE takich repartycji nie usuwa; nie powstają, bo sesje mają
-    `datafusion.optimizer.enable_round_robin_repartition = false`
-    (`cluster::bio_ballista_config`: `upgrade_for_ballista()` przed setterami Ballisty;
-    bez tego standalone dostawał RoundRobinBatch(4) przed DistCoverageExec).
+    Ballista 55 with AQE does not remove such repartitions; they do not appear because the
+    sessions have `datafusion.optimizer.enable_round_robin_repartition = false`
+    (`cluster::bio_ballista_config`: `upgrade_for_ballista()` before the Ballista setters;
+    without it standalone got RoundRobinBatch(4) in front of DistCoverageExec).
     """
     txt, _ = _explain("coverage")
     assert "RoundRobinBatch" not in txt, (
@@ -256,25 +256,25 @@ def test_coverage_roundrobin_is_absent():
 
 
 # --------------------------------------------------------------------------
-# overlap — asercja DOKUMENTUJĄCA znalezisko (Faza H)
+# overlap: an assertion DOCUMENTING a finding
 # --------------------------------------------------------------------------
 
 
 def test_overlap_crosses_serialization_boundary():
     """
-    Overlap przechodzi przez granicę serializacji: IntervalJoinExec z algorytmem
-    COITrees wykonuje się w etapie po stronie executora, który zapisuje wynik etapu
-    (ShuffleWriterExec) — czyli LogicalExtensionCodec i PhysicalExtensionCodec
-    faktycznie zadziałały. To jest to, co osiągnęły Fazy A.4 i A.5.
+    Overlap crosses the serialization boundary: IntervalJoinExec with the COITrees
+    algorithm runs in a stage on the executor side, which writes the stage result
+    (ShuffleWriterExec); that is, LogicalExtensionCodec and PhysicalExtensionCodec
+    actually worked.
 
-    Ballista 53 dzieliła ten plan w standalone na dwa etapy (osobny etap scalania
-    posortowanego wyniku, czytany przez ShuffleReaderExec); Ballista 55 z AQE sortuje
-    jedyną partycję w tym samym etapie, więc etap jest jeden. Dane CSV mają po jednej
-    partycji, więc lewa strona spełnia już `SinglePartition` trybu CollectLeft i nie
-    dostaje osobnego etapu (por. `test_overlap_indexes_the_whole_left_side_in_every_task`).
+    Ballista 53 split this plan in standalone mode into two stages (a separate stage that
+    merges the sorted result, read by ShuffleReaderExec); Ballista 55 with AQE sorts the
+    single partition within the same stage, so there is one stage. The CSV data has one
+    partition each, so the left side already satisfies the `SinglePartition` of CollectLeft
+    mode and gets no separate stage (cf. `test_overlap_indexes_the_whole_left_side_in_every_task`).
 
-    Tryb złączenia to CollectLeft, rozstrzygnięty przy planowaniu
-    (`dist_provider::collect_left_at_planning`), a nie Auto zamieniane dopiero w koderze.
+    The join mode is CollectLeft, decided at planning time
+    (`dist_provider::collect_left_at_planning`), rather than Auto that is only resolved in the codec.
     """
     txt, stages = _explain("overlap")
     assert len(stages) >= 1, txt
@@ -286,21 +286,21 @@ def test_overlap_crosses_serialization_boundary():
 
 def test_overlap_has_no_hash_partitioned_parallelism():
     """
-    ASERCJA DOKUMENTUJĄCA ZNALEZISKO (Faza H), nie życzenie.
+    AN ASSERTION DOCUMENTING A FINDING, not a wish.
 
-    Overlap — w odróżnieniu od merge — NIE uzyskuje równoległości
-    hash-partycjonowanej. IntervalJoinExec powstaje w vendorze z
-    `mode = PartitionMode::Auto` (`with_config_rt_bio()` usuwa regułę `join_selection`,
-    która normalnie rozstrzygnęłaby Auto -> Partitioned/CollectLeft); my rozstrzygamy go
-    przy planowaniu na CollectLeft (`dist_provider::collect_left_at_planning`, Ballista 55).
-    `required_input_distribution()` zwraca wtedy `SinglePartition` dla lewej strony
-    i `UnspecifiedDistribution` dla prawej — hash-repartycja nigdy nie jest zażądana.
-    Równoległość overlapu bierze się z partycji prawej strony, a każde zadanie indeksuje
-    całą lewą (na CSV obie strony mają po jednej partycji, stąd jedna partycja w etapie).
+    Unlike merge, overlap does NOT get hash-partitioned parallelism.
+    IntervalJoinExec is created in the vendored code with
+    `mode = PartitionMode::Auto` (`with_config_rt_bio()` removes the `join_selection` rule,
+    which would normally resolve Auto -> Partitioned/CollectLeft); we resolve it
+    at planning time to CollectLeft (`dist_provider::collect_left_at_planning`, Ballista 55).
+    `required_input_distribution()` then returns `SinglePartition` for the left side
+    and `UnspecifiedDistribution` for the right; a hash repartition is never requested.
+    The parallelism of overlap comes from the partitions of the right side, and each task indexes
+    the whole left side (on CSV both sides have one partition each, hence one partition in the stage).
 
-    Gdy ten test zacznie padać, to znaczy że ograniczenie zostało zdjęte
-    (np. własną regułą optymalizatora wymuszającą Partitioned) — wtedy należy
-    zaktualizować ten test i opis w OPIS.md, a nie "naprawiać" kod.
+    When this test starts failing, it means the limitation has been lifted
+    (e.g. by a custom optimizer rule forcing Partitioned); then update this test
+    and the description in OPIS.md instead of "fixing" the code.
     """
     txt, stages = _explain("overlap")
     has_hash = bool(re.search(r"partitioning=Hash\(", txt))
@@ -313,8 +313,8 @@ def test_overlap_has_no_hash_partitioned_parallelism():
 
 
 def _metric(block: str, name: str) -> int:
-    """Wartość licznika z metryk planu; zbiór testowy jest mały, więc liczby są całkowite
-    (bez skrótów typu `1.75 M`)."""
+    """Value of a counter from the plan metrics; the test dataset is small, so the numbers are
+    plain integers (no abbreviations like `1.75 M`)."""
     found = re.findall(rf"\b{name}=(\d+)(?=[,\]])", block)
     assert len(found) == 1, f"expected exactly one plain integer {name}, found {found}:\n{block}"
     return int(found[0])
@@ -322,17 +322,17 @@ def _metric(block: str, name: str) -> int:
 
 def test_overlap_indexes_the_whole_left_side_in_every_task(parquet_dirs, tmp_path):
     """
-    Overlap na wejściu z kilku partycji (zbiór testowy Parquet, Ballista 55): każde zadanie
-    złączenia indeksuje CAŁĄ lewą stronę.
+    Overlap on an input with several partitions (Parquet test dataset, Ballista 55): each join
+    task indexes the WHOLE left side.
 
-    Scheduler 55 zawęża liście planu do partycji zadania (`restrict_plan_to_partitions`),
-    z wyjątkiem wejść, które muszą być scalone. Tryb CollectLeft, rozstrzygnięty przy
-    planowaniu, żąda dla lewej strony `SinglePartition`: lewa strona jest osobnym etapem
-    (skan → shuffle), a złączenie czyta ją przez `CoalescePartitionsExec` ←
-    `ShuffleReaderExec` w całości. Dowód w metrykach: `build_input_rows` (suma po zadaniach)
-    = liczba zadań złączenia × liczba wierszy lewej strony. Przy trybie Auto zamienianym
-    dopiero w koderze suma była równa liczbie wierszy lewej strony (każde zadanie miało
-    tylko swój wycinek), a overlap gubił pary.
+    The 55 scheduler narrows the plan's leaves to the task's partitions (`restrict_plan_to_partitions`),
+    except for inputs that have to be coalesced. The CollectLeft mode, decided at
+    planning time, requires `SinglePartition` for the left side: the left side is a separate stage
+    (scan -> shuffle), and the join reads all of it through `CoalescePartitionsExec` <-
+    `ShuffleReaderExec`. The evidence is in the metrics: `build_input_rows` (summed over tasks)
+    = number of join tasks x number of left-side rows. With the Auto mode that is only resolved
+    in the codec, the sum equalled the number of left-side rows (each task had only its own
+    slice), and overlap lost pairs.
     """
     left, right = parquet_dirs
     target = tmp_path / "overlap_explain.txt"
@@ -362,20 +362,20 @@ def test_overlap_indexes_the_whole_left_side_in_every_task(parquet_dirs, tmp_pat
 
 
 # --------------------------------------------------------------------------
-# Ustawienia Ballisty 55 — jawne i zgodne z OPIS.md
+# Ballista 55 settings: explicit and consistent with OPIS.md
 # --------------------------------------------------------------------------
 
 
 def _declared(key: str) -> str:
-    """Wartość klucza Ballisty zadeklarowana w OPIS.md w postaci `klucz` = `wartość`
-    (dokładnie jedna deklaracja)."""
+    """Value of a Ballista key declared in OPIS.md in the form `key` = `value`
+    (exactly one declaration)."""
     found = re.findall(rf"`{re.escape(key)}` = `([^`]+)`", OPIS.read_text())
     assert len(found) == 1, f"OPIS.md must declare `{key}` = `...` exactly once, found: {found}"
     return found[0]
 
 
 def _version_info() -> dict:
-    """Ustawienia Ballisty odczytane z konfiguracji klastra (`bench_client --version-info`)."""
+    """Ballista settings read from the cluster configuration (`bench_client --version-info`)."""
     r = _run_client(["--version-info"], timeout=60)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
@@ -383,12 +383,12 @@ def _version_info() -> dict:
 
 def test_aqe_setting_is_explicit():
     """
-    AQE (planista adaptacyjny) Ballista 55 domyślnie włącza (#2315), a 53 domyślnie
-    wyłączała — ustawienie jest więc jawne (`cluster::ADAPTIVE_QUERY_PLANNER`), a decyzja
-    opisana w OPIS.md. Jedno źródło: wartość z konfiguracji klastra (`--version-info`)
-    musi być tą, którą deklaruje OPIS.md, a plan musi pochodzić z tego planisty:
-    AQE numeruje etapy od 0 (`AdaptivePlanner`: `stage_id_generator: 0`), planista
-    statyczny od 1 (jak Ballista 53).
+    AQE (the adaptive query planner) is enabled by default in Ballista 55 (#2315), and 53
+    disabled it by default, so the setting is explicit (`cluster::ADAPTIVE_QUERY_PLANNER`) and the
+    decision is described in OPIS.md. A single source of truth: the value from the cluster
+    configuration (`--version-info`) must be the one declared in OPIS.md, and the plan must
+    come from that planner: AQE numbers stages from 0 (`AdaptivePlanner`: `stage_id_generator: 0`),
+    the static planner from 1 (as Ballista 53 did).
     """
     declared = _declared("ballista.planner.adaptive.enabled")
     assert declared in ("true", "false"), declared
@@ -400,13 +400,13 @@ def test_aqe_setting_is_explicit():
 
 def test_scheduling_settings_are_explicit():
     """
-    Ustawienia Ballisty 55 przywracające semantykę 53 — wartości z konfiguracji klastra
-    muszą być tymi z OPIS.md:
-    - `ballista.scheduler.max_partitions_per_task`: 55 domyślnie (0, bez limitu) pakuje
-      do jednego zadania tyle partycji, ile executor ma wolnych slotów — przy 2 slotach etap
-      dwóch partycji szedł jako jedno zadanie na jeden executor; 1 = partycja na zadanie;
-    - `ballista.scheduler.share_file_statistics_cache`: wspólna dla sesji pamięć statystyk
-      plików w schedulerze (nowa w 55) — wyłączona, jak w 53 (każda sesja z zimną).
+    Ballista 55 settings that restore the 53 semantics; the values from the cluster
+    configuration must be those from OPIS.md:
+    - `ballista.scheduler.max_partitions_per_task`: by default (0, no limit) 55 packs into one
+      task as many partitions as the executor has free slots; with 2 slots a stage of two
+      partitions ran as one task on one executor; 1 = one partition per task;
+    - `ballista.scheduler.share_file_statistics_cache`: a file-statistics cache in the scheduler
+      shared across sessions (new in 55); disabled, as in 53 (each session starts with a cold one).
     """
     info = _version_info()
     partitions = _declared("ballista.scheduler.max_partitions_per_task")

@@ -1,7 +1,7 @@
-"""broadcast_bytes (plan 3b-2, Zadanie 15; specyfikacja 6.3): executory logują rozmiar każdego
-odebranego ładunku broadcastu, a silnik sumuje te wpisy z czasu przebiegu — bajty, które
-faktycznie dotarły: ładunek × liczba zadań etapu z broadcastem (Ballista 55 koduje plan osobno dla
-każdego zadania; Ballista 53 wysyłała plan etapu raz na executor). Wymaga binarek debug."""
+"""broadcast_bytes: executors log the size of every received broadcast payload, and the engine
+sums those entries over the run, giving the bytes that actually arrived: payload x number of
+stage tasks with a broadcast (Ballista 55 encodes the plan separately for each task; Ballista 53
+sent the stage plan once per executor). Requires the debug binaries."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from bench.ops import OPS, UNARY_OPS
 
 @pytest.fixture(scope="module")
 def cluster(tmp_path_factory):
-    """Dwa executory po 1 slocie (P = 2): broadcast musi dotrzeć do zadań na obu."""
+    """Two executors with 1 slot each (P = 2): the broadcast must reach tasks on both."""
     tmp = tmp_path_factory.mktemp("broadcast_bytes")
     engine = engines.make_engine(
         "ballista", 2, layout=read_layout(), data_root=tmp, log_dir=tmp / "logs", profile="debug",

@@ -1,8 +1,8 @@
 """
-Zmienne sterujące klientem dist_ops (tryb zdalny, katalog wyników) wyeksportowane
-w powłoce nie mogą zmieniać zachowania testów: testy trybu standalone czytają
-pliki z ballista_genomics/output/ i zakładają tryb standalone. Testy klastra
-z osobnych procesów ustawiają te zmienne jawnie przy każdym wywołaniu.
+Variables that control the dist_ops client (remote mode, results directory) and are
+exported in the shell must not change how the tests behave: the standalone-mode tests
+read files from ballista_genomics/output/ and assume standalone mode. Cluster tests
+that run in separate processes set these variables explicitly on every call.
 """
 
 import os

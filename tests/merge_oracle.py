@@ -1,4 +1,4 @@
-"""Golden oracle dla operacji merge — analogicznie do overlap_oracle.py."""
+"""Golden oracle for the merge operation, analogous to overlap_oracle.py."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def _reset_pb_context() -> None:
 def reference_merge_intervals(
     intervals: list[tuple[str, int, int, str]],
 ) -> set[tuple[str, int, int]]:
-    """Golden oracle: lokalny pb.merge(), znormalizowany do zbioru (chrom, start, end)."""
+    """Golden oracle: local pb.merge(), normalized to a set of (chrom, start, end)."""
     if not intervals:
         return set()
 

@@ -1,16 +1,14 @@
 """
-Formalny test poprawności dla Fazy A (Ballista) — brakujący punkt 6 z planu pracy
-("Test poprawności na tym klastrze" — dotąd zrobiony tylko ręcznie, przez odczyt
-wydruku). Uruchamia skompilowaną binarkę `ballista_genomics` (prawdziwy klaster
-Ballista: scheduler + executor, LogicalExtensionCodec, realny shuffle — patrz
-ballista_genomics/OPIS.md, Faza A.4), czyta jej wynik z CSV i porównuje z tą samą
-wyrocznią co test Saila (tests/overlap_oracle.py).
+Formal correctness test for Ballista. It runs the compiled `ballista_genomics`
+binary (a real Ballista cluster: scheduler + executor, LogicalExtensionCodec,
+a real shuffle; see ballista_genomics/OPIS.md), reads its result from CSV and
+compares it with the same oracle as the Sail test (tests/overlap_oracle.py).
 
-Wymaga zbudowanej binarki: `cargo build` w ballista_genomics/ (pomijane, jeśli
-binarki nie ma — patrz `pytest.mark.skipif` niżej, bo build trwa długo na tej
-maszynie, patrz OPIS.md/plan pracy o ograniczeniach pamięci).
+Requires a built binary: `cargo build` in ballista_genomics/ (skipped if the
+binary is missing, see `pytest.mark.skipif` below, because the build takes long
+on this machine; see OPIS.md on the memory limits).
 
-Uruchomienie: pytest tests/test_ballista_overlap.py -v
+Run: pytest tests/test_ballista_overlap.py -v
 """
 
 from __future__ import annotations
@@ -27,11 +25,10 @@ BALLISTA_DIR = Path(__file__).resolve().parent.parent / "ballista_genomics"
 BINARY = BALLISTA_DIR / "target" / "debug" / "ballista_genomics"
 OUTPUT_CSV = BALLISTA_DIR / "output" / "dist_overlap_result.csv"
 
-# Dane testowe muszą być identyczne z tymi zaszytymi w main.rs (DATA_LEFT_CSV/
-# DATA_RIGHT_CSV wskazują na ballista_genomics/data/intervals_a.csv i intervals_b.csv)
-# oraz z tymi w overlap_comparison.py — to ten sam zestaw
-# używany we wszystkich testach w tej pracy, żeby wyniki były bezpośrednio
-# porównywalne między silnikami.
+# The test data must be identical to the data embedded in main.rs (DATA_LEFT_CSV/
+# DATA_RIGHT_CSV point to ballista_genomics/data/intervals_a.csv and intervals_b.csv);
+# it is the same set used in all the tests, so that results are directly
+# comparable between engines.
 INTERVALS_A = [
     ("chr1", 100, 200, "gene_A1"),
     ("chr1", 150, 300, "gene_A2"),
@@ -58,9 +55,9 @@ INTERVALS_B = [
 )
 def test_ballista_distributed_overlap_matches_oracle():
     """
-    Uruchamia prawdziwy klaster Ballista (main.rs: scheduler + executor,
-    LogicalExtensionCodec, shuffle) na danych testowych i sprawdza, że wynik
-    operacji dist_overlap() jest identyczny z lokalnym pb.overlap().
+    Runs a real Ballista cluster (main.rs: scheduler + executor,
+    LogicalExtensionCodec, shuffle) on the test data and checks that the result
+    of dist_overlap() is identical to the local pb.overlap().
     """
     result = subprocess.run(
         [str(BINARY)],
@@ -87,4 +84,4 @@ def test_ballista_distributed_overlap_matches_oracle():
         f"Only in pb.overlap(): {expected_pairs - actual_pairs}\n"
         f"Only in Ballista:     {actual_pairs - expected_pairs}"
     )
-    assert len(actual_pairs) == 8  # sanity check na znany, ustalony wynik
+    assert len(actual_pairs) == 8  # sanity check against a known, fixed result

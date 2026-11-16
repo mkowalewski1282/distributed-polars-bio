@@ -1,14 +1,14 @@
-"""Plan 3a, Zadanie 9 (etap 4: semantyka P): orkiestrator na prawdziwych silnikach i zbiorze
-testowym w układzie databio-8p (para 1-2, zbiór 1) — wszystkie warianty, P = 1 i 2, po jednym
-przebiegu; CPU bloków z układu tej maszyny (bench/cpus.py).
+"""The orchestrator on real engines and a test dataset in the databio-8p layout (pair 1-2,
+dataset 1): all variants, P = 1 and 2, one run each; block CPUs from this machine's layout
+(bench/cpus.py).
 
-Wynik wzorcowy: polars-bio na 1 partycji. Od planu 3b-1 (polars-bio 0.36) wszystkie przebiegi
-mają być ważne — także polars-bio na wielu partycjach, który w 0.28 liczył merge i subtract
-osobno w każdej partycji (błąd #372, naprawiony w 0.29.0).
+Reference result: polars-bio on 1 partition. With polars-bio 0.36 all runs are expected to be
+valid, including polars-bio on multiple partitions, which in 0.28 computed merge and subtract
+separately in each partition (bug #372, fixed in 0.29.0).
 
-Wymaga binarek ballista_node i bench_client (debug). Swap jest wyłączony z kryteriów
-(pswpout i pswpin zastąpione stałą): jego wykrywanie sprawdzają testy jednostkowe, a tu przypadkowy
-swap innej aplikacji nie może dawać fałszywych porażek."""
+Requires the ballista_node and bench_client binaries (debug). Swap is excluded from the criteria
+(pswpout and pswpin replaced by a constant): its detection is covered by unit tests, and here an
+accidental swap by another application must not cause false failures."""
 
 from __future__ import annotations
 
@@ -57,8 +57,8 @@ def series(data_root, tmp_path_factory):
 @pytest.mark.parallelism(2)
 def test_every_planned_run_is_recorded(series):
     summary, df = series
-    # wzorzec: 5 scenariuszy (kontrola overlap/1-2 jest wśród nich); bloki: polars-bio, Ballista
-    # i Sail po P = 1 i 2 — każdy 2 przebiegi kontrolne + 5 scenariuszy
+    # reference: 5 scenarios (the overlap/1-2 control is among them); blocks: polars-bio, Ballista
+    # and Sail at P = 1 and 2, each with 2 control runs + 5 scenarios
     assert df.height == 5 + 6 * (2 + 5)
     assert summary.rows == df.height and not summary.failures
 
@@ -72,7 +72,7 @@ def test_every_run_is_valid(series):
 
 @pytest.mark.parallelism(2)
 def test_rows_record_parallelism_cpus_and_smt(series):
-    """Kolumny etapu 4 w runs.parquet: P bloku, CPU silnika z układu tej maszyny i flaga SMT."""
+    """Columns in runs.parquet: the block's P, the engine CPUs from this machine's layout and the SMT flag."""
     _, df = series
     layout = read_layout()
     assert set(zip(df["variant"], df["parallelism"])) == {
@@ -90,7 +90,7 @@ def test_rows_record_parallelism_cpus_and_smt(series):
 
 @pytest.mark.parallelism(2)
 def test_partitions_follow_variant_and_parallelism(series):
-    """Partycje = P; Ballista najmniej 2 (binarki odrzucają BIO_TARGET_PARTITIONS < 2)."""
+    """Partitions = P; Ballista at least 2 (the binaries reject BIO_TARGET_PARTITIONS < 2)."""
     _, df = series
     partitions = {
         key: {json.loads(e)["target_partitions"] for e in group["extra"]}
@@ -104,8 +104,8 @@ def test_partitions_follow_variant_and_parallelism(series):
 
 @pytest.mark.parallelism(2)
 def test_every_runner_reports_checksum_time_and_first_batch(series):
-    """Koszt sumy kontrolnej zależy od silnika (Python albo Rust) — każdy runner go podaje,
-    poza t_total_s (specyfikacja 3b-2, 4.1); faza do pierwszej partii mieści się w t_total_s."""
+    """The checksum cost depends on the engine (Python or Rust); every runner reports it
+    separately from t_total_s; the phase up to the first batch fits within t_total_s."""
     _, df = series
     assert all(json.loads(e)["checksum_s"] > 0 for e in df["extra"])
     first = [json.loads(p)["first_batch_s"] for p in df["phases"]]
@@ -136,8 +136,8 @@ def test_ballista_shuffle_volume_is_measured(series):
 
 @pytest.mark.parallelism(1)
 def test_main_resolves_relative_data_root(data_root, tmp_path, monkeypatch):
-    """Runnery Pythona działają w katalogu repozytorium, a Ballisty w ballista_genomics/ —
-    względna ścieżka danych musi zostać zamieniona na bezwzględną przed startem serii."""
+    """Python runners run in the repository directory, and Ballista ones in ballista_genomics/;
+    a relative data path must be converted to an absolute one before the series starts."""
     monkeypatch.chdir(data_root.parent)
     monkeypatch.setattr(preflight, "check_cpus", lambda *args, **kwargs: [])
     monkeypatch.setattr(orch, "Probe", functools.partial(orch.Probe, pswpout=lambda: 0, pswpin=lambda: 0))
@@ -159,8 +159,8 @@ def test_main_resolves_relative_data_root(data_root, tmp_path, monkeypatch):
 
 @pytest.mark.parallelism(2)
 def test_sail_reports_workers_and_phases(series):
-    """Każda sesja Saila ma P workerów (Sail 0.7.3, 1 slot na workera); Sail mierzy czas polars-bio
-    (4 chromosomy z niepustą lewą stroną)."""
+    """Every Sail session has P workers (Sail 0.7.3, 1 slot per worker); Sail measures polars-bio
+    time (4 chromosomes with a non-empty left side)."""
     _, df = series
     sail = df.filter(pl.col("variant").str.starts_with("sail") & ~pl.col("is_control"))
     assert set(sail["variant"]) == {"sail"}

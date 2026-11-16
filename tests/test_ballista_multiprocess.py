@@ -1,26 +1,26 @@
 """
-Zadanie P0: dowód, że Ballista wykonuje operacje genomiczne w OSOBNYCH
-procesach. Scheduler i dwa executory startują z binarki `ballista_node`,
-klient `dist_ops` łączy się z nimi przez zmienną BALLISTA_SCHEDULER_URL.
+Evidence that Ballista executes genomic operations in SEPARATE processes.
+The scheduler and two executors are started from the `ballista_node` binary,
+and the `dist_ops` client connects to them through the BALLISTA_SCHEDULER_URL variable.
 
-Cztery dowody (specyfikacja metodyki, sekcja 9.1):
-  1. osobne procesy — różne PID-y schedulera, executorów i klienta, a scheduler
-     widzi dwa zarejestrowane executory (REST: /api/executors);
-  2. wynik zgodny z wyrocznią polars-bio (te same wyrocznie co testy standalone);
-  3. praca na OBU executorach — executor zapisuje dane każdego policzonego etapu
-     w SWOIM katalogu roboczym (work_dir/job_id/stage_id/...), więc katalogi
-     pokazują wprost, kto co liczył;
-  4. kontrola negatywna — executor bez koderów (--no-codecs) nie potrafi
-     zdekodować planu, więc zapytanie musi zakończyć się błędem.
+Four pieces of evidence:
+  1. separate processes: different PIDs of the scheduler, the executors and the client, and
+     the scheduler sees two registered executors (REST: /api/executors);
+  2. a result that agrees with the polars-bio oracle (the same oracles as the standalone tests);
+  3. work on BOTH executors: an executor writes the data of every stage it computed
+     in ITS OWN working directory (work_dir/job_id/stage_id/...), so the directories
+     show directly who computed what;
+  4. a negative control: an executor without codecs (--no-codecs) cannot decode
+     the plan, so the query must end with an error.
 
-Bez pomiarów czasu — P0 pyta „czy rozproszone”, nie „jak szybko”.
+No timing measurements: this asks "is it distributed", not "how fast".
 
-Brak binarek to BŁĄD, nie pominięcie testu: dowód P0 nie może cicho zniknąć
-z wyników. Budowanie: cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build
+Missing binaries are an ERROR, not a skipped test: the evidence must not silently
+disappear from the results. Build: cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build
 --bin ballista_node --bin dist_ops
 
-Uruchomienie: pytest tests/test_ballista_multiprocess.py -v
-Testy operacji importują wyrocznie polars-bio.
+Run: pytest tests/test_ballista_multiprocess.py -v
+The operation tests import the polars-bio oracles.
 """
 
 from __future__ import annotations
@@ -125,9 +125,9 @@ def _wait_for_executors(cluster: Cluster, expected: int, timeout: float = 60.0) 
 
 
 def _wait_for_scheduler(cluster: Cluster, timeout: float = 30.0) -> None:
-    """Executor Ballisty (53 i 55) łączy się ze schedulerem tylko raz przy starcie
-    (scheduler_connect_timeout_seconds = 0 oznacza jedną próbę), więc executory
-    wolno uruchomić dopiero, gdy scheduler już nasłuchuje."""
+    """A Ballista executor (53 and 55) connects to the scheduler only once, at startup
+    (scheduler_connect_timeout_seconds = 0 means a single attempt), so executors
+    may be started only once the scheduler is already listening."""
     deadline = time.monotonic() + timeout
     scheduler = cluster.procs["scheduler"]
     while time.monotonic() < deadline:
@@ -145,8 +145,8 @@ def _wait_for_scheduler(cluster: Cluster, timeout: float = 30.0) -> None:
 
 
 def _start_cluster(log_dir: Path, executors: list[tuple[str, list[str]]]) -> Cluster:
-    """Scheduler + executory jako osobne procesy; każdy executor ma własny
-    katalog roboczy i 2 sloty zadań (specyfikacja, sekcja 9.1)."""
+    """Scheduler + executors as separate processes; each executor has its own
+    working directory and 2 task slots."""
     _require(NODE_BINARY)
     cluster = Cluster(scheduler_port=_free_port(), log_dir=log_dir)
     try:
@@ -189,8 +189,8 @@ def cluster(tmp_path_factory):
 
 
 def test_ballista_node_rejects_bad_arguments():
-    """Literówka w nazwie flagi albo brak wymaganej flagi nie może uruchomić
-    węzła z wartościami domyślnymi — ma skończyć się kodem 2 i instrukcją użycia."""
+    """A typo in a flag name or a missing required flag must not start the
+    node with default values; it must end with exit code 2 and a usage message."""
     _require(NODE_BINARY)
     for args in (
         [],
@@ -209,8 +209,8 @@ def test_ballista_node_rejects_bad_arguments():
 
 
 def test_start_cluster_reports_crashed_process(tmp_path):
-    """Gdy węzeł padnie przy starcie, pomocnik ma wskazać KTÓRY, zamiast czekać
-    w nieskończoność na rejestrację."""
+    """When a node crashes at startup, the helper must say WHICH one instead of waiting
+    forever for registration."""
     with pytest.raises(pytest.fail.Exception, match="executor_bad"):
         _start_cluster(tmp_path, [("executor_bad", ["--unknown-flag"])])
 
@@ -223,9 +223,9 @@ def test_cluster_stop_terminates_all_processes(tmp_path):
 
 
 def test_start_cluster_waits_for_scheduler_before_executors(tmp_path, monkeypatch):
-    """Executor łączy się ze schedulerem tylko raz przy starcie — gdyby wystartował,
-    zanim scheduler nasłuchuje, zakończy się błędem. Pomocnik musi najpierw
-    poczekać na scheduler; tu scheduler celowo startuje z 2-sekundowym opóźnieniem."""
+    """An executor connects to the scheduler only once, at startup; if it started
+    before the scheduler is listening, it would fail. The helper must wait for the
+    scheduler first; here the scheduler deliberately starts with a 2-second delay."""
     original_spawn = _spawn
 
     def spawn_with_delayed_scheduler(args: list[str], log: Path) -> subprocess.Popen:
@@ -245,8 +245,8 @@ def test_start_cluster_waits_for_scheduler_before_executors(tmp_path, monkeypatc
 
 
 def test_scheduler_sees_two_separate_executors(cluster):
-    """Dowód 1 (część klastrowa): trzy osobne procesy, a scheduler widzi dwa
-    RÓŻNE executory — różne identyfikatory i porty."""
+    """Evidence 1 (cluster part): three separate processes, and the scheduler sees two
+    DIFFERENT executors: different identifiers and ports."""
     pids = cluster.pids()
     assert len(set(pids.values())) == 3, f"PIDs are not distinct: {pids}"
     assert all(p.poll() is None for p in cluster.procs.values())
@@ -255,8 +255,8 @@ def test_scheduler_sees_two_separate_executors(cluster):
     assert len({e["port"] for e in executors}) == 2, executors
 
 
-# Kanoniczny zestaw danych — identyczny jak w tests/test_ballista_distributed_ops.py
-# (tamten plik pilnuje zgodności z data/parts_a i data/parts_b).
+# Canonical dataset, identical to tests/test_ballista_distributed_ops.py
+# (that file guards the agreement with data/parts_a and data/parts_b).
 INTERVALS_A = [
     ("chr1", 100, 200, "gene_A1"),
     ("chr1", 150, 300, "gene_A2"),
@@ -272,26 +272,26 @@ INTERVALS_B = [
     ("chr2", 300, 400, "peak_B5"),
 ]
 
-#: Operacje czytające KATALOGI dwóch plików (data/parts_*): etap źródłowy ma
-#: ≥ 2 zadania, więc przy rozdziale round-robin musi trafić na oba executory.
-#: W Ballistcie 55 tylko przy jednej partycji na zadanie
-#: (`ballista.scheduler.max_partitions_per_task` = 1, `cluster.rs`) — przy domyślnym
-#: 0 oba pliki szły jednym zadaniem na jeden executor (nearest, coverage).
-#: `overlap` czyta pojedyncze pliki (data/intervals_*.csv) i nie ma równoległości
-#: hash (znane ograniczenie — sprawozdanie, sekcja 6); dla niego wymagamy ≥ 1
-#: executora, a faktyczny rozkład trafia do pliku dowodów.
+#: Operations that read DIRECTORIES of two files (data/parts_*): the source stage has
+#: >= 2 tasks, so under round-robin assignment it must reach both executors.
+#: In Ballista 55 only with one partition per task
+#: (`ballista.scheduler.max_partitions_per_task` = 1, `cluster.rs`); with the default
+#: 0 both files went as one task to one executor (nearest, coverage).
+#: `overlap` reads single files (data/intervals_*.csv) and has no hash
+#: parallelism (a known limitation); for it we require >= 1
+#: executor, and the actual distribution goes to the evidence file.
 MULTI_TASK_OPS = {"merge", "subtract", "nearest", "coverage"}
-#: Operacje z hash-shuffle po chromosomie — plan musi mieć ≥ 2 etapy.
+#: Operations with a hash shuffle by chromosome: the plan must have >= 2 stages.
 SHUFFLE_OPS = {"merge", "subtract"}
 
 
 def _run_client(op: str, scheduler_url: str | None, output_dir: Path, timeout: int = 180):
-    """Uruchamia dist_ops z wynikami w `output_dir` (zmienna DIST_OUTPUT_DIR);
-    zwraca (CompletedProcess, PID klienta).
+    """Runs dist_ops with results in `output_dir` (the DIST_OUTPUT_DIR variable);
+    returns (CompletedProcess, client PID).
 
-    Własny katalog wyników jest konieczny: testy trybu standalone opierają się
-    na plikach w ballista_genomics/output/ (m.in. planach EXPLAIN ANALYZE),
-    więc uruchomienia z tego pliku nie mogą ich nadpisywać."""
+    A separate results directory is necessary: the standalone-mode tests rely
+    on files in ballista_genomics/output/ (among them the EXPLAIN ANALYZE plans),
+    so runs from this file must not overwrite them."""
     _require(DIST_BINARY)
     env = dict(os.environ)
     env["DIST_OUTPUT_DIR"] = str(output_dir)
@@ -317,8 +317,8 @@ def _run_client(op: str, scheduler_url: str | None, output_dir: Path, timeout: i
 
 
 def _stages_by_job(work_dir: Path) -> dict[str, set[str]]:
-    """{job_id: {stage_id, ...}} — etapy, dla których executor zapisał pliki
-    (układ Ballisty: work_dir/job_id/stage_id/...)."""
+    """{job_id: {stage_id, ...}}: the stages for which the executor wrote files
+    (Ballista layout: work_dir/job_id/stage_id/...)."""
     jobs: dict[str, set[str]] = {}
     for job in work_dir.iterdir():
         if not job.is_dir():
@@ -334,9 +334,9 @@ def _stages_by_job(work_dir: Path) -> dict[str, set[str]]:
 
 
 def _check_against_oracle(op: str, output_dir: Path) -> None:
-    """Dowód 2: wynik klienta == lokalny polars-bio (wyrocznie jak w
-    tests/test_ballista_distributed_ops.py). Importy leniwe — testy samego klastra
-    nie potrzebują polars-bio."""
+    """Evidence 2: client result == local polars-bio (oracles as in
+    tests/test_ballista_distributed_ops.py). Imports are lazy: the cluster-only tests
+    do not need polars-bio."""
     import pandas as pd
 
     df = pd.read_csv(output_dir / f"dist_{op}_result.csv")
@@ -363,11 +363,11 @@ def _check_against_oracle(op: str, output_dir: Path) -> None:
         }
         expected = reference_coverage(INTERVALS_A, INTERVALS_B)
     elif op == "nearest":
-        # Porównujemy ODLEGŁOŚCI, nie wybranych sąsiadów — remisy rozstrzygane
-        # są dowolnie (patrz tests/test_nearest_correctness.py).
+        # We compare DISTANCES, not the chosen neighbours: ties are broken
+        # arbitrarily (see tests/test_nearest_correctness.py).
         from tests.nearest_oracle import reference_nearest_min_distances
 
-        # Wiersz na każdy przedział A; A to prawa (odpytywana) tabela dist_nearest.
+        # One row per interval of A; A is the right (queried) table of dist_nearest.
         assert len(df) == len(INTERVALS_A)
         actual = {name: int(d) for name, d in zip(df["right_name"], df["distance"])}
         expected = {
@@ -380,7 +380,7 @@ def _check_against_oracle(op: str, output_dir: Path) -> None:
 
 
 def _write_evidence(op: str, pids: dict[str, int], new_jobs: dict[str, dict[str, set[str]]]) -> None:
-    """Zapisuje, który executor liczył które etapy — materiał do opisu P0."""
+    """Records which executor computed which stages, as material for describing the run."""
     evidence = {
         "operation": op,
         "pid": pids,
@@ -397,7 +397,7 @@ def _write_evidence(op: str, pids: dict[str, int], new_jobs: dict[str, dict[str,
 
 @pytest.mark.parametrize("op", ["overlap", "merge", "subtract", "nearest", "coverage"])
 def test_operation_runs_distributed_across_processes(cluster, op, tmp_path):
-    """Dowody 1–3 dla jednej operacji uruchomionej przez klaster z procesów."""
+    """Evidence 1-3 for one operation run through a cluster of separate processes."""
     standalone_plan = OUTPUT_DIR / f"dist_{op}_explain.txt"
     standalone_plan_before = (
         standalone_plan.stat().st_mtime_ns if standalone_plan.exists() else None
@@ -426,14 +426,14 @@ def test_operation_runs_distributed_across_processes(cluster, op, tmp_path):
         for name in after
     }
 
-    # Dowód 1: cztery różne procesy.
+    # Evidence 1: four different processes.
     pids = {**cluster.pids(), "client": client_pid}
     assert len(set(pids.values())) == 4, f"PIDs are not distinct: {pids}"
 
-    # Dowód 2: poprawność względem polars-bio.
+    # Evidence 2: correctness against polars-bio.
     _check_against_oracle(op, tmp_path)
 
-    # Dowód 3: praca wykonana w executorach, a dla operacji wielozadaniowych — w OBU.
+    # Evidence 3: work done in the executors, and for multi-task operations in BOTH.
     participating = sorted(name for name, jobs in new_jobs.items() if jobs)
     assert participating, (
         f"{op}: no executor wrote stage data - the query did not go through the cluster"
@@ -450,23 +450,23 @@ def test_operation_runs_distributed_across_processes(cluster, op, tmp_path):
 
 
 def test_client_fails_fast_when_scheduler_is_down(tmp_path):
-    """Adres nieistniejącego schedulera ma dać błąd w rozsądnym czasie, nie zawieszenie."""
+    """The address of a nonexistent scheduler must produce an error in reasonable time, not a hang."""
     result, _ = _run_client("merge", f"df://localhost:{_free_port()}", tmp_path, timeout=120)
     assert result.returncode != 0, f"the client succeeded without a scheduler:\n{result.stdout}"
 
 
 def test_empty_scheduler_url_means_standalone(tmp_path):
-    """Pusta zmienna BALLISTA_SCHEDULER_URL = brak zmiennej (tryb standalone)."""
+    """An empty BALLISTA_SCHEDULER_URL variable = no variable (standalone mode)."""
     result, _ = _run_client("merge", "", tmp_path, timeout=180)
     assert result.returncode == 0, result.stderr
     assert "standalone" in result.stdout, result.stdout
 
 
 def test_scheduler_accepts_ballista_settings_from_client(tmp_path, monkeypatch):
-    """Klucze `ballista.*` wysłane przez klienta muszą trafić do konfiguracji
-    zadania na schedulerze. Bez rozszerzenia BallistaConfig w konfiguracji
-    schedulera (upgrade_for_ballista) Ballista odrzuca je po cichu — tylko z logiem
-    na poziomie debug — i strojenie opcji Ballisty w pomiarach nie miałoby skutku."""
+    """`ballista.*` keys sent by the client must reach the job configuration on the
+    scheduler. Without the BallistaConfig extension in the scheduler configuration
+    (upgrade_for_ballista), Ballista rejects them silently, with a debug-level log
+    only, and tuning Ballista options in measurements would have no effect."""
     monkeypatch.setenv("RUST_LOG", "info,ballista_core::extension=debug")
     c = _start_cluster(tmp_path, [("executor_1", [])])
     try:
@@ -485,25 +485,25 @@ def test_scheduler_accepts_ballista_settings_from_client(tmp_path, monkeypatch):
     )
 
 
-#: Okno obserwacji kontroli negatywnej. Odrzucenie planu przez executor następuje
-#: w pierwszych sekundach (zaraz po etapie 1; Ballista 55 kończy wtedy zapytanie błędem
-#: w ułamku sekundy), a z koderami całe zapytanie trwa ~2 s — 45 s z dużym zapasem
-#: rozdziela przypadki „błąd”, „wynik” i „wisi” (zachowanie Ballisty 53).
+#: Observation window of the negative control. The executor rejects the plan within the
+#: first seconds (right after stage 1; Ballista 55 then ends the query with an error in a
+#: fraction of a second), and with codecs the whole query takes ~2 s; 45 s with a large margin
+#: separates the cases "error", "result" and "hang" (Ballista 53 behaviour).
 NEGATIVE_WINDOW_S = 45
 
 
 def test_executor_without_codecs_cannot_run_bio_plan(tmp_path):
-    """Dowód 4 (kontrola negatywna): ta sama konfiguracja co w teście operacji,
-    ale executor bez koderów. Etap 1 (zwykłe węzły DataFusion) executor policzy,
-    ale etapu z węzłem MergeExec nie umie zdekodować — plan jest więc dekodowany
-    w executorze, a nie gdzie indziej.
+    """Evidence 4 (negative control): the same configuration as in the operation test,
+    but with an executor without codecs. The executor will compute stage 1 (plain DataFusion
+    nodes) but cannot decode the stage with the MergeExec node, which shows that the plan is
+    decoded in the executor and nowhere else.
 
-    Executor odrzuca zadanie przy dekodowaniu („Could not deserialize ...” w jego
-    logu). Ballista 53 w trybie push nie zgłaszała tego jako błędu zapytania (uznawała
-    executor za utraconego i ponawiała — zapytanie wisiało). Ballista 55 zwraca
-    odrzucone zadanie schedulerowi, który kończy zapytanie błędem („Job failed”), a klient
-    dostaje „rejected by executor”. Dowodem jest więc szybki błąd klienta bez wyniku
-    oraz komunikat dekodowania w logu executora."""
+    The executor rejects the task while decoding ("Could not deserialize ..." in its
+    log). In push mode Ballista 53 did not report this as a query error (it treated the
+    executor as lost and retried, so the query hung). Ballista 55 returns the rejected
+    task to the scheduler, which ends the query with an error ("Job failed"), and the client
+    gets "rejected by executor". The evidence is therefore a fast client error with no result,
+    plus the decoding message in the executor log."""
     _require(DIST_BINARY)
     c = _start_cluster(tmp_path, [("executor_no_codecs", ["--no-codecs"])])
     output_dir = tmp_path / "results"

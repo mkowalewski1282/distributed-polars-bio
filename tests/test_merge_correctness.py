@@ -1,9 +1,9 @@
 """
-Formalne testy poprawności dla operacji merge (Faza C) — Ballista (lokalnie,
-patrz ballista_genomics/OPIS.md nt. braku furtki do pełnej dystrybucji dla tej
-operacji).
+Formal correctness tests for the merge operation on Ballista (local; see
+ballista_genomics/OPIS.md on the missing hook for full distribution of this
+operation).
 
-Uruchomienie: pytest tests/test_merge_correctness.py -v
+Run: pytest tests/test_merge_correctness.py -v
 """
 
 from __future__ import annotations

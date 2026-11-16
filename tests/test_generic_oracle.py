@@ -1,8 +1,7 @@
-"""Wyrocznia polars-bio na plikach Parquet (plan 2, Zadanie 3): schemat
-znormalizowany i semantyka chromosomów obecnych tylko po jednej stronie —
-wzorzec, który muszą odtworzyć Ballista i Sail.
+"""polars-bio oracle on Parquet files: the normalized schema and the semantics of
+chromosomes present on one side only, a pattern that Ballista and Sail have to reproduce.
 
-Uruchomienie: pytest tests/test_generic_oracle.py -v
+Run: pytest tests/test_generic_oracle.py -v
 """
 
 from __future__ import annotations
@@ -41,10 +40,10 @@ def test_oracle_one_sided_chromosomes(oracle_frames):
 
 
 def test_oracle_nearest_has_nonzero_distances(oracle_frames):
-    """Zbiór testowy musi zawierać przedziały z odstępem do sąsiada — gdy wszystkie
-    odległości wynosiły 0, test nearest sprawdzał tylko orientację i liczbę wierszy
-    (tak przypadkiem przechodził test P0). 0-based, półotwarte: odległość = odstęp."""
+    """The test dataset must contain intervals with a gap to the neighbour: when all
+    distances were 0, the nearest test checked only the orientation and the number of rows
+    (so tests passed by accident). 0-based, half-open: distance = gap."""
     rows = {(r[0], r[1], r[2], r[6]) for r in oracle_frames["nearest"].iter_rows()}
-    assert ("chr1", 700, 800, 100) in rows  # najbliższy po lewej: [450, 600)
-    assert ("chr2", 10, 40, 60) in rows  # najbliższy po prawej: [100, 220)
-    assert ("chr1", 260, 280, 10) in rows  # remis: [180, 250) i [290, 420)
+    assert ("chr1", 700, 800, 100) in rows  # nearest on the left: [450, 600)
+    assert ("chr2", 10, 40, 60) in rows  # nearest on the right: [100, 220)
+    assert ("chr1", 260, 280, 10) in rows  # tie: [180, 250) and [290, 420)

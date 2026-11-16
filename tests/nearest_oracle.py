@@ -1,4 +1,4 @@
-"""Golden oracle dla operacji nearest — analogicznie do overlap_oracle.py."""
+"""Golden oracle for the nearest operation, analogous to overlap_oracle.py."""
 
 from __future__ import annotations
 
@@ -21,18 +21,18 @@ def reference_nearest_pairs(
     intervals_a: list[tuple[str, int, int, str]],
     intervals_b: list[tuple[str, int, int, str]],
 ) -> set[tuple[str, str]]:
-    """Golden oracle: lokalny pb.nearest(), znormalizowany do zbioru par (name_a, name_b).
+    """Golden oracle: local pb.nearest(), normalized to a set of (name_a, name_b) pairs.
 
-    UWAGA: gdy interwał A ma kilku kandydatów w tej samej (np. zerowej)
-    odległości, pb.nearest() i natywny nearest() z datafusion-bio-function-ranges
-    MOGĄ wybrać różnych kandydatów (reguły remisów nie są udokumentowane; na
-    danych testowych, przy poprawnej orientacji, wybierają tych samych — patrz
-    test_ballista_and_pb_nearest_pick_same_neighbours) — obie odpowiedzi byłyby
-    wtedy poprawne co do odległości, ale
-    ten zbiór par NIE nadaje się do porównania 1:1 między silnikami przy
-    remisach. Do tego służy reference_nearest_min_distances() niżej —
-    porównuj DYSTANSE (name_a -> distance), nie konkretnych partnerów, gdy w
-    danych mogą wystąpić remisy (np. interwał overlapujący z >1 kandydatem).
+    NOTE: when interval A has several candidates at the same distance (e.g. zero),
+    pb.nearest() and the native nearest() from datafusion-bio-function-ranges
+    MAY pick different candidates (the tie-breaking rules are not documented; on
+    the test data, with the correct orientation, they pick the same ones, see
+    test_ballista_and_pb_nearest_pick_same_neighbours). Both answers would then
+    be correct as far as the distance goes, but this set of pairs is NOT suitable
+    for a 1:1 comparison between engines when there are ties. Use
+    reference_nearest_min_distances() below for that: compare DISTANCES
+    (name_a -> distance), not the specific partners, whenever the data may
+    contain ties (e.g. an interval overlapping more than one candidate).
     """
     if not intervals_a or not intervals_b:
         return set()
@@ -55,9 +55,9 @@ def reference_nearest_min_distances(
     intervals_a: list[tuple[str, int, int, str]],
     intervals_b: list[tuple[str, int, int, str]],
 ) -> dict[str, int]:
-    """Golden oracle odporny na remisy: name_a -> odległość do najbliższego
-    kandydata wg pb.nearest() (nie WYBRANEGO konkretnego kandydata, którego
-    tie-breaking może się różnić między silnikami)."""
+    """Tie-robust golden oracle: name_a -> distance to the nearest candidate
+    according to pb.nearest() (not the specific candidate that was CHOSEN, whose
+    tie-breaking may differ between engines)."""
     if not intervals_a or not intervals_b:
         return {}
 

@@ -1,17 +1,17 @@
-"""Plan 2, Zadanie 6: test akceptacyjny na prawdziwych danych databio-8p.
+"""Acceptance test on the real databio-8p data.
 
-Para 1-2 (fBrain-DS14718 × exons; merge: zbiór 1) — najmniejsza para macierzy
-lokalnej (specyfikacja, sekcja 7.1) — w trzech wariantach wykonania: Ballista
-standalone, Ballista z osobnych procesów (P0) i Sail. Każdy wynik porównywany
-z polars-bio na tych samych plikach. Bez pomiarów czasu.
+Pair 1-2 (fBrain-DS14718 x exons; merge: dataset 1), the smallest pair of the local
+matrix, in three execution variants: Ballista standalone, Ballista on a cluster of
+separate processes, and Sail. Each result is compared with polars-bio on the same
+files. No timing measurements.
 
-To test akceptacyjny już zaimplementowanych ścieżek (Zadania 4–5), więc ma
-przejść od razu; to, że to porównanie potrafi się nie udać, pokazują testy
-Zadań 3–5 na tym samym `row_multiset`.
+This is an acceptance test of paths that are already implemented, so it is expected
+to pass right away; the tests of the individual paths on the same `row_multiset` show
+that this comparison can fail.
 
-Wymaga: python -m bench.data.download (dane poza repozytorium) oraz binarek
-bench_client i ballista_node. Brak danych = pominięcie, brak binarek = błąd.
-Uruchomienie: pytest tests/test_real_data.py -v
+Requires: python -m bench.data.download (the data lives outside the repository) and the
+bench_client and ballista_node binaries. Missing data = skip, missing binaries = error.
+Run: pytest tests/test_real_data.py -v
 """
 
 from __future__ import annotations
@@ -29,14 +29,14 @@ from tests.test_ballista_parquet import check_result, op_args, run_client
 
 PAIR = "1-2"
 
-#: Tryb standalone Ballisty 53 (scheduler i executor w jednym procesie, tryb pull) nie
-#: udźwiga operacji z broadcastem na prawdziwych danych: executor pobiera zadania klientem
-#: gRPC z domyślnym limitem tonic 4 MiB (niezmienialnym przez standalone_with_state), a odpowiedź
-#: z kilkoma zadaniami — każde niesie całą tabelę broadcastowaną — jest większa (zmierzono
-#: 9 808 588 B już przy 100 tys. wierszy broadcastu). Executor ponawia pobranie w nieskończoność,
-#: więc zapytanie wisi, zamiast zakończyć się błędem. Pomiary używają klastra z osobnych
-#: procesów (tryb push, limit 16 MiB) — test_ballista_cluster_on_1_2. `strict`: gdy standalone
-#: zacznie działać, test to zgłosi.
+#: Ballista 53 standalone mode (scheduler and executor in one process, pull mode) cannot
+#: handle operations with a broadcast on real data: the executor fetches tasks with a gRPC
+#: client with tonic's default 4 MiB limit (not changeable through standalone_with_state), and a
+#: response with several tasks, each carrying the whole broadcast table, is larger (9 808 588 B
+#: measured already at 100 thousand broadcast rows). The executor retries the fetch forever,
+#: so the query hangs instead of ending with an error. The measurements use a cluster of
+#: separate processes (push mode, 16 MiB limit): test_ballista_cluster_on_1_2. `strict`: when
+#: standalone starts working, the test reports it.
 STANDALONE_HANG_TIMEOUT_S = 90
 _STANDALONE_BROADCAST_HANGS = pytest.mark.xfail(
     raises=subprocess.TimeoutExpired,

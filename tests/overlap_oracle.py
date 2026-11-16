@@ -1,15 +1,15 @@
 """
-Wspólna wyrocznia (golden oracle) i generator danych dla testów poprawności
-operacji overlap na Ballistrze i Sailu — sekcja "Weryfikacja" planu pracy.
+Shared golden oracle and data generator for the correctness tests of the
+overlap operation on Ballista and Sail.
 
-Nie importuje ani nie zależy od Ballisty/Saila — tylko od lokalnego polars-bio.
-Silnik-specyficzne testy (Faza A.6, Faza B.4) mają importować stąd
-`generate_intervals`, `reference_overlap_pairs`, `EDGE_CASES`.
+It neither imports nor depends on Ballista/Sail, only on a local polars-bio.
+Engine-specific tests should import `generate_intervals`,
+`reference_overlap_pairs` and `EDGE_CASES` from here.
 
-UWAGA: to nie jest jeszcze pełny "property-based" harness (biblioteka
-`hypothesis` nie jest zainstalowana w środowisku) — generator losowy poniżej
-jest odpowiednikiem napisanym ręcznie na `random`, żeby nie dodawać nowej
-zależności bez potrzeby. Wiele losowych ziaren (seeds) daje podobny efekt.
+NOTE: this is not yet a full property-based harness (the `hypothesis` library
+is not installed in the environment); the random generator below is a
+hand-written equivalent built on `random`, so as not to add a new dependency
+unnecessarily. Many random seeds give a similar effect.
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ class IntervalSet:
 
 
 def _reset_pb_context() -> None:
-    """polars-bio rejestruje tabele 's1'/'s2' w globalnym kontekście DataFusion —
-    trzeba je wyczyścić między kolejnymi wywołaniami w tym samym procesie."""
+    """polars-bio registers tables 's1'/'s2' in the global DataFusion context;
+    they have to be cleared between successive calls in the same process."""
     from polars_bio.context import ctx as _pb_ctx
     for table in ["s1", "s2"]:
         try:
@@ -47,10 +47,9 @@ def reference_overlap_pairs(
     intervals_a: list[tuple[str, int, int, str]],
     intervals_b: list[tuple[str, int, int, str]],
 ) -> set[tuple[str, str]]:
-    """Golden oracle: lokalny pb.overlap(), znormalizowany do zbioru par (name_a, name_b).
+    """Golden oracle: local pb.overlap(), normalized to a set of (name_a, name_b) pairs.
 
-    Znormalizowany = niezależny od kolejności wierszy/typów — patrz sekcja
-    "Porównanie znormalizowane" w planie pracy.
+    Normalized means independent of row order and of types.
     """
     if not intervals_a or not intervals_b:
         return set()
@@ -70,8 +69,8 @@ def reference_overlap_pairs(
 
 
 def normalize_engine_pairs(df: pd.DataFrame, name_a_col: str, name_b_col: str) -> set[tuple[str, str]]:
-    """Normalizuje wynik z silnika rozproszonego (Sail/Ballista) do tej samej postaci
-    co reference_overlap_pairs — zbiór par (name_a, name_b), niezależny od kolejności."""
+    """Normalizes a distributed-engine result (Sail/Ballista) to the same form as
+    reference_overlap_pairs: a set of (name_a, name_b) pairs, independent of order."""
     if df is None or len(df) == 0:
         return set()
     return set(zip(df[name_a_col].astype(str).tolist(), df[name_b_col].astype(str).tolist()))
@@ -85,7 +84,7 @@ def generate_random_intervals(
     coord_max: int = 1000,
     max_len: int = 100,
 ) -> tuple[list[tuple[str, int, int, str]], list[tuple[str, int, int, str]]]:
-    """Losowe interwały do testów property-based (wiele seedów w pętli testowej)."""
+    """Random intervals for property-based tests (many seeds in a test loop)."""
     rng = random.Random(seed)
     chroms = [f"chr{i + 1}" for i in range(n_chroms)]
 
@@ -94,7 +93,7 @@ def generate_random_intervals(
         for i in range(n):
             chrom = rng.choice(chroms)
             start = rng.randint(0, coord_max)
-            length = rng.randint(0, max_len)  # length=0 -> start==end, przypadek brzegowy
+            length = rng.randint(0, max_len)  # length=0 -> start==end, an edge case
             end = start + length
             rows.append((chrom, start, end, f"{prefix}{i}"))
         return rows
@@ -103,14 +102,14 @@ def generate_random_intervals(
 
 
 # ---------------------------------------------------------------------------
-# Przypadki brzegowe (sekcja "Weryfikacja" planu: start==end, stykające się,
-# duplikaty, puste partycje, ujemne współrzędne)
+# Edge cases: start==end, touching intervals, duplicates, empty partitions,
+# negative coordinates
 # ---------------------------------------------------------------------------
 
 EDGE_CASES: dict[str, tuple[list[tuple[str, int, int, str]], list[tuple[str, int, int, str]]]] = {
     "touching_not_overlapping": (
         [("chr1", 100, 200, "a1")],
-        [("chr1", 200, 300, "b1")],  # a.end == b.start -> half-open: NIE nakłada się
+        [("chr1", 200, 300, "b1")],  # a.end == b.start -> half-open: does NOT overlap
     ),
     "zero_length_interval": (
         [("chr1", 150, 150, "a1")],  # start == end
@@ -128,6 +127,6 @@ EDGE_CASES: dict[str, tuple[list[tuple[str, int, int, str]], list[tuple[str, int
     ),
     "single_base_overlap": (
         [("chr1", 100, 200, "a1")],
-        [("chr1", 199, 300, "b1")],  # nakładają się na [199,200)
+        [("chr1", 199, 300, "b1")],  # they overlap on [199,200)
     ),
 }

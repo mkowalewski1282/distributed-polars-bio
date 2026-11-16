@@ -1,9 +1,9 @@
-"""Plan 3a, Zadanie 4: runner polars-bio (specyfikacja 8.3) — świeży proces, polars-bio czyta
-Parquet sam, wynik konsumowany strumieniowo, protokół jak w bench_client.
+"""The polars-bio runner: a fresh process, polars-bio reads the Parquet itself, the result is
+consumed in a streaming fashion, and the protocol is the same as in bench_client.
 
-Przy target_partitions > 1 polars-bio 0.28 liczył merge i subtract osobno w każdej partycji
-(błąd #372, naprawiony w 0.29.0). Od planu 3b-1 (polars-bio 0.36) test dwóch partycji obejmuje
-wszystkie operacje bez oznaczeń xfail."""
+With target_partitions > 1, polars-bio 0.28 computed merge and subtract separately in each
+partition (bug #372, fixed in 0.29.0). With polars-bio 0.36 the two-partition test covers all
+operations without xfail marks."""
 
 from __future__ import annotations
 
@@ -55,8 +55,8 @@ def test_single_partition_matches_polars_bio_oracle(op, parquet_dirs, parquet_ex
     assert set(got["phases"]) == {"first_batch_s"}
     assert got["extra"]["target_partitions"] == 1
     assert got["t_total_s"] > 0 and got["peak_rss_bytes"] > 10 * 2**20
-    # Suma kontrolna liczona PO zatrzymaniu zegara (specyfikacja 3b-2, 4.1): jej czas jest
-    # osobno, a faza „do pierwszej partii” mieści się w czasie całkowitym.
+    # The checksum is computed AFTER the clock is stopped: its time is reported separately, and
+    # the "up to the first batch" phase fits within the total time.
     assert got["extra"]["checksum_s"] > 0
     assert 0 < got["phases"]["first_batch_s"] <= got["t_total_s"]
 
@@ -95,7 +95,7 @@ def test_missing_data_path_is_reported(tmp_path):
 
 
 def test_empty_result_reports_zero_rows(tmp_path):
-    """Rozłączne chromosomy: overlap bez wyniku — zero wierszy, suma zerowa, faza w granicach."""
+    """Disjoint chromosomes: overlap with no result: zero rows, a zero checksum, the phase within bounds."""
     left = write_parts([("chrA", 10, 20), ("chrA", 30, 40)], tmp_path / "a")
     right = write_parts([("chrB", 10, 20), ("chrB", 30, 40)], tmp_path / "b")
     got = report(run_runner(["--op", "overlap", "--left", str(left), "--right", str(right), "--threads", "1"]))
