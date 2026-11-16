@@ -39,7 +39,7 @@ def raw(**overrides) -> dict:
     return base
 
 
-def test_minimal_config_gets_spec_defaults():
+def test_minimal_config_gets_default_values():
     cfg = parse(raw())
     assert cfg.scenarios == (Scenario("overlap", "1-2"), Scenario("merge", "1"))
     assert [s.id for s in cfg.scenarios] == ["overlap/1-2", "merge/1"]

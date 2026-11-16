@@ -14,7 +14,7 @@ from bench import ops
 DATABIO = ("contig", "pos_start", "pos_end")
 
 
-def test_output_columns_follow_spec_8_4():
+def test_output_columns_follow_normalized_schema():
     assert ops.OUTPUT_COLUMNS == {
         "overlap": ("chrom_1", "start_1", "end_1", "chrom_2", "start_2", "end_2"),
         "nearest": ("chrom_1", "start_1", "end_1", "chrom_2", "start_2", "end_2", "distance"),
