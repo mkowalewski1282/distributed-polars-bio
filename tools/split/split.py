@@ -160,12 +160,22 @@ LOCKED_REPOS = ("ballista-genomics", "sail-genomics")
 BENCH_IMPORT = re.compile(r"^\s*(?:from\s+bench\b|import\s+bench\b)", re.MULTILINE)
 REPOS_WITHOUT_BENCH = ("ballista-genomics", "sail-genomics")
 
-WORKSHOP_PATTERNS: tuple[str, ...] = (
+#: Odwolania do dokumentow roboczych opisane ogolnie (specyfikacja, plan, zadanie, faza, przeglad)
+#: — te wzorce kopiuje publiczny straznik nakladki (tests/test_no_workshop_refs.py).
+DOC_REFERENCE_PATTERNS: tuple[str, ...] = (
     r"specyfikacj",
     r"\bspec(?:ification)?\b",
     r"\bplan(?:u|ie)? (?:2|3|3a|3b|P0)\b",
     r"zadani[ea] \d",
     r"\btask \d",
+    r"\bfaz[aye] [A-H]\b",
+    r"\bphase [A-H]\b",
+    r"przegl[a\u0105]d(?:u)? (?:3a|3b|ko\u0144cow)",
+    r"\breview (?:3a|3b)\b",
+)
+#: Nazwy warsztatu — tylko tutaj (tools/ nie jest eksportowane), nigdy w nowych repozytoriach,
+#: takze nie w pliku straznika (skan eksportu sprawdza go tymi wzorcami).
+SENSITIVE_PATTERNS: tuple[str, ...] = (
     r"docs/superpowers",
     r"wnioski_claude",
     r"raporty/",
@@ -173,23 +183,23 @@ WORKSHOP_PATTERNS: tuple[str, ...] = (
     r"promotor",
     r"supervisor",
     r"claude",
-    r"\bfaz[aye] [A-H]\b",
-    r"\bphase [A-H]\b",
-    r"przegl[a\u0105]d(?:u)? (?:3a|3b|ko\u0144cow)",
-    r"\breview (?:3a|3b)\b",
 )
+WORKSHOP_PATTERNS: tuple[str, ...] = DOC_REFERENCE_PATTERNS + SENSITIVE_PATTERNS
 POLISH_PATTERNS: tuple[str, ...] = (
     "[" + _POLISH_ESCAPES + "]",
     r"\b(?:jest|oraz|przez|ktory|ktora|gdy|tylko|wiec|czyli|albo|zeby|dlatego)\b",
 )
 
-#: Pliki definiujace sam straznik (nakladka Task 12) — zawieraja wzorce, wiec nie sa skanowane.
+#: Pliki definiujace straznik nakladki — zawieraja wzorce ogolne i jezyka, wiec skan sprawdza je
+#: tylko wzorcami SENSITIVE_PATTERNS.
 GUARD_DEFINITION_FILES = ("tests/test_no_workshop_refs.py",)
-#: Kod upstreamu — poza zakresem straznika.
-SCAN_EXCLUDED_PREFIXES = ("vendor/", ".git/")
+#: Poza zakresem straznika. vendor/ jest skanowany w calosci: skan kopii v0.25.0 nie ma trafien
+#: w kodzie upstreamu, a nasze komentarze latek i vendor/PATCH.md musza byc po angielsku.
+SCAN_EXCLUDED_PREFIXES = (".git/",)
 
 _WORKSHOP_RE = [re.compile(p, re.IGNORECASE) for p in WORKSHOP_PATTERNS]
 _POLISH_RE = [re.compile(p, re.IGNORECASE) for p in POLISH_PATTERNS]
+_SENSITIVE_RE = [re.compile(p, re.IGNORECASE) for p in SENSITIVE_PATTERNS]
 
 
 def _glob_regex(pattern: str) -> re.Pattern[str]:
@@ -338,12 +348,14 @@ def line_families(line: str) -> set[str]:
 
 def scan_workshop_refs(root: Path) -> list[str]:
     """Trafienia straznika tresci i jezyka w plikach tekstowych pod `root`: "plik:linia: tekst"
-    (jedno trafienie na linie). Pomija vendor/, .git/, pliki binarne i plik definiujacy straznik."""
+    (jedno trafienie na linie). Pomija .git/ i pliki binarne; plik definiujacy straznik sprawdza
+    tylko nazwami warsztatu (SENSITIVE_PATTERNS)."""
     root = Path(root)
     hits = []
     for rel in _relative_files(root):
-        if rel.startswith(SCAN_EXCLUDED_PREFIXES) or rel in GUARD_DEFINITION_FILES:
+        if rel.startswith(SCAN_EXCLUDED_PREFIXES):
             continue
+        guard = rel in GUARD_DEFINITION_FILES
         raw = (root / rel).read_bytes()
         if b"\0" in raw:
             continue
@@ -352,7 +364,8 @@ def scan_workshop_refs(root: Path) -> list[str]:
         except UnicodeDecodeError:
             continue
         for n, line in enumerate(text.splitlines(), 1):
-            if line_families(line):
+            hit = any(r.search(line) for r in _SENSITIVE_RE) if guard else line_families(line)
+            if hit:
                 hits.append(f"{rel}:{n}: {line.strip()}")
     return hits
 

@@ -1,9 +1,9 @@
 mod bio_physical_planner;
 mod bio_query_planner;
-// PATCH (praca magisterska, patrz ../../../PATCH.md): `mod` -> `pub mod`, żeby
-// ColIntervals/ColInterval i parse() były osiągalne spoza crate'a. Bez tego
-// IntervalJoinExec::try_new() jest niewywoływalne z zewnątrz (wymaga
-// ColIntervals jako argumentu, a typ jest nienazywalny bez tej zmiany).
+// PATCH 1 (see ../../../PATCH.md): `mod` -> `pub mod`, so that
+// ColIntervals/ColInterval and parse() are reachable from outside the crate.
+// Without it IntervalJoinExec::try_new() cannot be called from outside (it takes
+// ColIntervals as an argument, and the type cannot be named without this change).
 pub mod intervals;
 pub mod joins;
 

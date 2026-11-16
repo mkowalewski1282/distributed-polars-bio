@@ -169,7 +169,7 @@ impl TableProvider for SubtractProvider {
     }
 }
 
-// PATCH (praca magisterska, patrz ../../PATCH.md, Latka 2) - czysta widocznosc.
+// PATCH 2 (see ../../PATCH.md): visibility only.
 #[derive(Debug)]
 pub struct SubtractExec {
     pub schema: SchemaRef,

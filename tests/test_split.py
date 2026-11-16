@@ -52,8 +52,8 @@ def test_mapping_covers_every_moved_test():
 
 
 def test_moved_files_are_english():
-    """Kazdy plik eksportowany wg MAPPING (zrodlo w monorepo, bez vendor/ i plikow binarnych) nie
-    ma trafien wzorcow jezyka polskiego ani odwolan do dokumentow roboczych."""
+    """Kazdy plik eksportowany wg MAPPING (zrodlo w monorepo, takze vendor/, bez plikow binarnych)
+    nie ma trafien wzorcow jezyka polskiego ani odwolan do dokumentow roboczych."""
     tracked = subprocess.run(
         ["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True
     ).stdout.splitlines()
@@ -90,19 +90,21 @@ def test_scan_finds_workshop_refs(tmp_path):
     (tmp_path / "a.py").write_text("# specyfikacja 3b-2\nx = 1  # Zadanie 27\n")
     (tmp_path / "b.py").write_text("# liczba w\u0105tk\u00f3w\n")
     (tmp_path / "vendor").mkdir()
-    (tmp_path / "vendor" / "x.rs").write_text("// spec says so\n")
+    (tmp_path / "vendor" / "x.rs").write_text("// PATCH (praca magisterska) - to jest latka\n")
     hits = split.scan_workshop_refs(tmp_path)
-    assert len(hits) == 3, hits
+    assert len(hits) == 4, hits
     assert [h for h in hits if h.startswith("a.py:")].__len__() == 2
     assert [h for h in hits if h.startswith("b.py:1:")]
-    assert not [h for h in hits if h.startswith("vendor/")]
+    assert [h for h in hits if h.startswith("vendor/x.rs:1:")]  # vendor/ tez jest skanowany
 
 
-def test_scan_skips_guard_definition_file(tmp_path):
+def test_scan_checks_guard_definition_file_only_for_workshop_names(tmp_path):
     guard = tmp_path / "tests" / "test_no_workshop_refs.py"
     guard.parent.mkdir()
-    guard.write_text("PATTERN = 'promotor'\n")
+    guard.write_text("PATTERNS = (r'specyfikacj', r'\\b(?:jest|oraz)\\b')\n")
     assert split.scan_workshop_refs(tmp_path) == []
+    guard.write_text("PATTERN = 'promotor'\n")
+    assert split.scan_workshop_refs(tmp_path) == ["tests/test_no_workshop_refs.py:1: PATTERN = 'promotor'"]
 
 
 def test_pattern_sources_are_ascii():
@@ -197,9 +199,13 @@ def test_overlay_guard_uses_the_split_patterns():
     spec = importlib.util.spec_from_file_location("overlay_guard", path)
     guard = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(guard)
-    assert guard.WORKSHOP_PATTERNS == split.WORKSHOP_PATTERNS
+    assert guard.DOC_REFERENCE_PATTERNS == split.DOC_REFERENCE_PATTERNS
+    assert set(guard.DOC_REFERENCE_PATTERNS) < set(split.WORKSHOP_PATTERNS)
+    assert not hasattr(guard, "WORKSHOP_PATTERNS") and not hasattr(guard, "SENSITIVE_PATTERNS")
     assert guard.POLISH_PATTERNS == split.POLISH_PATTERNS
-    assert path.read_text(encoding="utf-8").isascii()
+    text = path.read_text(encoding="utf-8")
+    assert text.isascii()
+    assert not [p for p in split.SENSITIVE_PATTERNS if re.search(p, text, re.IGNORECASE)]
 
 
 def test_overlays_have_no_workshop_refs():
@@ -215,3 +221,13 @@ def test_export_locks_the_integration_repos(tmp_path, monkeypatch):
     monkeypatch.setattr(split, "_uv_lock", lambda target: locked.append(target.name))
     split.export("HEAD", tmp_path / "out")
     assert locked == list(split.LOCKED_REPOS) == ["ballista-genomics", "sail-genomics"]
+    # Nazwy warsztatu nigdzie w eksporcie (takze w pliku straznika i w vendor/).
+    sensitive = [re.compile(p, re.IGNORECASE) for p in split.SENSITIVE_PATTERNS]
+    found = [
+        f"{path.relative_to(tmp_path)}:{n}"
+        for path in sorted((tmp_path / "out").rglob("*"))
+        if path.is_file()
+        for n, line in enumerate(path.read_bytes().decode("utf-8", "replace").splitlines(), 1)
+        if any(r.search(line) for r in sensitive)
+    ]
+    assert not found, found

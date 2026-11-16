@@ -163,7 +163,7 @@ impl TableProvider for NearestProvider {
     }
 }
 
-// PATCH (praca magisterska, patrz ../../PATCH.md, Latka 2) - czysta widocznosc.
+// PATCH 2 (see ../../PATCH.md): visibility only.
 #[derive(Debug)]
 pub struct NearestExec {
     pub schema: SchemaRef,
@@ -481,10 +481,10 @@ fn get_nearest_stream(
     Ok(Box::pin(adapted_stream))
 }
 
-// PATCH (praca magisterska, patrz ../../PATCH.md, Latka 2): `fn` -> `pub fn`.
-// Kodek odbudowuje indeks po stronie executora z left_batch przeslanego przez
-// Arrow IPC - i musi uzyc DOKLADNIE tej samej funkcji co scan(), zeby `position`
-// w IntervalRecord wskazywalo ten sam wiersz tego samego batcha.
+// PATCH 2 (see ../../PATCH.md): `fn` -> `pub fn`.
+// The codec rebuilds the index on the executor from the left_batch sent through
+// Arrow IPC - and must use EXACTLY the same function as scan(), so that `position`
+// in IntervalRecord points to the same row of the same batch.
 pub fn build_nearest_indexes(
     batch: &RecordBatch,
     columns: (&str, &str, &str),

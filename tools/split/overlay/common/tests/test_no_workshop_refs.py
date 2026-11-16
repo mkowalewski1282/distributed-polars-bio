@@ -1,10 +1,11 @@
 """Content guard: every text file of the repository is in English and free of references to
 internal working notes.
 
-Not scanned: vendored upstream code (vendor/), the engine submodules (engines/, each has its own
-guard), measurement results (bench/results/), version control, virtual environments, build
-output, the directories listed in .gitignore, binary files and this file. The patterns are ASCII
-only (Polish letters as \\u escapes)."""
+Vendored code (vendor/) is scanned too: its local patches and notes must be English as well.
+Not scanned: the engine submodules (engines/, each has its own guard), measurement results
+(bench/results/), version control, virtual environments, build output, the directories listed in
+.gitignore, binary files and this file. The patterns are ASCII only (Polish letters as \\u
+escapes)."""
 
 from __future__ import annotations
 
@@ -17,19 +18,13 @@ THIS_FILE = Path(__file__).resolve().relative_to(REPO).as_posix()
 
 _POLISH_ESCAPES = r"\u0105\u0107\u0119\u0142\u0144\u00f3\u015b\u017a\u017c\u0104\u0106\u0118\u0141\u0143\u00d3\u015a\u0179\u017b"
 
-WORKSHOP_PATTERNS: tuple[str, ...] = (
+#: References to working documents (specifications, plans, tasks, phases, review rounds).
+DOC_REFERENCE_PATTERNS: tuple[str, ...] = (
     r"specyfikacj",
     r"\bspec(?:ification)?\b",
     r"\bplan(?:u|ie)? (?:2|3|3a|3b|P0)\b",
     r"zadani[ea] \d",
     r"\btask \d",
-    r"docs/superpowers",
-    r"wnioski_claude",
-    r"raporty/",
-    r"ustalenia_zalozen",
-    r"promotor",
-    r"supervisor",
-    r"claude",
     r"\bfaz[aye] [A-H]\b",
     r"\bphase [A-H]\b",
     r"przegl[a\u0105]d(?:u)? (?:3a|3b|ko\u0144cow)",
@@ -40,12 +35,13 @@ POLISH_PATTERNS: tuple[str, ...] = (
     r"\b(?:jest|oraz|przez|ktory|ktora|gdy|tylko|wiec|czyli|albo|zeby|dlatego)\b",
 )
 
-_PATTERNS = [re.compile(p, re.IGNORECASE) for p in WORKSHOP_PATTERNS + POLISH_PATTERNS]
+_PATTERNS = [re.compile(p, re.IGNORECASE) for p in DOC_REFERENCE_PATTERNS + POLISH_PATTERNS]
 
 #: Directory names never scanned, at any depth.
 SKIPPED_DIR_NAMES = frozenset({".git", ".venv", "target", "__pycache__", ".pytest_cache"})
-#: Paths relative to the repository root that are never scanned.
-SKIPPED_PREFIXES = ("vendor/", "engines/", "bench/results/")
+#: Paths relative to the repository root that are never scanned: the engine submodules (each
+#: has its own guard) and measurement results.
+SKIPPED_PREFIXES = ("engines/", "bench/results/")
 
 
 def _gitignored_dirs() -> tuple[set[str], tuple[str, ...]]:

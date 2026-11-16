@@ -109,13 +109,13 @@ impl TableProvider for MergeProvider {
     }
 }
 
-// PATCH (praca magisterska, patrz ../../PATCH.md, Latka 2): `struct` -> `pub struct`
-// oraz `pub` przy wszystkich polach. Bez tego MergeExec jest spoza crate'a
-// calkowicie nienazywalny (nie da sie zrobic downcast_ref ani zbudowac literalu),
-// wiec nie da sie napisac PhysicalExtensionCodec, a bez niego Ballista nie
-// przesle planu do executora. Rust nie ma literalu czesciowego, wiec musza byc
-// publiczne WSZYSTKIE pola - i to zalatwia jednoczesnie konstruktor i gettery.
-// Zmiana czysto widocznosciowa: 0 linii logiki.
+// PATCH 2 (see ../../PATCH.md): `struct` -> `pub struct` and `pub` on every
+// field. Without it MergeExec cannot be named outside the crate at all (neither
+// downcast_ref nor a struct literal is possible), so no PhysicalExtensionCodec can
+// be written, and without one Ballista cannot ship the plan to the executor. Rust
+// has no partial struct literal, so ALL fields must be public - which provides the
+// constructor and the getters at once.
+// A visibility-only change: 0 lines of logic.
 #[derive(Debug)]
 pub struct MergeExec {
     pub schema: SchemaRef,
