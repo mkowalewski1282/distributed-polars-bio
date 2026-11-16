@@ -1,55 +1,70 @@
-"""Sprawdzenia przed serią (plan 3b-2, Zadanie 19; przegląd 3a, pozycja 4): CPU węzłów dostępne
-dla procesu, pary SMT zgodne z tabelą węzłów, taskset i pysail, pusty swap."""
+"""Sprawdzenia przed serią (plan 3b-2, Zadanie 19; przegląd 3a, pozycja 4; etap 4: układ CPU
+z topologii): czytelna topologia, miejsce co najmniej na P = 1 i przebieg kontrolny, za duże P
+pominięte z ostrzeżeniem; taskset i pysail, pusty swap."""
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
 from bench import preflight
-from bench.config import ConfigError
+from bench.config import ConfigError, parse
+from bench.cpus import read_layout
+from tests.bench.fake_sysfs import make
 
 
-def sysfs(tmp_path: Path, siblings: dict[int, str]) -> Path:
-    for cpu, text in siblings.items():
-        topology = tmp_path / f"cpu{cpu}" / "topology"
-        topology.mkdir(parents=True)
-        (topology / "thread_siblings_list").write_text(text + "\n")
-    return tmp_path
+def config(parallelism):
+    return parse({
+        "series": "test", "scenarios": [{"op": "overlap", "pair": "1-2"}],
+        "variants": ["polars_bio"], "parallelism": parallelism, "seed": 1,
+    })
 
 
-SMT_PAIRS = {0: "0-1", 2: "2-3", 4: "4-5", 6: "6-7"}
+def layout(tmp_path, cores):
+    return read_layout(make(tmp_path, cores), affinity={t for core in cores for t in core})
 
 
-def test_cpus_of_the_node_layout_pass(tmp_path):
-    preflight.check_cpus(3, affinity=set(range(12)), sysfs=sysfs(tmp_path, SMT_PAIRS))
+def test_check_cpus_returns_skipped_parallelism(tmp_path):
+    """3 rdzenie SMT: rdzeń systemowy + 4 CPU, więc P = 8 zostanie pominięte, reszta mieści się."""
+    small = layout(tmp_path, [[0, 1], [2, 3], [4, 5]])
+    assert preflight.check_cpus(config([1, 2, 4, 8]), small) == [8]
+    assert preflight.check_cpus(config([1, 2, 4]), small) == []
 
 
-def test_missing_cpus_in_affinity_are_reported(tmp_path):
-    with pytest.raises(ConfigError, match=r"CPUs \[6, 7\] are not available"):
-        preflight.check_cpus(3, affinity=set(range(6)), sysfs=sysfs(tmp_path, SMT_PAIRS))
+def test_check_cpus_fails_without_control_cpus(tmp_path):
+    """Jeden CPU poza rdzeniem systemowym: P = 1 by się zmieściło, ale przebieg kontrolny
+    (2 wątki) nie ma gdzie działać."""
+    with pytest.raises(ConfigError, match="control run needs 2 CPUs"):
+        preflight.check_cpus(config([1]), layout(tmp_path, [[0], [1]]))
 
 
-def test_layout_without_smt_pairs_is_rejected(tmp_path):
-    with pytest.raises(ConfigError, match="CPU 2 and 3 are not SMT siblings"):
-        preflight.check_cpus(2, affinity=set(range(12)), sysfs=sysfs(tmp_path, {0: "0-1", 2: "2,8", 4: "4-5"}))
+def test_check_cpus_fails_without_any_cpu_outside_the_system_core(tmp_path):
+    with pytest.raises(ConfigError, match="at least P = 1"):
+        preflight.check_cpus(config([1]), layout(tmp_path, [[0, 1]]))
 
 
-def test_unreadable_topology_is_reported(tmp_path):
-    with pytest.raises(ConfigError, match="cannot read SMT topology of CPU 0"):
-        preflight.check_cpus(1, affinity=set(range(12)), sysfs=tmp_path)
+def test_unreadable_topology_is_a_config_error(tmp_path):
+    with pytest.raises(ConfigError, match="cannot read the CPU topology.*sysfs directory not found"):
+        preflight.cpu_layout(sysfs=tmp_path / "missing")
+
+
+def test_preflight_warns_about_skipped_parallelism(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(preflight, "check_swap", lambda used: None)
+    monkeypatch.setattr(preflight, "check_tools", lambda variants: None)
+    small = layout(tmp_path, [[0, 1], [2, 3], [4, 5]])
+    assert preflight.run(config([1, 8]), "debug", small) == [8]
+    err = capsys.readouterr().err
+    assert "P = 8" in err and "4 CPUs" in err and "skipped" in err
 
 
 def test_missing_taskset_is_reported(monkeypatch):
     monkeypatch.setattr(preflight.shutil, "which", lambda name: None)
     with pytest.raises(ConfigError, match="taskset"):
-        preflight.check_tools(["polars_bio_a"])
+        preflight.check_tools(["polars_bio"])
 
 
 def test_pysail_is_required_only_for_sail_variants(monkeypatch):
     monkeypatch.setattr(preflight, "_importable", lambda name: False)
-    preflight.check_tools(["polars_bio_a", "ballista"])
+    preflight.check_tools(["polars_bio", "ballista"])
     with pytest.raises(ConfigError, match="pysail"):
         preflight.check_tools(["sail"])
 
@@ -65,8 +80,6 @@ def test_used_swap_is_rejected():
         preflight.check_swap(2 * 2**20)
 
 
-def test_this_machine_has_the_node_layout():
-    """Maszyna pomiarowa (Ryzen 5 4600H, WSL2): rdzeń k = wątki {2k, 2k+1} (lscpu -e)."""
-    if not (preflight.SYSFS_CPU / "cpu7").exists():
-        pytest.skip("fewer than 8 CPUs (CI runner)")
-    preflight.check_cpus(3, affinity=set(range(8)))
+def test_this_machine_fits_the_smallest_series():
+    """Na maszynie testów (laptop albo CI) mieszczą się P = 1 i przebieg kontrolny."""
+    assert preflight.check_cpus(config([1]), preflight.cpu_layout()) == []

@@ -1,5 +1,6 @@
 """Badanie szumu przebiegu kontrolnego (plan 3b-2, Zadanie 7; specyfikacja 4.2): jak często dwie
-mediany po 10 czasów różnią się o ponad próg przy niezmienionej maszynie."""
+mediany po 10 czasów różnią się o ponad próg przy niezmienionej maszynie. Od etapu 4 próbką są
+przebiegi kontrolne z początku bloku (wariant kontrolny różni się od wariantów serii)."""
 
 from __future__ import annotations
 
@@ -9,6 +10,7 @@ import pytest
 
 from bench import control_noise as cn
 from bench.config import Scenario, load
+from bench.engines import CONTROL_VARIANT
 from bench.results import SCHEMA, ResultsWriter, to_parquet
 
 REPO = Path(__file__).resolve().parents[2]
@@ -33,8 +35,8 @@ def test_too_few_times_is_an_error():
 def _row(**values) -> dict:
     row = dict.fromkeys(SCHEMA)
     row.update(
-        variant="polars_bio_a", scenario_id="overlap/7-0", is_reference=False, is_warmup=False,
-        is_control=False, valid=True, t_total_s=1.0,
+        variant=CONTROL_VARIANT, scenario_id="overlap/7-0", is_reference=False, is_warmup=False,
+        is_control=True, control_position="start", valid=True, t_total_s=1.0,
     )
     row.update(values)
     return row
@@ -48,11 +50,14 @@ def _series_dir(tmp_path: Path, rows: list[dict]) -> Path:
     return tmp_path
 
 
-def test_load_times_takes_only_valid_measured_rounds(tmp_path):
+def test_load_times_takes_valid_control_runs_from_block_start(tmp_path):
+    measured = dict(variant="polars_bio", is_control=False, control_position=None)
     directory = _series_dir(tmp_path, [
         _row(t_total_s=1.1), _row(t_total_s=1.2),
-        _row(t_total_s=9.0, valid=False), _row(t_total_s=9.0, is_warmup=True),
-        _row(t_total_s=9.0, is_control=True), _row(t_total_s=9.0, is_reference=True, variant="polars_bio_ref"),
+        _row(t_total_s=9.0, valid=False), _row(t_total_s=9.0, control_position="end"),
+        _row(t_total_s=9.0, **measured), _row(t_total_s=9.0, is_warmup=True, **measured),
+        _row(t_total_s=9.0, is_reference=True, variant="polars_bio_ref", is_control=False,
+             control_position=None),
     ])
     assert cn.load_times(directory) == [1.1, 1.2]
 
@@ -73,6 +78,7 @@ def test_main_rejects_too_few_runs(tmp_path, capsys):
 def test_noise_study_config():
     cfg = load(REPO / "bench" / "conf" / "control_noise.yaml")
     assert cfg.series == "control-noise" and cfg.scenarios == (Scenario("overlap", "7-0"),)
-    assert (cfg.variants, cfg.nodes, cfg.repeats, cfg.warmup) == (("polars_bio_a",), (1,), 20, 1)
+    assert (cfg.variants, cfg.parallelism, cfg.repeats) == (("polars_bio",), (1,), 1)
+    assert cfg.control_repeats == 20 and cfg.control == Scenario("overlap", "7-0")
     assert cfg.control_tolerance == 100.0
     assert cfg.settle_s == 3.0

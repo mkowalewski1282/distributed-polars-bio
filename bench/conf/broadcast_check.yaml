@@ -1,6 +1,7 @@
 # Sprawdzenie komórek z broadcastem (specyfikacja 3b-2, sekcja 9, punkt 5): nearest i coverage
-# na 2-7 i 7-0 w Ballistcie przy N = 1, 2, 3 — ukończenie przy limicie gRPC 512 MiB,
-# broadcast_bytes i szczyt pamięci (dane wejściowe także dla kalibracji w 3b-3).
+# na 2-7 i 7-0 w Ballistcie przy P = 1, 2, 4, 8 — ukończenie przy limicie gRPC 512 MiB,
+# broadcast_bytes i szczyt pamięci (dane wejściowe także dla kalibracji w 3b-3). Każdy z P
+# executorów trzyma własną kopię tabeli rozsyłanej, więc przy P = 8 pamięć jest najciaśniejsza.
 # Seria pomiarowa — tylko po checkliście RAM (zamknięty VS Code, pusty swap).
 series: broadcast-check
 scenarios:
@@ -9,7 +10,7 @@ scenarios:
   - {op: nearest, pair: "7-0"}
   - {op: coverage, pair: "7-0"}
 variants: [ballista]
-nodes: [1, 2, 3]
+parallelism: [1, 2, 4, 8]
 repeats: 1
 warmup: 0
 control_repeats: 3

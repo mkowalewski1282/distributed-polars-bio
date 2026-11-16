@@ -9,7 +9,8 @@ from pathlib import Path
 import polars as pl
 
 #: Wiersz wyniku: pola specyfikacji 8.5 oraz is_reference, attempt, wall_s, extra i pswpin_delta
-#: (plan 3a); control_position, base_rss (plan 3b-2).
+#: (plan 3a); control_position, base_rss (plan 3b-2); parallelism (dawniej n_nodes), cpus i smt
+#: (etap 4, układ CPU z topologii).
 SCHEMA = {
     "timestamp": pl.Utf8,
     "git_commit": pl.Utf8,
@@ -21,8 +22,10 @@ SCHEMA = {
     "pair": pl.Utf8,  # para "a-b" albo zbiór "a"
     "algorithm": pl.Utf8,  # plan 3b
     "variant": pl.Utf8,
-    "n_nodes": pl.Int64,
-    "rep": pl.Int64,  # runda 1..R; 0 — rozgrzewka i wzorzec; przebiegi kontrolne: 1..control_repeats
+    "parallelism": pl.Int64,  # P bloku; wzorzec: 1; przebieg kontrolny: 2 (wątki polars-bio)
+    "cpus": pl.Utf8,  # JSON: lista CPU silnika (Ballista: CPU executorów); "[]" — blok pominięty
+    "smt": pl.Boolean,  # czy cpus zawiera rodzeństwo SMT; null — blok pominięty
+    "rep": pl.Int64,  # runda 1..R; 0 — rozgrzewka, wzorzec i blok pominięty; kontrolne: 1..control_repeats
     "attempt": pl.Int64,  # 1; 2 — powtórzenie bloku po dryfie
     "is_warmup": pl.Boolean,
     "is_control": pl.Boolean,

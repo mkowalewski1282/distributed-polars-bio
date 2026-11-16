@@ -1,7 +1,8 @@
 """Badanie szumu przebiegu kontrolnego (specyfikacja 3b-2, sekcja 4.2).
 
-Seria bench/conf/control_noise.yaml mierzy zadanie kontrolne (overlap 7-0, polars-bio A) 20 razy
-pod rząd. Ten moduł liczy z jej wyników, w jakim odsetku losowych podziałów czasów na dwie
+Seria bench/conf/control_noise.yaml mierzy przebieg kontrolny (overlap 7-0, polars-bio z 2 wątkami
+na obu wątkach pierwszego rdzenia poza systemowym) 20 razy pod rząd na początku bloku. Ten moduł
+liczy z jej wyników, w jakim odsetku losowych podziałów czasów na dwie
 rozłączne grupy po `group` (jak przebiegi kontrolne z początku i końca bloku) względna różnica
 median przekracza próg — czyli odsetek fałszywych dryfów przy niezmienionej maszynie.
 Kryterium specyfikacji: ≤ 5% przy progu 10% i grupach po 10.
@@ -39,14 +40,14 @@ def false_drift_rate(times: Sequence[float], *, group: int, tolerance: float,
 
 
 def load_times(directory: Path) -> list[float]:
-    """Czasy ważnych rund mierzonych polars-bio A z runs.parquet serii (bez wzorca, rozgrzewki
-    i przebiegów kontrolnych bloku)."""
+    """Czasy ważnych przebiegów kontrolnych z początku bloku (runs.parquet serii) — wariant
+    kontrolny różni się od wariantów serii, więc próbką są same przebiegi kontrolne; te z końca
+    bloku pomija, żeby próbka była ciągiem pod rząd."""
     df = pl.read_parquet(Path(directory) / "runs.parquet")
-    measured = df.filter(
-        pl.col("valid") & ~pl.col("is_reference") & ~pl.col("is_warmup") & ~pl.col("is_control")
-        & (pl.col("variant") == "polars_bio_a")
+    controls = df.filter(
+        pl.col("valid") & pl.col("is_control") & (pl.col("control_position") == "start")
     )
-    return measured["t_total_s"].to_list()
+    return controls["t_total_s"].to_list()
 
 
 def main(argv: list[str] | None = None) -> int:

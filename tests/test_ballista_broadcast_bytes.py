@@ -10,20 +10,23 @@ import subprocess
 import pytest
 
 from bench import engines
-from bench.config import Scenario
+from bench.cpus import read_layout
 from bench.ops import OPS, UNARY_OPS
 
 
 @pytest.fixture(scope="module")
 def cluster(tmp_path_factory):
+    """Dwa executory po 1 slocie (P = 2): broadcast musi dotrzeć do zadań na obu."""
     tmp = tmp_path_factory.mktemp("broadcast_bytes")
-    engine = engines.BallistaEngine(2, profile="debug", data_root=tmp, log_dir=tmp / "logs")
+    engine = engines.make_engine(
+        "ballista", 2, layout=read_layout(), data_root=tmp, log_dir=tmp / "logs", profile="debug",
+    )
     engine.start()
     yield engine
     engine.stop()
 
 
-@pytest.mark.nodes(2)
+@pytest.mark.parallelism(2)
 @pytest.mark.parametrize("op", OPS)
 def test_broadcast_bytes_only_for_broadcast_operations(op, cluster, parquet_dirs):
     left, right = parquet_dirs

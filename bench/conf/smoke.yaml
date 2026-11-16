@@ -1,5 +1,6 @@
-# Smoke (specyfikacja 7.3, etap 0): pełna macierz na parze 1-2 (merge: zbiór 1),
-# 1 przebieg bez rozgrzewki — poprawność narzędzia; uruchamiany przed każdą dużą serią:
+# Smoke (specyfikacja 7.3, etap 0; etap 4: semantyka P): wszystkie warianty przy P = 1 i 2 na parze
+# 1-2 (merge: zbiór 1), 1 przebieg bez rozgrzewki — krótko, tylko poprawność narzędzia; uruchamiany
+# przed każdą dużą serią:
 #   uv run python -m bench.orchestrator bench/conf/smoke.yaml
 series: smoke
 scenarios:
@@ -8,8 +9,8 @@ scenarios:
   - {op: coverage, pair: "1-2"}
   - {op: merge, dataset: 1}
   - {op: subtract, pair: "1-2"}
-variants: [polars_bio_a, polars_bio_b, ballista, sail]
-nodes: [1, 2, 3]
+variants: [polars_bio, ballista, sail]
+parallelism: [1, 2]
 repeats: 1
 warmup: 0
 # Smoke sprawdza też dodatkowy przebieg EXPLAIN ANALYZE w blokach Ballisty (plan 3b-2).

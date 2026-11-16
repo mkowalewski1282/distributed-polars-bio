@@ -1,5 +1,10 @@
-"""Silniki bloku pomiarowego (specyfikacja, sekcje 3 i 6): przypięcie do rdzeni (emulacja
-węzłów), klaster Ballisty, serwer Saila i polecenia runnerów.
+"""Silniki bloku pomiarowego (specyfikacja, sekcje 3 i 6; etap 4: semantyka P): przypięcie do CPU
+z układu maszyny (bench/cpus.py), klaster Ballisty, serwer Saila i polecenia runnerów.
+
+Równe zasoby przy równoległości P: polars-bio — jeden proces z P wątkami na P CPU; Ballista —
+P executorów po 1 slocie, każdy przypięty do jednego CPU; Sail — jeden proces serwera z P
+workerami po 1 slocie, przypięty do P CPU. Scheduler Ballisty i klienci działają na rdzeniu
+systemowym. Silnik ma atrybut `cpus` — CPU bloku (zapis w wynikach, flaga SMT).
 
 Silnik ma interfejs: start(), stop(), restart(), command(scenariusz) → Command,
 server_pids() → {nazwa: PID} (procesy długożyjące, których szczyt pamięci mierzy
@@ -27,28 +32,45 @@ from pathlib import Path
 
 from bench import logscan
 from bench.config import Scenario
+from bench.cpus import CpuLayout, control_cpus, cpus_for
 from bench.data.datasets import resolve
 from bench.procutil import EngineError, check_alive, free_port, wait_for_port
 from bench.runners.sail_server import sail_env
 
 REPO = Path(__file__).resolve().parent.parent
-BALLISTA_DIR = REPO / "ballista_genomics"
+
+
+def ballista_dir() -> Path:
+    """Katalog projektu Ballisty: submoduł engines/ballista-genomics (repozytorium pomiarowe po
+    podziale), jeśli ma Cargo.toml, inaczej ballista_genomics/ w monorepo. Niezainicjowany
+    submoduł to pusty katalog — wtedy też monorepo, a brak binarek zgłasza require_ballista_binaries."""
+    submodule = REPO / "engines" / "ballista-genomics"
+    return submodule if (submodule / "Cargo.toml").is_file() else REPO / "ballista_genomics"
+
+
+BALLISTA_DIR = ballista_dir()
 PROFILES = ("release", "debug")
-#: Rdzeń 0 (wątki 0–1): system, scheduler Ballisty, klienci, orkiestrator (specyfikacja 3).
-SYSTEM_CPUS = (0, 1)
-#: Sloty zadań i wątki na węzeł: 1 rdzeń fizyczny = 2 wątki SMT.
-SLOTS_PER_NODE = 2
 #: Limit wiadomości gRPC Ballisty (specyfikacja 3b-2, 6.2): w nearest i coverage plan etapu niesie
 #: całą tabelę rozsyłaną (~29 MiB dla 2-7, ~56 MiB dla 7-0). Ballista 55 koduje plan osobno dla
-#: każdego zadania, a zadania przydzielone executorowi w jednej rundzie wysyła jedną wiadomością,
-#: więc wiadomość niesie do SLOTS_PER_NODE kopii tabeli (Ballista 53: jedną na executor i etap);
-#: domyślne 16 MiB Ballisty nie wystarcza (strażnik: margines MESSAGE_SIZE_MARGIN = 2 kopie).
+#: każdego zadania, a zadania przydzielone executorowi w jednej rundzie wysyła jedną wiadomością;
+#: executor ma 1 slot, więc wiadomość niesie jedną kopię tabeli (Ballista 53: jedną na executor
+#: i etap). Domyślne 16 MiB Ballisty nie wystarcza; strażnik broadcastu liczy z marginesem
+#: MESSAGE_SIZE_MARGIN = 2 kopie, więc przy 1 slocie ma zapas.
 GRPC_MAX_MESSAGE_BYTES = 512 * 2**20
-#: Wynik wzorcowy: polars-bio na 1 partycji — przy większej liczbie partycji polars-bio 0.28
-#: psuje merge i subtract (bench/runners/polars_bio_runner.py).
+#: Sloty zadań executora Ballisty: P executorów po 1 slocie, każdy na jednym CPU.
+BALLISTA_EXECUTOR_SLOTS = 1
+#: Najmniejsza liczba partycji sesji Ballisty: binarki odrzucają BIO_TARGET_PARTITIONS < 2
+#: (ballista_genomics/src/runner.rs, target_partitions — przy 1 partycji DataFusion nie wstawia
+#: hash-repartycji i zapytanie liczy się w jednym etapie, bez dystrybucji). Przy P = 1 jedyny
+#: executor z 1 slotem liczy więc 2 partycje po kolei.
+BALLISTA_MIN_TARGET_PARTITIONS = 2
+#: Wynik wzorcowy: polars-bio na 1 partycji (1 wątek, 1 CPU) — przy większej liczbie partycji
+#: polars-bio 0.28 psuł merge i subtract (bench/runners/polars_bio_runner.py).
 REFERENCE_VARIANT = "polars_bio_ref"
-#: Przebieg kontrolny (specyfikacja 6.3): polars-bio A.
-CONTROL_VARIANT = "polars_bio_a"
+#: Przebieg kontrolny (specyfikacja 6.3; etap 4, 5.1): polars-bio z 2 wątkami na obu wątkach
+#: pierwszego rdzenia poza systemowym (bench.cpus.control_cpus) — niezależnie od P bloku.
+CONTROL_VARIANT = "polars_bio_control"
+CONTROL_THREADS = 2
 #: Próby startu klastra Ballisty — zabezpieczenie, nie obejście znanego błędu. Ballista 53
 #: rejestrowała executor w schedulerze, zanim jego serwer gRPC przyjmował połączenia, a scheduler
 #: w trybie push od razu się z nim łączył: przy obciążonym CPU rejestracja bywała odrzucona
@@ -77,15 +99,6 @@ def base_env() -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith(INHERITED_PREFIXES)}
     env["MPLBACKEND"] = "Agg"
     return env
-def node_cpus(k: int) -> tuple[int, int]:
-    """Węzeł k (1..3) = rdzeń fizyczny k = wątki {2k, 2k+1} (lscpu -e)."""
-    if k not in (1, 2, 3):
-        raise ValueError(f"node {k!r}: allowed 1–3")
-    return (2 * k, 2 * k + 1)
-
-
-def cluster_cpus(n_nodes: int) -> tuple[int, ...]:
-    return tuple(cpu for k in range(1, n_nodes + 1) for cpu in node_cpus(k))
 
 
 def taskset(cpus) -> list[str]:
@@ -158,6 +171,14 @@ class PolarsBioEngine:
         return []
 
 
+def _shown(path: Path) -> str:
+    """Ścieżka w komunikacie: względem repozytorium, jeśli w nim leży (polecenie do wklejenia)."""
+    try:
+        return str(path.relative_to(REPO))
+    except ValueError:
+        return str(path)
+
+
 def ballista_binary(name: str, profile: str) -> Path:
     return BALLISTA_DIR / "target" / profile / name
 
@@ -184,9 +205,10 @@ def require_ballista_binaries(profile: str) -> None:
     names = ("ballista_node", "bench_client")
     binaries = {name: ballista_binary(name, profile) for name in names}
     flag = "--release " if profile == "release" else ""
+    where = _shown(BALLISTA_DIR)
     build = (
-        f"cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build {flag}--bin ballista_node --bin bench_client"
-        " (if cargo has nothing to rebuild, touch ballista_genomics/src/lib.rs first)"
+        f"cd {where} && CARGO_BUILD_JOBS=1 cargo build {flag}--bin ballista_node --bin bench_client"
+        f" (if cargo has nothing to rebuild, touch {where}/src/lib.rs first)"
     )
     missing = [str(b) for b in binaries.values() if not b.exists()]
     if missing:
@@ -202,17 +224,27 @@ def _registered_executors(port: int) -> int:
         return len(json.loads(response.read()))
 
 
-class BallistaEngine:
-    """Scheduler na rdzeniu systemowym + N executorów (executor k na rdzeniu węzła k,
-    po 2 sloty); BIO_TARGET_PARTITIONS = 2N i BALLISTA_GRPC_MAX_MESSAGE_BYTES we wszystkich
-    procesach i w kliencie."""
+def _require_cpus(parallelism: int, cpus: tuple[int, ...]) -> None:
+    """Silnik z P procesami/workerami dostaje dokładnie P CPU (jeden na executor Ballisty)."""
+    if len(cpus) != parallelism:
+        raise ValueError(f"parallelism {parallelism} needs {parallelism} CPUs, got {list(cpus)}")
 
-    def __init__(self, n_nodes: int, *, profile: str, data_root: Path, log_dir: Path,
-                 grpc_max_message_bytes: int = GRPC_MAX_MESSAGE_BYTES):
-        self.n, self.profile, self.data_root, self.log_dir = n_nodes, profile, data_root, log_dir
+
+class BallistaEngine:
+    """Scheduler na rdzeniu systemowym (`system`) + P executorów po 1 slocie: executor k na
+    jednym CPU, cpus[k-1]. BIO_TARGET_PARTITIONS = P (najmniej 2) i
+    BALLISTA_GRPC_MAX_MESSAGE_BYTES we wszystkich procesach i w kliencie; klient na `system`."""
+
+    def __init__(self, parallelism: int, cpus, *, system, profile: str, data_root: Path,
+                 log_dir: Path, grpc_max_message_bytes: int = GRPC_MAX_MESSAGE_BYTES):
+        self.cpus, self.system = tuple(cpus), tuple(system)
+        _require_cpus(parallelism, self.cpus)
+        self.parallelism, self.profile = parallelism, profile
+        self.data_root, self.log_dir = data_root, log_dir
+        partitions = max(parallelism, BALLISTA_MIN_TARGET_PARTITIONS)
         self.env = {
             **base_env(),
-            "BIO_TARGET_PARTITIONS": str(SLOTS_PER_NODE * n_nodes),
+            "BIO_TARGET_PARTITIONS": str(partitions),
             "BALLISTA_GRPC_MAX_MESSAGE_BYTES": str(grpc_max_message_bytes),
         }
         self.procs: dict[str, subprocess.Popen] = {}
@@ -241,22 +273,22 @@ class BallistaEngine:
         self._tmp = Path(tempfile.mkdtemp(prefix="bench_ballista_"))
         self.port = free_port()
         try:
-            self._spawn("scheduler", SYSTEM_CPUS, ["scheduler", "--port", str(self.port)])
+            self._spawn("scheduler", self.system, ["scheduler", "--port", str(self.port)])
             # Executor łączy się ze schedulerem tylko raz, przy starcie (P0) — najpierw scheduler.
             self._wait(lambda: _registered_executors(self.port) >= 0, "scheduler does not respond")
-            for k in range(1, self.n + 1):
+            for k, cpu in enumerate(self.cpus, start=1):
                 name = f"executor_{k}"
                 work = self._tmp / name
                 work.mkdir()
                 self.work_dirs[name] = work
-                self._spawn(name, node_cpus(k), [
+                self._spawn(name, (cpu,), [
                     "executor", "--scheduler-port", str(self.port),
                     "--port", str(free_port()), "--grpc-port", str(free_port()),
-                    "--work-dir", str(work), "--concurrent-tasks", str(SLOTS_PER_NODE),
+                    "--work-dir", str(work), "--concurrent-tasks", str(BALLISTA_EXECUTOR_SLOTS),
                 ])
             self._wait(
-                lambda: _registered_executors(self.port) == self.n,
-                f"scheduler does not see {self.n} executors",
+                lambda: _registered_executors(self.port) == self.parallelism,
+                f"scheduler does not see {self.parallelism} executors",
             )
         except BaseException:
             self.stop()
@@ -308,7 +340,7 @@ class BallistaEngine:
 
     def command(self, scenario: Scenario) -> Command:
         return Command(
-            [*taskset(SYSTEM_CPUS), str(ballista_binary("bench_client", self.profile)),
+            [*taskset(self.system), str(ballista_binary("bench_client", self.profile)),
              *scenario_args(scenario, self.data_root)],
             {**self.env, "BALLISTA_SCHEDULER_URL": f"df://localhost:{self.port}"},
             BALLISTA_DIR,
@@ -320,7 +352,7 @@ class BallistaEngine:
         return Command([*command.argv, "--explain-analyze", str(target)], command.env, command.cwd)
 
     def log_mark(self) -> dict[Path, int]:
-        return logscan.mark(self.log_dir / f"executor_{k}.log" for k in range(1, self.n + 1))
+        return logscan.mark(self.log_dir / f"executor_{k}.log" for k in range(1, self.parallelism + 1))
 
     def log_metrics(self, mark: dict[Path, int]) -> dict:
         """Bajty ładunków broadcastu odebranych przez executory w czasie przebiegu
@@ -335,18 +367,20 @@ class BallistaEngine:
 
 
 class SailEngine:
-    """Jeden proces serwera Saila (local-cluster, N workerów) na rdzeniach węzłów 1..N;
-    runner-klient na rdzeniu systemowym."""
+    """Jeden proces serwera Saila (local-cluster, P workerów po 1 slocie) przypięty do P CPU
+    bloku (`cpus`); runner-klient na rdzeniu systemowym (`system`)."""
 
-    def __init__(self, n_nodes: int, *, data_root: Path, log_dir: Path):
-        self.n, self.data_root, self.log_dir = n_nodes, data_root, log_dir
+    def __init__(self, parallelism: int, cpus, *, system, data_root: Path, log_dir: Path):
+        self.cpus, self.system = tuple(cpus), tuple(system)
+        _require_cpus(parallelism, self.cpus)
+        self.parallelism, self.data_root, self.log_dir = parallelism, data_root, log_dir
         self.proc: subprocess.Popen | None = None
         self.port: int | None = None
 
     def env_record(self) -> dict[str, str]:
-        """Zmienne SAIL_* (local-cluster, N workerów) i jawna liczba wątków polars-bio w procesie
-        serwera — 2N, jak rdzenie węzłów 1..N (przegląd 3a: serwer bez jawnego POLARS_MAX_THREADS)."""
-        return {**sail_env(self.n), "POLARS_MAX_THREADS": str(SLOTS_PER_NODE * self.n)}
+        """Zmienne SAIL_* (local-cluster, P workerów) i jawna liczba wątków polars-bio w procesie
+        serwera — P, jak CPU bloku (przegląd 3a: serwer bez jawnego POLARS_MAX_THREADS)."""
+        return {**sail_env(self.parallelism), "POLARS_MAX_THREADS": str(self.parallelism)}
 
     def start(self) -> None:
         """Start serwera; po porażce (np. zajęty port) — od nowa, na nowym porcie, do
@@ -365,7 +399,7 @@ class SailEngine:
         log = self.log_dir / "sail_server.log"
         with log.open("a") as f:
             self.proc = subprocess.Popen(
-                [*taskset(cluster_cpus(self.n)), sys.executable, "-m", "bench.runners.sail_server",
+                [*taskset(self.cpus), sys.executable, "-m", "bench.runners.sail_server",
                  "--port", str(self.port)],
                 cwd=REPO, env={**base_env(), **self.env_record()},
                 stdout=f, stderr=subprocess.STDOUT,
@@ -398,7 +432,7 @@ class SailEngine:
     def command(self, scenario: Scenario) -> Command:
         return _python(
             "bench.runners.sail_runner",
-            SYSTEM_CPUS,
+            self.system,
             [*scenario_args(scenario, self.data_root), "--remote", f"sc://127.0.0.1:{self.port}"],
             {},
         )
@@ -410,7 +444,7 @@ class SailEngine:
         return logscan.mark([self.log_dir / "sail_server.log"])
 
     def log_metrics(self, mark: dict[Path, int]) -> dict:
-        """Workery sesji przebiegu: Sail tworzy driver i N workerów dla każdej sesji Spark Connect
+        """Workery sesji przebiegu: Sail tworzy driver i P workerów dla każdej sesji Spark Connect
         (przy pierwszym RPC sesji) — liczba z logu pokazuje, czy Sail nie dołożył workera."""
         return {"sail_workers": logscan.sail_workers(logscan.text_since(mark))}
 
@@ -421,16 +455,26 @@ class SailEngine:
         return []
 
 
-def make_engine(variant: str, n_nodes: int, *, data_root: Path, log_dir: Path, profile: str):
-    """Silnik bloku (wariant × N) według specyfikacji 3."""
+def make_engine(variant: str, parallelism: int, *, layout: CpuLayout, data_root: Path,
+                log_dir: Path, profile: str):
+    """Silnik bloku (wariant × P) na CPU z układu `layout`. Wzorzec (1 wątek, 1 CPU) i przebieg
+    kontrolny (CONTROL_THREADS wątki na control_cpus) mają stałą konfigurację — `parallelism`
+    ich nie zmienia. P większe niż układ → bench.cpus.NotEnoughCpus (orkiestrator pomija takie
+    bloki wcześniej)."""
     if variant == REFERENCE_VARIANT:
-        return PolarsBioEngine(1, node_cpus(1), data_root)
-    if variant == "polars_bio_a":
-        return PolarsBioEngine(SLOTS_PER_NODE, node_cpus(1), data_root)
-    if variant == "polars_bio_b":
-        return PolarsBioEngine(SLOTS_PER_NODE * n_nodes, cluster_cpus(n_nodes), data_root)
+        return PolarsBioEngine(1, cpus_for(layout, 1), data_root)
+    if variant == CONTROL_VARIANT:
+        return PolarsBioEngine(CONTROL_THREADS, control_cpus(layout), data_root)
+    if variant == "polars_bio":
+        return PolarsBioEngine(parallelism, cpus_for(layout, parallelism), data_root)
     if variant == "ballista":
-        return BallistaEngine(n_nodes, profile=profile, data_root=data_root, log_dir=log_dir)
+        return BallistaEngine(
+            parallelism, cpus_for(layout, parallelism), system=layout.system, profile=profile,
+            data_root=data_root, log_dir=log_dir,
+        )
     if variant == "sail":
-        return SailEngine(n_nodes, data_root=data_root, log_dir=log_dir)
+        return SailEngine(
+            parallelism, cpus_for(layout, parallelism), system=layout.system, data_root=data_root,
+            log_dir=log_dir,
+        )
     raise ValueError(f"unknown variant {variant!r}")

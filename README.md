@@ -41,8 +41,9 @@ uv run python -m bench.data.download      # zbiór databio-8p w ~/bench_data (al
 uv run pytest -m real_data                # testy na danych rzeczywistych
 ```
 
-Testy przypinające procesy do emulowanych węzłów (`@pytest.mark.nodes(n)`) potrzebują CPU
-0..2n+1; na maszynie z mniejszą liczbą CPU są pomijane z podaniem powodu.
+Testy uruchamiające silniki na P CPU (`@pytest.mark.parallelism(p)`) potrzebują P CPU poza
+pierwszym rdzeniem fizycznym (rdzeniem systemowym; układ z `bench/cpus.py`); na mniejszej maszynie
+są pomijane z podaniem powodu (CI z 4 vCPU: do P = 2).
 
 CI (GitHub Actions, `.github/workflows/tests.yml`) buduje Ballistę i uruchamia pakiet bez danych
 rzeczywistych. CI służy wyłącznie sprawdzaniu poprawności, nigdy pomiarom.

@@ -18,6 +18,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from bench import engines
+from bench.cpus import cpus_for, read_layout
 from tests.parquet_fixture import FIXTURE_A, write_parts
 
 BIG_ROWS = 1_200_000
@@ -48,12 +49,14 @@ def run_coverage(engine, left, right, timeout: int = 180):
 
 
 def cluster(tmp_path, limit: int):
+    layout = read_layout()
     return engines.BallistaEngine(
-        1, profile="debug", data_root=tmp_path, log_dir=tmp_path / "logs", grpc_max_message_bytes=limit,
+        1, cpus_for(layout, 1), system=layout.system, profile="debug", data_root=tmp_path,
+        log_dir=tmp_path / "logs", grpc_max_message_bytes=limit,
     )
 
 
-@pytest.mark.nodes(1)
+@pytest.mark.parallelism(1)
 def test_broadcast_over_the_limit_fails_fast_with_a_clear_error(pair, tmp_path):
     engine = cluster(tmp_path, 16 * 2**20)
     engine.start()
@@ -66,7 +69,7 @@ def test_broadcast_over_the_limit_fails_fast_with_a_clear_error(pair, tmp_path):
     assert elapsed < 60
 
 
-@pytest.mark.nodes(1)
+@pytest.mark.parallelism(1)
 def test_same_broadcast_fits_under_the_default_limit(pair, tmp_path):
     engine = cluster(tmp_path, engines.GRPC_MAX_MESSAGE_BYTES)
     engine.start()

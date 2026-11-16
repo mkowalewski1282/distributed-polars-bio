@@ -15,7 +15,7 @@ def full_row(**overrides) -> dict:
     row.update(
         timestamp="2026-10-01T12:00:00", git_commit="abc", engine_versions=json.dumps({"ballista": "53.0.0"}),
         series="test", seed=7, scenario_id="overlap/1-2", op="overlap", pair="1-2", variant="ballista",
-        n_nodes=2, rep=1, attempt=1, is_warmup=False, is_control=False, is_reference=False, valid=True,
+        parallelism=2, cpus=json.dumps([2, 4]), smt=False, rep=1, attempt=1, is_warmup=False, is_control=False, is_reference=False, valid=True,
         rows=3, checksum="0x00000000000000aa", t_total_s=0.5, wall_s=1.5, phases="{}",
         extra=json.dumps({"target_partitions": 4}), peak_rss=json.dumps({"runner": 10, "scheduler": 20}),
         peak_rss_sum=30, base_rss=None, shuffle_bytes=100, pswpout_delta=0, pswpin_delta=0,
@@ -35,6 +35,12 @@ def test_rows_round_trip_through_jsonl_and_parquet(tmp_path):
     assert df.schema == pl.Schema(SCHEMA)
     assert df.to_dicts() == [first, second]
     assert json.loads(df["peak_rss"][0]) == {"runner": 10, "scheduler": 20}
+
+
+def test_schema_records_parallelism_and_cpu_layout():
+    """Etap 4: P bloku zamiast liczby węzłów, lista CPU (JSON) i flaga SMT."""
+    assert "n_nodes" not in SCHEMA
+    assert (SCHEMA["parallelism"], SCHEMA["cpus"], SCHEMA["smt"]) == (pl.Int64, pl.Utf8, pl.Boolean)
 
 
 def test_missing_jsonl_gives_empty_table_with_schema(tmp_path):

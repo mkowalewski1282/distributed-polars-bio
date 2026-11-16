@@ -1,7 +1,9 @@
-"""Sprawdzenia przed pierwszym pomiarem serii (specyfikacja 3; 3b-2, pozycja 4 z przeglądu 3a):
-procesowi dostępne są CPU rdzenia systemowego i węzłów, te CPU tworzą pary SMT zgodne z tabelą
-węzłów (rdzeń k = wątki {2k, 2k+1}), są taskset i pysail, swap jest pusty (3b-2, 4.3), a binarki
-Ballisty istnieją i są świeże. Każdy błąd przerywa serię przed pierwszym pomiarem (kod 2)."""
+"""Sprawdzenia przed pierwszym pomiarem serii (specyfikacja 3; 3b-2, pozycja 4 z przeglądu 3a;
+etap 4, 5.2): topologia CPU daje się odczytać, poza rdzeniem systemowym mieści się co najmniej
+P = 1 i przebieg kontrolny (2 CPU), są taskset i pysail, swap jest pusty (3b-2, 4.3), a binarki
+Ballisty istnieją i są świeże. Każdy błąd przerywa serię przed pierwszym pomiarem (kod 2).
+P większe niż układ CPU nie przerywa serii: preflight ostrzega, a orkiestrator pomija te bloki
+z powodem (domyślna seria ma działać na mniejszej maszynie i pokazać luki w raporcie)."""
 
 from __future__ import annotations
 
@@ -13,43 +15,33 @@ from pathlib import Path
 
 from bench import metrics
 from bench.config import ConfigError, SeriesConfig
-from bench.engines import SYSTEM_CPUS, cluster_cpus, require_ballista_binaries
-
-SYSFS_CPU = Path("/sys/devices/system/cpu")
-
-
-def _cpu_list(text: str) -> set[int]:
-    """Lista CPU w zapisie jądra, np. '0-1' albo '2,8' → zbiór numerów."""
-    cpus: set[int] = set()
-    for part in text.strip().split(","):
-        first, _, last = part.partition("-")
-        cpus.update(range(int(first), int(last or first) + 1))
-    return cpus
+from bench.cpus import SYSFS_CPU, CpuLayout, TopologyError, control_cpus, max_parallelism, read_layout
+from bench.engines import CONTROL_THREADS, require_ballista_binaries
 
 
-def check_cpus(n_nodes: int, *, affinity: set[int] | None = None, sysfs: Path | None = None) -> None:
-    needed = {*SYSTEM_CPUS, *cluster_cpus(n_nodes)}
-    affinity = os.sched_getaffinity(0) if affinity is None else affinity
-    missing = sorted(needed - set(affinity))
-    if missing:
+def cpu_layout(sysfs: Path = SYSFS_CPU) -> CpuLayout:
+    """Układ CPU tego procesu (maska affinity); nieczytelna topologia → ConfigError z przyczyną."""
+    try:
+        return read_layout(sysfs)
+    except TopologyError as e:
+        raise ConfigError(f"cannot read the CPU topology: {e}") from e
+
+
+def check_cpus(cfg: SeriesConfig, layout: CpuLayout) -> list[int]:
+    """P serii, które nie mieszczą się w układzie (zostaną pominięte). Błąd, gdy poza rdzeniem
+    systemowym nie ma ani jednego CPU (P = 1) albo dwóch CPU dla przebiegu kontrolnego."""
+    available = max_parallelism(layout)
+    if available < 1:
         raise ConfigError(
-            f"CPUs {missing} are not available to this process (N = {n_nodes} needs CPUs "
-            f"0-{max(needed)}); check the CPU affinity of the shell"
+            f"no CPU outside the system core {list(layout.system)} - a series needs at least P = 1"
         )
-    sysfs = SYSFS_CPU if sysfs is None else sysfs
-    for core in range(n_nodes + 1):  # rdzeń 0 — system, 1..N — węzły
-        first = 2 * core
-        path = sysfs / f"cpu{first}" / "topology" / "thread_siblings_list"
-        try:
-            siblings = _cpu_list(path.read_text())
-        except (OSError, ValueError) as e:
-            raise ConfigError(f"cannot read SMT topology of CPU {first}: {e}") from e
-        if siblings != {first, first + 1}:
-            raise ConfigError(
-                f"CPU {first} and {first + 1} are not SMT siblings (siblings of CPU {first}: "
-                f"{sorted(siblings)}) - the node layout of the methodology spec (section 3) does "
-                "not hold on this machine"
-            )
+    control = control_cpus(layout)
+    if len(control) < CONTROL_THREADS:
+        raise ConfigError(
+            f"the control run needs {CONTROL_THREADS} CPUs outside the system core "
+            f"{list(layout.system)}, available: {list(layout.order)}"
+        )
+    return [p for p in cfg.parallelism if p > available]
 
 
 def _importable(module: str) -> bool:
@@ -67,8 +59,8 @@ def _importable(module: str) -> bool:
 
 def check_tools(variants) -> None:
     if shutil.which("taskset") is None:
-        raise ConfigError("taskset not found (package util-linux) - it pins engines to emulated nodes")
-    if any(v.startswith("sail") for v in variants) and not _importable("pysail"):
+        raise ConfigError("taskset not found (package util-linux) - it pins engines to CPUs")
+    if "sail" in variants and not _importable("pysail"):
         raise ConfigError("pysail is not importable - run 'uv sync'")
 
 
@@ -80,9 +72,17 @@ def check_swap(used: int) -> None:
         )
 
 
-def run(cfg: SeriesConfig, profile: str) -> None:
-    check_cpus(max(cfg.nodes))
+def run(cfg: SeriesConfig, profile: str, layout: CpuLayout) -> list[int]:
+    """Wszystkie sprawdzenia; zwraca P, które orkiestrator pominie (ostrzeżenie na stderr)."""
+    skipped = check_cpus(cfg, layout)
     check_swap(metrics.swap_used())
     check_tools(cfg.variants)
     if "ballista" in cfg.variants:
         require_ballista_binaries(profile)
+    if skipped:
+        print(
+            f"warning: P = {', '.join(map(str, skipped))} exceed the {max_parallelism(layout)} CPUs "
+            "outside the system core - those blocks will be skipped (reason recorded in the results)",
+            file=sys.stderr,
+        )
+    return skipped

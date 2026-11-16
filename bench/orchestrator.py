@@ -1,6 +1,8 @@
-"""Orkiestrator serii pomiarowej (specyfikacja 6 i 8): przebieg wzorcowy, potem bloki
-(wariant × N) — przebiegi kontrolne, rozgrzewka, rundy w losowej kolejności z ziarna,
-przebiegi kontrolne — z walidacją każdego przebiegu i zapisem wiersza na przebieg.
+"""Orkiestrator serii pomiarowej (specyfikacja 6 i 8; etap 4: semantyka P): przebieg wzorcowy,
+potem bloki (wariant × P) — przebiegi kontrolne, rozgrzewka, rundy w losowej kolejności z ziarna,
+przebiegi kontrolne — z walidacją każdego przebiegu i zapisem wiersza na przebieg. CPU bloków
+pochodzą z układu maszyny (bench/cpus.py); blok z P większym niż liczba CPU poza rdzeniem
+systemowym jest pomijany z powodem (wiersz na scenariusz) i nie psuje kodu wyjścia.
 
 Uruchomienie (seria pomiarowa: z Windows Terminal, VS Code zamknięty — checklista RAM):
     uv run python -m bench.orchestrator bench/conf/smoke.yaml [--ballista-profile debug]
@@ -31,9 +33,10 @@ from bench import metrics, preflight as preflight_checks
 from bench.config import (
     Block, ConfigError, Scenario, SeriesConfig, blocks, check_data, load, round_order,
 )
+from bench.cpus import CpuLayout, max_parallelism, read_layout, uses_smt
 from bench.data.datasets import data_dir
 from bench.engines import (
-    BALLISTA_DIR, CONTROL_VARIANT, PROFILES, REFERENCE_VARIANT, REPO, SYSTEM_CPUS, Command,
+    BALLISTA_DIR, CONTROL_THREADS, CONTROL_VARIANT, PROFILES, REFERENCE_VARIANT, REPO, Command,
     ballista_binary, make_engine,
 )
 from bench.procutil import EngineError
@@ -50,6 +53,9 @@ MAX_BLOCK_ATTEMPTS = 2
 #: Po timeoucie, strażniku pamięci albo śmierci procesu silnik jest restartowany; proces, który
 #: nie zakończy się w tym czasie po SIGTERM, dostaje SIGKILL (przegląd 3a).
 HARD_STOP_GRACE_S = 3.0
+#: Przyczyna w wierszach bloku z P większym niż liczba CPU poza rdzeniem systemowym (specyfikacja
+#: etapu 4, 5.2) — wiersze oczekiwane: seria trwa dalej i jest zaliczona, raport pokazuje lukę.
+SKIPPED_P_REASON = "skipped: P exceeds available CPUs"
 
 _METRIC_KEYS = (
     "valid", "invalid_reason", "rows", "checksum", "t_total_s", "wall_s", "phases", "extra",
@@ -89,7 +95,7 @@ class SeriesSummary:
     invalid: int = 0
     #: Nieważne przebiegi z listy expected_invalid konfiguracji.
     expected: int = 0
-    #: Pozostałe nieważne przebiegi: „wariant N=n scenariusz: przyczyna”.
+    #: Pozostałe nieważne przebiegi: „wariant P=p scenariusz: przyczyna”.
     unexpected: list[str] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
 
@@ -166,8 +172,10 @@ def git_commit() -> str:
 
 def engine_versions(profile: str, *, ballista: bool) -> dict[str, str]:
     """Wersje silników i bibliotek przebiegu; dla serii z Ballistą — sumy SHA-256 binarek
-    (dokładnie wiadomo, czym mierzono; przegląd 3a)."""
-    lock = (BALLISTA_DIR / "Cargo.lock").read_text()
+    (dokładnie wiadomo, czym mierzono; przegląd 3a). Bez Cargo.lock (niezainicjowany submoduł
+    Ballisty) wersje Ballisty są „unknown” — seria bez Ballisty nie potrzebuje jej źródeł."""
+    lock_file = BALLISTA_DIR / "Cargo.lock"
+    lock = lock_file.read_text() if lock_file.is_file() else ""
 
     def locked(name: str) -> str:
         m = re.search(rf'name = "{re.escape(name)}"\nversion = "([^"]+)"', lock)
@@ -215,8 +223,8 @@ def _kind(*, reference: bool = False, position: str | None = None, warmup: bool 
     return "warmup" if warmup else f"round {rep}"
 
 
-def _start_line(variant: str, n_nodes: int, kind: str, scenario_id: str) -> str:
-    return f"{variant:<14} N={n_nodes} {kind:<16} {scenario_id:<14}   start"
+def _start_line(variant: str, parallelism: int, kind: str, scenario_id: str) -> str:
+    return f"{variant:<18} P={parallelism:<2} {kind:<16} {scenario_id:<14}   start"
 
 
 def _progress(row: dict) -> str:
@@ -224,14 +232,17 @@ def _progress(row: dict) -> str:
                  warmup=row["is_warmup"], rep=row["rep"])
     t = f"{row['t_total_s']:9.3f} s" if row["t_total_s"] is not None else "        – s"
     status = "OK" if row["valid"] else f"INVALID: {row['invalid_reason']}"
-    return f"{row['variant']:<14} N={row['n_nodes']} {kind:<16} {row['scenario_id']:<14} {t}  {status}"
+    return (f"{row['variant']:<18} P={row['parallelism']:<2} {kind:<16} {row['scenario_id']:<14} "
+            f"{t}  {status}")
 
 
 class _Series:
     """Stan jednej serii: konfiguracja, silniki, źródła metryk, zapis i podsumowanie."""
 
-    def __init__(self, cfg, factory, probe, mem_floor, directory, scratch, writer, out, summary, profile):
+    def __init__(self, cfg, factory, probe, mem_floor, directory, scratch, writer, out, summary, profile,
+                 layout: CpuLayout):
         self.cfg, self.factory, self.probe, self.mem_floor = cfg, factory, probe, mem_floor
+        self.layout = layout
         self.directory, self.scratch, self.writer, self.out, self.summary = directory, scratch, writer, out, summary
         self.env_records: dict[str, dict[str, str]] = {}
         self.failed_logs = 0
@@ -243,9 +254,10 @@ class _Series:
         self.env_records[label] = engine.env_record()
         (self.directory / "env.json").write_text(json.dumps(self.env_records, indent=2, sort_keys=True))
 
-    def row(self, scenario: Scenario, variant: str, n_nodes: int, rep: int, attempt: int,
-            measured: dict, *, warmup=False, control_position: str | None = None,
-            reference=False) -> dict:
+    def row(self, scenario: Scenario, variant: str, parallelism: int, cpus: tuple[int, ...] | None,
+            rep: int, attempt: int, measured: dict, *, warmup=False,
+            control_position: str | None = None, reference=False) -> dict:
+        """Wiersz wyniku; `cpus` — CPU silnika, None — blok pominięty (cpus "[]", smt null)."""
         return {
             "timestamp": dt.datetime.now().isoformat(timespec="seconds"),
             "git_commit": self.git_commit,
@@ -257,7 +269,9 @@ class _Series:
             "pair": scenario.data,
             "algorithm": None,
             "variant": variant,
-            "n_nodes": n_nodes,
+            "parallelism": parallelism,
+            "cpus": json.dumps(list(cpus or ())),
+            "smt": None if cpus is None else uses_smt(self.layout, cpus),
             "rep": rep,
             "attempt": attempt,
             "is_warmup": warmup,
@@ -274,12 +288,24 @@ class _Series:
             if row["valid"]:
                 continue
             self.summary.invalid += 1
-            if any(e.matches(row) for e in self.cfg.expected_invalid):
+            if row["invalid_reason"] == SKIPPED_P_REASON or any(
+                e.matches(row) for e in self.cfg.expected_invalid
+            ):
                 self.summary.expected += 1
             else:
                 self.summary.unexpected.append(
-                    f"{row['variant']} N={row['n_nodes']} {row['scenario_id']}: {row['invalid_reason']}"
+                    f"{row['variant']} P={row['parallelism']} {row['scenario_id']}: {row['invalid_reason']}"
                 )
+
+    def skip_block(self, block: Block) -> None:
+        """Blok z P większym niż układ CPU: silnik nie startuje, każdy scenariusz dostaje jeden
+        wiersz z przyczyną SKIPPED_P_REASON (raport pokaże lukę zamiast pustego miejsca)."""
+        available = max_parallelism(self.layout)
+        self.out(f"{block.label}: {SKIPPED_P_REASON} ({available} CPUs outside the system core)")
+        self.write([
+            self.row(scenario, block.variant, block.parallelism, None, 0, 1, _skipped(SKIPPED_P_REASON))
+            for scenario in self.cfg.scenarios
+        ])
 
     def explain_pass(self, engine, block: Block, skipped: dict[str, str]) -> None:
         """Dodatkowy, niemierzony przebieg EXPLAIN ANALYZE każdego scenariusza (specyfikacja 3b-2,
@@ -291,7 +317,7 @@ class _Series:
             if scenario.id in skipped:
                 self.out(f"{block.label}: EXPLAIN ANALYZE {scenario.id} skipped ({skipped[scenario.id]})")
                 continue
-            target = (self.directory / "explain" / f"{block.variant}-n{block.n_nodes}"
+            target = (self.directory / "explain" / f"{block.variant}-p{block.parallelism}"
                       / f"{scenario.id.replace('/', '_')}.txt")
             command = engine.explain_command(scenario, target)
             if command is None:
@@ -391,8 +417,8 @@ class _Series:
         try:
             for scenario in dict.fromkeys([*self.cfg.scenarios, self.cfg.control]):
                 self.out(_start_line(REFERENCE_VARIANT, 1, "reference", scenario.id))
-                measured, _ = self.measure(engine, scenario, None, f"{REFERENCE_VARIANT}-n1")
-                row = self.row(scenario, REFERENCE_VARIANT, 1, 0, 1, measured, reference=True)
+                measured, _ = self.measure(engine, scenario, None, f"{REFERENCE_VARIANT}-p1")
+                row = self.row(scenario, REFERENCE_VARIANT, 1, engine.cpus, 0, 1, measured, reference=True)
                 self.write([row])
                 self.out(_progress(row))
                 if measured["rows"] is None:
@@ -408,8 +434,8 @@ class _Series:
         """Blok (specyfikacja 6.2; 3b-2, 4.2): przebiegi kontrolne → rozgrzewka → rundy →
         przebiegi kontrolne. Wiersze trafiają do `rows` na bieżąco (wołający zapisuje je także
         po przerwaniu). True = dryf albo nieważne przebiegi kontrolne."""
-        engine = self.factory(block.variant, block.n_nodes)
-        control = self.factory(CONTROL_VARIANT, 1)
+        engine = self.factory(block.variant, block.parallelism)
+        control = self.factory(CONTROL_VARIANT, CONTROL_THREADS)
         self.record_env("control", control)
         self.record_env(block.label, engine)
         skipped: dict[str, str] = {}
@@ -418,19 +444,19 @@ class _Series:
                 position: str | None = None) -> dict:
             is_control = position is not None
             if is_control:
-                eng, variant, n = control, CONTROL_VARIANT, 1
+                eng, variant, p = control, CONTROL_VARIANT, CONTROL_THREADS
             else:
-                eng, variant, n = engine, block.variant, block.n_nodes
+                eng, variant, p = engine, block.variant, block.parallelism
             if not is_control and scenario.id in skipped:
                 measured = _skipped(f"skipped: {skipped[scenario.id]}")
             else:
-                self.out(_start_line(variant, n, _kind(position=position, warmup=warmup, rep=rep), scenario.id))
-                measured, restart = self.measure(eng, scenario, expected[scenario.id], f"{variant}-n{n}")
+                self.out(_start_line(variant, p, _kind(position=position, warmup=warmup, rep=rep), scenario.id))
+                measured, restart = self.measure(eng, scenario, expected[scenario.id], f"{variant}-p{p}")
                 if restart:
                     if not is_control:
                         skipped[scenario.id] = measured["invalid_reason"]
                     eng.restart(grace_s=HARD_STOP_GRACE_S)
-            row = self.row(scenario, variant, n, rep, attempt, measured, warmup=warmup,
+            row = self.row(scenario, variant, p, eng.cpus, rep, attempt, measured, warmup=warmup,
                            control_position=position)
             rows.append(row)
             self.out(_progress(row))
@@ -504,30 +530,38 @@ def run_series(
     data_root: Path,
     results_dir: Path,
     profile: str = "release",
+    layout: CpuLayout | None = None,
     factory=None,
     probe: Probe | None = None,
     mem_floor: int = MEM_FLOOR_BYTES,
     out: Callable[[str], None] = _print,
 ) -> SeriesSummary:
-    """Seria: przebieg wzorcowy, potem bloki (blok z dryfem powtarzany raz). Wiersze trafiają
-    do runs.jsonl po każdym bloku, a na końcu — także po przerwaniu — do runs.parquet."""
+    """Seria: przebieg wzorcowy, potem bloki (blok z dryfem powtarzany raz; blok z P większym niż
+    układ CPU — pominięty z powodem). Wiersze trafiają do runs.jsonl po każdym bloku, a na końcu —
+    także po przerwaniu — do runs.parquet. `layout`: układ CPU (domyślnie odczytany z tej maszyny)."""
+    if layout is None:
+        layout = read_layout()
     directory = _new_directory(results_dir, cfg.series)
     scratch = directory / "tmp"
     scratch.mkdir()
     if factory is None:
-        def factory(variant: str, n_nodes: int):
+        def factory(variant: str, parallelism: int):
             return make_engine(
-                variant, n_nodes, data_root=data_root,
-                log_dir=directory / "logs" / f"{variant}-n{n_nodes}", profile=profile,
+                variant, parallelism, layout=layout, data_root=data_root,
+                log_dir=directory / "logs" / f"{variant}-p{parallelism}", profile=profile,
             )
     summary = SeriesSummary(directory=directory, parquet=directory / "runs.parquet")
     writer = ResultsWriter(directory / "runs.jsonl")
-    series = _Series(cfg, factory, probe or Probe(), mem_floor, directory, scratch, writer, out, summary, profile)
+    series = _Series(cfg, factory, probe or Probe(), mem_floor, directory, scratch, writer, out, summary,
+                     profile, layout)
     out(f"series {cfg.series}: results in {directory}")
     try:
         expected = series.reference_pass()
         for block in blocks(cfg):
-            series.run_block_with_retry(block, expected)
+            if block.parallelism > max_parallelism(layout):
+                series.skip_block(block)
+            else:
+                series.run_block_with_retry(block, expected)
     finally:
         to_parquet(writer.path, summary.parquet)
         shutil.rmtree(scratch, ignore_errors=True)
@@ -542,13 +576,13 @@ def handle_termination_signals() -> dict:
     """SIGTERM (`kill`) i SIGHUP (zamknięcie terminala) działają jak Ctrl-C: przerywają serię tą
     samą ścieżką — zabicie grupy runnera, zatrzymanie silnika, zapis wierszy przerwanego bloku
     i runs.parquet. Domyślnie oba sygnały kończą proces natychmiast, bez sprzątania, a runner
-    (osobna sesja) i procesy silnika zostają na rdzeniach węzłów. Zwraca poprzednie obsługi."""
+    (osobna sesja) i procesy silnika zostają na CPU bloku. Zwraca poprzednie obsługi."""
     return {sig: signal.signal(sig, _interrupt) for sig in (signal.SIGTERM, signal.SIGHUP)}
 
 
-def preflight(cfg: SeriesConfig, profile: str) -> None:
-    """Sprawdzenia przed pierwszym pomiarem (bench/preflight.py)."""
-    preflight_checks.run(cfg, profile)
+def preflight(cfg: SeriesConfig, profile: str, layout: CpuLayout) -> list[int]:
+    """Sprawdzenia przed pierwszym pomiarem (bench/preflight.py); zwraca P, które seria pominie."""
+    return preflight_checks.run(cfg, profile, layout)
 
 
 #: Ile nieoczekiwanych nieważnych przebiegów wypisać w podsumowaniu.
@@ -588,16 +622,18 @@ def main(argv: list[str] | None = None) -> int:
         root = args.data_root if args.data_root is not None else data_dir().parent
         root = root.expanduser().resolve()
         check_data(cfg, root)
-        preflight(cfg, args.ballista_profile)
+        # Układ przed zawężeniem affinity orkiestratora do rdzenia systemowego (niżej).
+        layout = preflight_checks.cpu_layout()
+        preflight(cfg, args.ballista_profile, layout)
     except (ConfigError, EngineError, OSError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    os.sched_setaffinity(0, SYSTEM_CPUS)
+    os.sched_setaffinity(0, layout.system)
     previous = handle_termination_signals()
     try:
         summary = run_series(
             cfg, data_root=root, results_dir=args.results_dir.expanduser().resolve(),
-            profile=args.ballista_profile,
+            profile=args.ballista_profile, layout=layout,
         )
     except SeriesError as e:
         print(f"series interrupted: {e}", file=sys.stderr)

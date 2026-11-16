@@ -1,7 +1,9 @@
-"""Konfiguracja serii pomiarowej (specyfikacja, sekcja 8.2) i jej rozwinięcie w bloki.
+"""Konfiguracja serii pomiarowej (specyfikacja, sekcja 8.2; etap 4: semantyka P) i jej rozwinięcie
+w bloki (wariant × P).
 
-Plik YAML opisuje serię: scenariusze (operacja i dane), warianty, wartości N, liczbę rund,
-rozgrzewkę, limit czasu, tolerancję dryfu przebiegu kontrolnego i ziarno kolejności.
+Plik YAML opisuje serię: scenariusze (operacja i dane), warianty, wartości P (równoległość —
+liczba CPU bloku), liczbę rund, rozgrzewkę, limit czasu, tolerancję dryfu przebiegu kontrolnego
+i ziarno kolejności.
 Konfiguracja jest sprawdzana w całości przed pierwszym pomiarem — nieznany klucz albo brak
 danych to błąd, nie cicha wartość domyślna."""
 
@@ -17,20 +19,27 @@ import yaml
 from bench.data.datasets import resolve
 from bench.ops import OPS, UNARY_OPS
 
-#: Warianty (specyfikacja 3; 3b-2, 5.3): sail — applyInArrow z pulą kontekstów polars-bio.
-VARIANTS = ("polars_bio_a", "polars_bio_b", "ballista", "sail")
-NODES = (1, 2, 3)
+#: Warianty serii (etap 4, specyfikacja 5.1) — przy równych zasobach P: polars_bio — jeden proces
+#: z P wątkami na P CPU; ballista — P executorów po 1 slocie, każdy na jednym CPU; sail — jeden
+#: proces serwera z P workerami po 1 slocie na P CPU (applyInArrow z pulą kontekstów polars-bio).
+VARIANTS = ("polars_bio", "ballista", "sail")
+#: Wartości P domyślnej serii; P większe niż liczba CPU poza rdzeniem systemowym orkiestrator
+#: pomija z powodem (bench/cpus.py).
+DEFAULT_PARALLELISM = (1, 2, 4, 8)
 #: Wartości domyślne ze specyfikacji 8.2 i 6.3 (tolerancja dryfu przebiegu kontrolnego: 10%)
-#: oraz 3b-2, 4.2: zadanie kontrolne overlap 7-0 (~1–2 s w polars-bio A; para 1-2 trwała ~0,13 s
-#: i szum przekraczał próg) wykonywane po 10 razy na początku i na końcu bloku.
+#: oraz 3b-2, 4.2: zadanie kontrolne overlap 7-0 (~1–2 s w przebiegu kontrolnym polars-bio
+#: z 2 wątkami; para 1-2 trwała ~0,13 s i szum przekraczał próg) wykonywane po 10 razy na początku
+#: i na końcu bloku.
 #: explain: dodatkowy przebieg EXPLAIN ANALYZE każdego scenariusza w blokach Ballisty (3b-2, 6.4).
 #: settle_s: przerwa przed każdym przebiegiem w sekundach (0 = brak; powód w orchestrator.measure).
 DEFAULTS = {
     "repeats": 5, "warmup": 1, "timeout_s": 1200, "control_tolerance": 0.10,
     "control": {"op": "overlap", "pair": "7-0"}, "control_repeats": 10, "explain": False,
-    "expected_invalid": [], "settle_s": 0.0,
+    "expected_invalid": [], "settle_s": 0.0, "parallelism": list(DEFAULT_PARALLELISM),
 }
-_REQUIRED = ("series", "scenarios", "variants", "nodes", "seed")
+_REQUIRED = ("series", "scenarios", "variants", "seed")
+#: Klucze zastąpione w etapie 4 — błąd ze wskazaniem nowej nazwy zamiast „unknown keys”.
+_RENAMED = {"nodes": "parallelism"}
 _KEYS = set(_REQUIRED) | set(DEFAULTS)
 _SCENARIO_KEYS = {"op", "pair", "dataset"}
 _SERIES_NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
@@ -55,11 +64,11 @@ class Scenario:
 @dataclass(frozen=True)
 class Block:
     variant: str
-    n_nodes: int
+    parallelism: int
 
     @property
     def label(self) -> str:
-        return f"{self.variant} N={self.n_nodes}"
+        return f"{self.variant} P={self.parallelism}"
 
 
 @dataclass(frozen=True)
@@ -69,7 +78,8 @@ class ExpectedInvalid:
 
     scenario: str
     variant: str
-    nodes: int | None = None
+    #: P bloku; None — dowolne.
+    parallelism: int | None = None
     #: Początek przyczyny nieważności; None — dowolna.
     reason: str | None = None
 
@@ -77,7 +87,7 @@ class ExpectedInvalid:
         return (
             row["scenario_id"] == self.scenario
             and row["variant"] == self.variant
-            and (self.nodes is None or row["n_nodes"] == self.nodes)
+            and (self.parallelism is None or row["parallelism"] == self.parallelism)
             and (self.reason is None or (row["invalid_reason"] or "").startswith(self.reason))
         )
 
@@ -87,7 +97,7 @@ class SeriesConfig:
     series: str
     scenarios: tuple[Scenario, ...]
     variants: tuple[str, ...]
-    nodes: tuple[int, ...]
+    parallelism: tuple[int, ...]
     repeats: int
     warmup: int
     timeout_s: float
@@ -119,6 +129,16 @@ def _non_negative(raw: dict, key: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         raise ConfigError(f"{key}: expected a number ≥ 0, got {value!r}")
     return float(value)
+
+
+def _renamed(raw: dict, where: str) -> None:
+    for old, new in _RENAMED.items():
+        if old in raw:
+            raise ConfigError(f"{where}{old}: renamed to {new}")
+
+
+def _is_parallelism(value) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value >= 1
 
 
 def _list(raw: dict, key: str) -> list:
@@ -158,7 +178,7 @@ def _scenario(item, where: str) -> Scenario:
     return Scenario(op, pair)
 
 
-_EXPECTED_KEYS = {"scenario", "variant", "nodes", "reason"}
+_EXPECTED_KEYS = {"scenario", "variant", "parallelism", "reason"}
 
 
 def _expected_invalid(raw_list, scenario_ids: set[str]) -> tuple[ExpectedInvalid, ...]:
@@ -169,6 +189,7 @@ def _expected_invalid(raw_list, scenario_ids: set[str]) -> tuple[ExpectedInvalid
         where = f"expected_invalid[{i}]"
         if not isinstance(item, dict):
             raise ConfigError(f"{where}: expected a mapping, got {item!r}")
+        _renamed(item, f"{where}: ")
         unknown = set(item) - _EXPECTED_KEYS
         if unknown:
             raise ConfigError(f"{where}: unknown keys {sorted(unknown)}")
@@ -179,13 +200,13 @@ def _expected_invalid(raw_list, scenario_ids: set[str]) -> tuple[ExpectedInvalid
             raise ConfigError(f"{where}: {item['scenario']!r} is not a scenario of this series")
         if item["variant"] not in VARIANTS:
             raise ConfigError(f"{where}: unknown variant {item['variant']!r}")
-        nodes = item.get("nodes")
-        if nodes is not None and (isinstance(nodes, bool) or nodes not in NODES):
-            raise ConfigError(f"{where}: nodes from {NODES}, got {nodes!r}")
+        parallelism = item.get("parallelism")
+        if parallelism is not None and not _is_parallelism(parallelism):
+            raise ConfigError(f"{where}: parallelism must be an integer ≥ 1, got {parallelism!r}")
         reason = item.get("reason")
         if reason is not None and not isinstance(reason, str):
             raise ConfigError(f"{where}: reason must be text, got {reason!r}")
-        out.append(ExpectedInvalid(item["scenario"], item["variant"], nodes, reason))
+        out.append(ExpectedInvalid(item["scenario"], item["variant"], parallelism, reason))
     return tuple(out)
 
 
@@ -193,6 +214,7 @@ def parse(raw) -> SeriesConfig:
     """Słownik z YAML → SeriesConfig; każdy błąd → ConfigError z miejscem i przyczyną."""
     if not isinstance(raw, dict):
         raise ConfigError("configuration: expected a mapping at the top level")
+    _renamed(raw, "")
     unknown = set(raw) - _KEYS
     if unknown:
         raise ConfigError(f"unknown keys: {sorted(unknown)}")
@@ -212,9 +234,9 @@ def parse(raw) -> SeriesConfig:
     unknown_variants = [v for v in variants if v not in VARIANTS]
     if unknown_variants:
         raise ConfigError(f"variants: unknown {unknown_variants}; allowed: {', '.join(VARIANTS)}")
-    nodes = _list(raw, "nodes")
-    if any(isinstance(n, bool) or not isinstance(n, int) or n not in NODES for n in nodes):
-        raise ConfigError(f"nodes: values from {NODES}, got {nodes!r}")
+    parallelism = _list(raw, "parallelism")
+    if not all(_is_parallelism(p) for p in parallelism):
+        raise ConfigError(f"parallelism: expected integers ≥ 1, got {parallelism!r}")
     seed = raw["seed"]
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise ConfigError(f"seed: expected an integer, got {seed!r}")
@@ -223,11 +245,11 @@ def parse(raw) -> SeriesConfig:
         raise ConfigError(f"explain: expected true or false, got {explain!r}")
     control = _scenario(raw["control"], "control")
     expected_invalid = _expected_invalid(raw["expected_invalid"], {*ids, control.id})
-    cfg = SeriesConfig(
+    return SeriesConfig(
         series=series,
         scenarios=scenarios,
         variants=variants,
-        nodes=tuple(sorted(nodes)),
+        parallelism=tuple(sorted(parallelism)),
         repeats=_int(raw, "repeats", 1),
         warmup=_int(raw, "warmup", 0),
         timeout_s=_positive(raw, "timeout_s"),
@@ -239,9 +261,6 @@ def parse(raw) -> SeriesConfig:
         explain=explain,
         expected_invalid=expected_invalid,
     )
-    if not blocks(cfg):
-        raise ConfigError("the configuration gives no blocks (polars_bio_b needs N ≥ 2)")
-    return cfg
 
 
 def load(path: Path) -> SeriesConfig:
@@ -253,26 +272,16 @@ def load(path: Path) -> SeriesConfig:
 
 
 def blocks(cfg: SeriesConfig) -> list[Block]:
-    """Bloki (wariant × N) jak kolumny macierzy 7.1: polars-bio A raz (N = 1, niezależny
-    od N), polars-bio B dla N ≥ 2 (dla N = 1 tożsamy z A), Ballista i warianty Saila dla każdego N."""
-    out: list[Block] = []
-    for variant in VARIANTS:
-        if variant not in cfg.variants:
-            continue
-        if variant == "polars_bio_a":
-            out.append(Block(variant, 1))
-        elif variant == "polars_bio_b":
-            out.extend(Block(variant, n) for n in cfg.nodes if n >= 2)
-        else:
-            out.extend(Block(variant, n) for n in cfg.nodes)
-    return out
+    """Bloki: każdy wariant serii dla każdego P — warianty w stałej kolejności VARIANTS, P rosnąco.
+    Bloki z P większym niż układ CPU maszyny zostają na liście; pomija je orkiestrator."""
+    return [Block(v, p) for v in VARIANTS if v in cfg.variants for p in cfg.parallelism]
 
 
 def round_order(cfg: SeriesConfig, block: Block, label: str) -> list[Scenario]:
     """Kolejność scenariuszy w rundzie (specyfikacja 6.2): losowa, ale odtwarzalna z ziarna
     serii — ta sama dla tego samego bloku i rundy, niezależnie od reszty serii (powtórzony
     blok dostaje tę samą kolejność)."""
-    rng = random.Random(f"{cfg.seed}/{block.variant}/{block.n_nodes}/{label}")
+    rng = random.Random(f"{cfg.seed}/{block.variant}/{block.parallelism}/{label}")
     return rng.sample(list(cfg.scenarios), len(cfg.scenarios))
 
 

@@ -53,20 +53,24 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "nodes(n): pins processes to emulated nodes 1..n (CPUs 0..2n+1); "
-        "skipped when the process cannot use all of them",
+        "parallelism(p): needs p CPUs outside the system core (bench/cpus.py); "
+        "skipped when the machine has fewer or its CPU topology is unreadable",
     )
 
 
 def pytest_runtest_setup(item):
-    """Znacznik nodes(n): test przypinający procesy do węzłów 1..n jest pomijany, gdy procesowi
-    brakuje któregoś z CPU rdzenia systemowego i węzłów (specyfikacja 3b-1, sekcja 6)."""
-    marker = item.get_closest_marker("nodes")
+    """Znacznik parallelism(p): test uruchamiający silnik z P CPU (specyfikacja etapu 4, 5.2) jest
+    pomijany, gdy układ CPU tej maszyny nie ma P CPU poza rdzeniem systemowym (CI: 4 vCPU → P ≤ 2)
+    albo topologii nie da się odczytać."""
+    marker = item.get_closest_marker("parallelism")
     if marker is None:
         return
-    from bench.engines import SYSTEM_CPUS, cluster_cpus
+    from bench import cpus
 
-    n = marker.args[0]
-    missing = sorted({*SYSTEM_CPUS, *cluster_cpus(n)} - os.sched_getaffinity(0))
-    if missing:
-        pytest.skip(f"needs CPUs 0-{2 * n + 1} for {n} node(s); unavailable: {missing}")
+    p = marker.args[0]
+    try:
+        available = cpus.max_parallelism(cpus.read_layout())
+    except cpus.TopologyError as e:
+        pytest.skip(f"needs P = {p} CPUs; CPU topology unreadable: {e}")
+    if available < p:
+        pytest.skip(f"needs P = {p} CPUs; this machine has {available} CPUs outside the system core")

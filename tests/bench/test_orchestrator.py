@@ -1,5 +1,6 @@
-"""Orkiestrator serii (plan 3a, Zadanie 9) na fałszywych silnikach i runnerze: logika bloków,
-ważności, limitu czasu, strażnika pamięci, swapu, dryfu i przerwań — bez uruchamiania silników."""
+"""Orkiestrator serii (plan 3a, Zadanie 9; etap 4: semantyka P) na fałszywych silnikach i runnerze:
+logika bloków, ważności, limitu czasu, strażnika pamięci, swapu, dryfu, przerwań i pomijania P
+większych niż układ CPU — bez uruchamiania silników."""
 
 from __future__ import annotations
 
@@ -18,20 +19,37 @@ import yaml
 from bench import engines, metrics, preflight
 from bench import orchestrator as orch
 from bench.config import parse
+from bench.cpus import CpuLayout, control_cpus, cpus_for, read_layout
 from bench.data.datasets import DATASETS
-from bench.engines import Command
+from bench.engines import CONTROL_VARIANT, REFERENCE_VARIANT, Command
 from bench.procutil import EngineError
+from tests.bench.fake_sysfs import make
 
 REPO = Path(__file__).resolve().parents[2]
 FAKE_RUNNER = Path(__file__).resolve().parent / "fake_runner.py"
+#: Układ laptopa (6 rdzeni, rdzeń k = CPU {2k, 2k+1}) — ten sam, który read_layout odczytuje
+#: z fałszywego sysfs (test_laptop_constant_matches_the_fake_sysfs).
+LAPTOP = CpuLayout(
+    system=(0, 1),
+    order=(2, 4, 6, 8, 10, 3, 5, 7, 9, 11),
+    siblings=tuple(frozenset({2 * k, 2 * k + 1}) for k in range(1, 6)),
+)
+
+
+def fake_cpus(layout: CpuLayout, variant: str, p: int) -> tuple[int, ...]:
+    """CPU silnika jak w engines.make_engine."""
+    if variant == CONTROL_VARIANT:
+        return control_cpus(layout)
+    return cpus_for(layout, 1 if variant == REFERENCE_VARIANT else p)
 
 
 class FakeEngine:
     """Silnik bez procesów: runnerem jest fake_runner.py z argumentami zależnymi od wariantu
     i scenariusza; start, stop i restart trafiają do wspólnego dziennika."""
 
-    def __init__(self, variant, n_nodes, args_for, log):
-        self.variant, self.n, self.args_for, self.log = variant, n_nodes, args_for, log
+    def __init__(self, variant, parallelism, args_for, log, cpus):
+        self.variant, self.n, self.args_for, self.log = variant, parallelism, args_for, log
+        self.cpus = cpus
         self.pids: dict[str, int] = {}
         self.logged: dict = {}
         self.explain_args: list[str] | None = None
@@ -81,11 +99,11 @@ class FakeEngine:
         return []
 
 
-def make_factory(args_for=lambda variant, n, scenario: [], customize=None):
+def make_factory(args_for=lambda variant, n, scenario: [], customize=None, layout=LAPTOP):
     log: list[tuple] = []
 
-    def factory(variant, n_nodes):
-        engine = FakeEngine(variant, n_nodes, args_for, log)
+    def factory(variant, parallelism):
+        engine = FakeEngine(variant, parallelism, args_for, log, fake_cpus(layout, variant, parallelism))
         if customize:
             customize(engine)
         return engine
@@ -112,8 +130,8 @@ def config(**overrides):
     raw = {
         "series": "test",
         "scenarios": [{"op": "overlap", "pair": "1-2"}, {"op": "merge", "dataset": 1}],
-        "variants": ["polars_bio_a", "ballista"],
-        "nodes": [1],
+        "variants": ["polars_bio", "ballista"],
+        "parallelism": [1],
         "repeats": 2,
         "warmup": 1,
         "timeout_s": 30,
@@ -130,15 +148,16 @@ def run(tmp_path, cfg=None, **kwargs):
     kwargs.setdefault("factory", make_factory())
     kwargs.setdefault("probe", probe())
     kwargs.setdefault("out", lambda line: None)
+    kwargs.setdefault("layout", LAPTOP)
     return orch.run_series(cfg or config(), data_root=tmp_path, results_dir=tmp_path / "results", **kwargs)
 
 
 def test_series_records_engine_environment(tmp_path):
     summary = run(tmp_path)
     assert json.loads((summary.directory / "env.json").read_text()) == {
-        "control": {"ENGINE": "polars_bio_a-1"},
-        "polars_bio_a N=1": {"ENGINE": "polars_bio_a-1"},
-        "ballista N=1": {"ENGINE": "ballista-1"},
+        "control": {"ENGINE": "polars_bio_control-2"},
+        "polars_bio P=1": {"ENGINE": "polars_bio-1"},
+        "ballista P=1": {"ENGINE": "ballista-1"},
     }
 
 
@@ -160,7 +179,7 @@ def test_series_runs_reference_then_blocks_with_control_warmup_and_rounds(tmp_pa
     reference = df.filter(pl.col("is_reference"))
     assert reference["scenario_id"].to_list() == ["overlap/1-2", "merge/1"]
     assert set(reference["variant"]) == {"polars_bio_ref"}
-    for variant in ("polars_bio_a", "ballista"):
+    for variant in ("polars_bio", "ballista"):
         b = block(df, variant)
         assert b.filter(pl.col("is_warmup"))["rep"].to_list() == [0, 0]
         assert sorted(b.filter(~pl.col("is_warmup"))["rep"].to_list()) == [1, 1, 2, 2]
@@ -168,14 +187,14 @@ def test_series_runs_reference_then_blocks_with_control_warmup_and_rounds(tmp_pa
     assert control["rep"].to_list() == [1, 1, 1, 1]
     assert control["control_position"].to_list() == ["start", "end", "start", "end"]
     assert df.filter(~pl.col("is_control"))["control_position"].is_null().all()
-    assert set(control["scenario_id"]) == {"overlap/1-2"} and set(control["variant"]) == {"polars_bio_a"}
+    assert set(control["scenario_id"]) == {"overlap/1-2"} and set(control["variant"]) == {"polars_bio_control"}
     assert df.height == 2 + 2 * (2 + 2 + 4)
     assert df["valid"].all() and summary.ok and (summary.rows, summary.invalid) == (df.height, 0)
     assert set(df["attempt"]) == {1}
     assert json.loads(df["peak_rss"][0]) == {"runner": 1234}
     assert factory.log == [
         ("start", "polars_bio_ref", 1), ("stop", "polars_bio_ref", 1),
-        ("start", "polars_bio_a", 1), ("stop", "polars_bio_a", 1),
+        ("start", "polars_bio", 1), ("stop", "polars_bio", 1),
         ("start", "ballista", 1), ("stop", "ballista", 1),
     ]
     assert not (summary.directory / "tmp").exists()
@@ -282,8 +301,7 @@ def _control_times(tmp_path, times: list[float]):
     path.write_text("\n".join(map(str, times)))
 
     def args_for(variant, n, scenario):
-        # Bez wariantu polars_bio_a w serii jedynymi przebiegami polars_bio_a są kontrolne.
-        return ["--t-file", str(path)] if variant == "polars_bio_a" else []
+        return ["--t-file", str(path)] if variant == CONTROL_VARIANT else []
 
     return make_factory(args_for)
 
@@ -327,10 +345,10 @@ def test_control_drift_of_medians_repeats_block(tmp_path):
 
 
 def test_invalid_control_runs_invalidate_the_block(tmp_path):
-    """Wszystkie przebiegi kontrolne nieważne (zła suma kontrolna polars-bio A) — blok dostaje
-    przyczynę „control run invalid” zamiast wyjątku z mediany pustej listy, także po powtórzeniu."""
+    """Wszystkie przebiegi kontrolne nieważne (zła suma kontrolna) — blok dostaje przyczynę
+    „control run invalid” zamiast wyjątku z mediany pustej listy, także po powtórzeniu."""
     def args_for(variant, n, scenario):
-        return ["--checksum", "0x00000000000000bb"] if variant == "polars_bio_a" else []
+        return ["--checksum", "0x00000000000000bb"] if variant == CONTROL_VARIANT else []
 
     cfg = config(variants=["ballista"], control_repeats=2)
     df = rows(run(tmp_path, cfg=cfg, factory=make_factory(args_for))).filter(~pl.col("is_reference"))
@@ -357,9 +375,9 @@ def test_engine_start_failure_is_reported_and_other_blocks_run(tmp_path):
             engine.start = start
 
     summary = run(tmp_path, factory=make_factory(customize=customize))
-    assert summary.failures == ["ballista N=1: executor did not start"] and not summary.ok
+    assert summary.failures == ["ballista P=1: executor did not start"] and not summary.ok
     df = rows(summary)
-    assert "ballista" not in set(df["variant"]) and block(df, "polars_bio_a").height == 6
+    assert "ballista" not in set(df["variant"]) and block(df, "polars_bio").height == 6
 
 
 def test_interrupt_keeps_finished_rows_and_stops_engine(tmp_path):
@@ -373,7 +391,7 @@ def test_interrupt_keeps_finished_rows_and_stops_engine(tmp_path):
     with pytest.raises(KeyboardInterrupt):
         run(tmp_path, factory=factory)
     df = pl.read_parquet(next((tmp_path / "results").rglob("runs.parquet")))
-    assert block(df, "polars_bio_a")["valid"].all()
+    assert block(df, "polars_bio")["valid"].all()
     assert df["invalid_reason"][-1] == "series interrupted"  # kontrola przerwanego bloku Ballisty
     assert factory.log[-1] == ("stop", "ballista", 1)
 
@@ -384,7 +402,7 @@ SIGNAL_SERIES = """
 import sys
 from pathlib import Path
 from bench import orchestrator as orch
-from tests.bench.test_orchestrator import config, make_factory, probe
+from tests.bench.test_orchestrator import LAPTOP, config, make_factory, probe
 
 tmp = Path(sys.argv[1])
 
@@ -395,7 +413,7 @@ factory = make_factory(args_for)
 orch.handle_termination_signals()
 try:
     orch.run_series(config(), data_root=tmp, results_dir=tmp / "results", factory=factory,
-                    probe=probe(), out=lambda line: None)
+                    probe=probe(), out=lambda line: None, layout=LAPTOP)
 finally:
     (tmp / "journal.txt").write_text(repr(factory.log))
 """
@@ -410,7 +428,7 @@ def _cmdline_contains(proc_dir: Path, text: str) -> bool:
 
 def test_interrupt_during_a_run_kills_the_running_runner(tmp_path):
     """Ctrl-C (KeyboardInterrupt) w trakcie przebiegu: grupa procesów runnera jest zabijana —
-    żaden runner nie zostaje na rdzeniach węzłów (przegląd 3a)."""
+    żaden runner nie zostaje na CPU bloku (przegląd 3a)."""
     started = tmp_path / "runner_started"
 
     def args_for(variant, n, scenario):
@@ -488,13 +506,13 @@ def _fixture_data(root: Path) -> Path:
 
 
 def test_main_fails_fast_without_ballista_binaries(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(preflight, "check_cpus", lambda *args, **kwargs: None)
+    monkeypatch.setattr(preflight, "check_cpus", lambda *args, **kwargs: [])
     monkeypatch.setattr(metrics, "swap_used", lambda: 0)
     root = _fixture_data(tmp_path / "data")
     cfg = tmp_path / "series.yaml"
     cfg.write_text(yaml.safe_dump({
         "series": "b", "scenarios": [{"op": "overlap", "pair": "1-2"}],
-        "variants": ["ballista"], "nodes": [1], "seed": 1,
+        "variants": ["ballista"], "parallelism": [1], "seed": 1,
         "control": {"op": "overlap", "pair": "1-2"},
     }))
     monkeypatch.setattr(engines, "BALLISTA_DIR", tmp_path / "missing")
@@ -515,13 +533,13 @@ def test_main_reports_config_error_with_code_2(tmp_path, capsys):
 def test_main_refuses_to_start_with_used_swap(tmp_path, monkeypatch, capsys):
     """Niepusty swap na starcie: każdy przebieg mógłby wczytywać cudze strony — seria nie startuje
     (kod 2), zanim powstanie katalog wyników."""
-    monkeypatch.setattr(preflight, "check_cpus", lambda *args, **kwargs: None)
+    monkeypatch.setattr(preflight, "check_cpus", lambda *args, **kwargs: [])
     root = _fixture_data(tmp_path / "data")
     cfg = tmp_path / "series.yaml"
     cfg.write_text(yaml.safe_dump({
         "series": "s", "scenarios": [{"op": "overlap", "pair": "1-2"}],
         "control": {"op": "overlap", "pair": "1-2"},
-        "variants": ["polars_bio_a"], "nodes": [1], "seed": 1,
+        "variants": ["polars_bio"], "parallelism": [1], "seed": 1,
     }))
     monkeypatch.setattr(metrics, "swap_used", lambda: 300 * 2**20)
     code = orch.main([str(cfg), "--data-root", str(root), "--results-dir", str(tmp_path / "results")])
@@ -540,14 +558,14 @@ def test_engine_log_metrics_reach_results(tmp_path):
     ballista = block(df, "ballista")
     assert set(ballista["broadcast_bytes"]) == {10}
     assert all(json.loads(e)["sail_workers"] == 2 for e in ballista["extra"])
-    assert block(df, "polars_bio_a")["broadcast_bytes"].is_null().all()
+    assert block(df, "polars_bio")["broadcast_bytes"].is_null().all()
 
 
 def test_explain_pass_writes_plans_of_ballista_blocks(tmp_path):
     summary = run(tmp_path, cfg=config(explain=True))
     explain = summary.directory / "explain"
     assert sorted(p.relative_to(explain).as_posix() for p in explain.rglob("*.txt")) == [
-        "ballista-n1/merge_1.txt", "ballista-n1/overlap_1-2.txt",
+        "ballista-p1/merge_1.txt", "ballista-p1/overlap_1-2.txt",
     ]
     assert rows(summary).height == 2 + 2 * (2 + 2 + 4)  # przebiegi explain nie trafiają do wyników
     assert summary.ok
@@ -559,8 +577,8 @@ def test_failed_explain_is_reported_as_series_failure(tmp_path):
 
     summary = run(tmp_path, cfg=config(explain=True), factory=make_factory(customize=customize))
     assert summary.failures == [
-        "ballista N=1: EXPLAIN ANALYZE overlap/1-2: engine crashed: test error",
-        "ballista N=1: EXPLAIN ANALYZE merge/1: engine crashed: test error",
+        "ballista P=1: EXPLAIN ANALYZE overlap/1-2: engine crashed: test error",
+        "ballista P=1: EXPLAIN ANALYZE merge/1: engine crashed: test error",
     ]
     assert not summary.ok
 
@@ -582,8 +600,8 @@ def test_engine_death_during_explain_stops_runner_at_once(tmp_path):
     assert time.monotonic() - t0 < 60
     died = "process executor_1 exited during the run"
     assert summary.failures == [
-        f"ballista N=1: EXPLAIN ANALYZE overlap/1-2: {died}",
-        f"ballista N=1: EXPLAIN ANALYZE merge/1: {died}",
+        f"ballista P=1: EXPLAIN ANALYZE overlap/1-2: {died}",
+        f"ballista P=1: EXPLAIN ANALYZE merge/1: {died}",
     ]
     assert rows(summary).height == 2 + 2 * (2 + 2 + 4)
     assert block(rows(summary), "ballista")["valid"].all()
@@ -598,7 +616,7 @@ def test_explain_pass_skips_scenarios_skipped_in_measured_runs(tmp_path):
     summary = run(tmp_path, cfg=config(explain=True, timeout_s=1), factory=make_factory(args_for))
     explain = summary.directory / "explain"
     assert sorted(p.relative_to(explain).as_posix() for p in explain.rglob("*.txt")) == [
-        "ballista-n1/merge_1.txt",
+        "ballista-p1/merge_1.txt",
     ]
     assert summary.failures == []
 
@@ -642,6 +660,15 @@ def test_engine_versions_record_algorithm_crate_and_binary_hashes(tmp_path, monk
     assert "ballista_node_sha256" not in orch.engine_versions("release", ballista=False)
 
 
+def test_engine_versions_without_a_ballista_checkout(tmp_path, monkeypatch):
+    """Niezainicjowany submoduł Ballisty (brak Cargo.lock): seria bez Ballisty ma ruszyć,
+    a wersje Ballisty są „unknown” — nie FileNotFoundError."""
+    monkeypatch.setattr(orch, "BALLISTA_DIR", tmp_path / "missing")
+    monkeypatch.setattr(engines, "BALLISTA_DIR", tmp_path / "missing")
+    versions = orch.engine_versions("release", ballista=False)
+    assert versions["ballista"] == "unknown (release)" and versions["datafusion_ballista"] == "unknown"
+
+
 def test_engine_death_during_run_kills_runner_at_once(tmp_path):
     """Śmierć procesu silnika w trakcie przebiegu: runner przerwany od razu (nie po timeoucie),
     scenariusz pominięty do końca bloku, silnik zatrzymany twardo i uruchomiony od nowa."""
@@ -683,7 +710,7 @@ def test_stderr_of_failed_runs_is_kept(tmp_path):
     summary = run(tmp_path, factory=make_factory(args_for))
     kept = sorted((summary.directory / "logs" / "failed").iterdir())
     assert len(kept) == 3  # rozgrzewka i dwie rundy
-    assert kept[0].name.endswith("-ballista-n1-overlap_1-2.stderr.txt")
+    assert kept[0].name.endswith("-ballista-p1-overlap_1-2.stderr.txt")
     assert "engine crashed: test error" in kept[0].read_text()
 
 
@@ -694,7 +721,7 @@ def test_base_rss_of_long_lived_processes_is_recorded(tmp_path):
 
     df = rows(run(tmp_path, factory=make_factory(customize=customize)))
     assert set(block(df, "ballista")["base_rss"]) == {json.dumps({"executor_1": 1000})}
-    assert block(df, "polars_bio_a")["base_rss"].is_null().all()
+    assert block(df, "polars_bio")["base_rss"].is_null().all()
 
 
 def test_base_rss_of_zombie_process_does_not_abort_the_run(tmp_path):
@@ -728,7 +755,7 @@ def test_unexpected_invalid_runs_fail_the_series_and_are_listed(tmp_path):
     lines = orch.summary_lines("test", summary)
     assert lines[0].startswith("test FAILED:")
     assert lines[1] == (
-        "  unexpected: ballista N=1 merge/1: checksum 0x00000000000000bb ≠ reference 0x00000000000000aa"
+        "  unexpected: ballista P=1 merge/1: checksum 0x00000000000000bb ≠ reference 0x00000000000000aa"
     )
 
 
@@ -775,3 +802,57 @@ def test_explain_pass_has_no_settle_pause(tmp_path, monkeypatch):
     summary = run(tmp_path, cfg=config(explain=True, settle_s=1.5))
     assert (summary.directory / "explain").exists()
     assert len(pauses) == rows(summary).height  # explain (2 przebiegi) nie dolicza pauz
+
+
+def test_laptop_constant_matches_the_fake_sysfs(tmp_path):
+    cores = [[2 * k, 2 * k + 1] for k in range(6)]
+    assert read_layout(make(tmp_path, cores), affinity=set(range(12))) == LAPTOP
+
+
+SKIPPED_P = "skipped: P exceeds available CPUs"
+
+
+def test_oversized_parallelism_is_skipped_not_failed(tmp_path):
+    """Maszyna z 4 CPU poza rdzeniem systemowym (3 rdzenie SMT), seria z P = 4 i 8: blok P = 8
+    nie startuje silnika, dostaje po wierszu na scenariusz z powodem pominięcia, a seria jest
+    zaliczona (kod wyjścia 0) — raport pokaże lukę."""
+    small = read_layout(make(tmp_path, [[0, 1], [2, 3], [4, 5]]), affinity=set(range(6)))
+    factory = make_factory(layout=small)
+    lines: list[str] = []
+    cfg = config(variants=["ballista"], parallelism=[4, 8])
+    summary = run(tmp_path, cfg=cfg, factory=factory, layout=small, out=lines.append)
+    df = rows(summary)
+    skipped = df.filter(pl.col("parallelism") == 8)
+    assert skipped.height == 2 and sorted(skipped["scenario_id"]) == ["merge/1", "overlap/1-2"]
+    assert set(skipped["variant"]) == {"ballista"} and not skipped["valid"].any()
+    assert set(skipped["invalid_reason"]) == {SKIPPED_P} == {orch.SKIPPED_P_REASON}
+    assert set(skipped["cpus"]) == {"[]"} and skipped["smt"].is_null().all()
+    assert not skipped["is_control"].any() and not skipped["is_reference"].any()
+    assert block(df, "ballista").filter(pl.col("parallelism") == 4)["valid"].all()
+    assert ("start", "ballista", 8) not in factory.log
+    assert summary.ok and (summary.invalid, summary.expected, summary.unexpected) == (2, 2, [])
+    assert orch.summary_lines("test", summary)[0].startswith("test OK:")
+    assert any("ballista P=8" in line and SKIPPED_P in line for line in lines)
+
+
+def test_rows_record_cpus_and_smt(tmp_path):
+    """P = 8 na laptopie sięga po drugie wątki rdzeni 1–3 — wiersze niosą listę CPU i flagę SMT;
+    wzorzec (1 CPU) bez SMT, przebieg kontrolny (oba wątki pierwszego rdzenia) z SMT."""
+    df = rows(run(tmp_path, cfg=config(variants=["ballista"], parallelism=[8])))
+    measured = block(df, "ballista")
+    assert set(measured["parallelism"]) == {8}
+    assert [json.loads(c) for c in set(measured["cpus"])] == [[2, 4, 6, 8, 10, 3, 5, 7]]
+    assert measured["smt"].all()
+    reference = df.filter(pl.col("is_reference"))
+    assert set(reference["cpus"]) == {"[2]"} and not reference["smt"].any()
+    assert set(reference["parallelism"]) == {1}
+    control = df.filter(pl.col("is_control"))
+    assert set(control["cpus"]) == {"[2, 3]"} and control["smt"].all()
+    assert set(control["parallelism"]) == {2}
+
+
+def test_progress_lines_name_parallelism(tmp_path):
+    lines: list[str] = []
+    run(tmp_path, out=lines.append)
+    assert any(line.startswith("ballista") and " P=1 " in line for line in lines)
+    assert not any(" N=" in line for line in lines)

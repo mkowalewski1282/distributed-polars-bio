@@ -1,9 +1,10 @@
-"""Plan 3a, Zadanie 9: orkiestrator na prawdziwych silnikach i zbiorze testowym w układzie
-databio-8p (para 1-2, zbiór 1) — wszystkie warianty, N = 1 i 2, po jednym przebiegu.
+"""Plan 3a, Zadanie 9 (etap 4: semantyka P): orkiestrator na prawdziwych silnikach i zbiorze
+testowym w układzie databio-8p (para 1-2, zbiór 1) — wszystkie warianty, P = 1 i 2, po jednym
+przebiegu; CPU bloków z układu tej maszyny (bench/cpus.py).
 
 Wynik wzorcowy: polars-bio na 1 partycji. Od planu 3b-1 (polars-bio 0.36) wszystkie przebiegi
-mają być ważne — także polars-bio A i B, które w 0.28 liczyły merge i subtract osobno w każdej
-partycji (błąd #372, naprawiony w 0.29.0).
+mają być ważne — także polars-bio na wielu partycjach, który w 0.28 liczył merge i subtract
+osobno w każdej partycji (błąd #372, naprawiony w 0.29.0).
 
 Wymaga binarek ballista_node i bench_client (debug). Swap jest wyłączony z kryteriów
 (pswpout i pswpin zastąpione stałą): jego wykrywanie sprawdzają testy jednostkowe, a tu przypadkowy
@@ -22,7 +23,9 @@ import yaml
 from bench import metrics, preflight
 from bench import orchestrator as orch
 from bench.config import VARIANTS, parse
+from bench.cpus import control_cpus, cpus_for, read_layout, uses_smt
 from bench.data.datasets import DATASETS
+from bench.engines import CONTROL_VARIANT, REFERENCE_VARIANT
 from bench.ops import OPS, UNARY_OPS
 from tests.parquet_fixture import FIXTURE_A, FIXTURE_B, write_parts
 
@@ -41,7 +44,7 @@ def data_root(tmp_path_factory):
 def series(data_root, tmp_path_factory):
     cfg = parse({
         "series": "integration", "scenarios": SCENARIOS, "variants": list(VARIANTS),
-        "nodes": [1, 2], "repeats": 1, "warmup": 0, "seed": 1, "control_tolerance": 100.0,
+        "parallelism": [1, 2], "repeats": 1, "warmup": 0, "seed": 1, "control_tolerance": 100.0,
         "control": {"op": "overlap", "pair": "1-2"}, "control_repeats": 1,
     })
     summary = orch.run_series(
@@ -51,36 +54,55 @@ def series(data_root, tmp_path_factory):
     return summary, pl.read_parquet(summary.parquet)
 
 
-@pytest.mark.nodes(2)
+@pytest.mark.parallelism(2)
 def test_every_planned_run_is_recorded(series):
     summary, df = series
-    # wzorzec: 5 scenariuszy (kontrola overlap/1-2 jest wśród nich); bloki: A1, B2, Ballista 1 i 2,
-    # Sail po 1 i 2 — każdy 2 przebiegi kontrolne + 5 scenariuszy
+    # wzorzec: 5 scenariuszy (kontrola overlap/1-2 jest wśród nich); bloki: polars-bio, Ballista
+    # i Sail po P = 1 i 2 — każdy 2 przebiegi kontrolne + 5 scenariuszy
     assert df.height == 5 + 6 * (2 + 5)
     assert summary.rows == df.height and not summary.failures
 
 
-@pytest.mark.nodes(2)
+@pytest.mark.parallelism(2)
 def test_every_run_is_valid(series):
     _, df = series
-    bad = df.filter(~pl.col("valid")).select("variant", "n_nodes", "op", "invalid_reason")
+    bad = df.filter(~pl.col("valid")).select("variant", "parallelism", "op", "invalid_reason")
     assert bad.is_empty(), bad.to_dicts()
 
 
-@pytest.mark.nodes(2)
-def test_threads_follow_variant_and_n(series):
+@pytest.mark.parallelism(2)
+def test_rows_record_parallelism_cpus_and_smt(series):
+    """Kolumny etapu 4 w runs.parquet: P bloku, CPU silnika z układu tej maszyny i flaga SMT."""
+    _, df = series
+    layout = read_layout()
+    assert set(zip(df["variant"], df["parallelism"])) == {
+        (REFERENCE_VARIANT, 1), (CONTROL_VARIANT, 2), ("polars_bio", 1), ("polars_bio", 2),
+        ("ballista", 1), ("ballista", 2), ("sail", 1), ("sail", 2),
+    }
+    for row in df.iter_rows(named=True):
+        if row["variant"] == CONTROL_VARIANT:
+            expected = control_cpus(layout)
+        else:
+            expected = cpus_for(layout, row["parallelism"])
+        assert json.loads(row["cpus"]) == list(expected), row
+        assert row["smt"] is uses_smt(layout, expected), row
+
+
+@pytest.mark.parallelism(2)
+def test_partitions_follow_variant_and_parallelism(series):
+    """Partycje = P; Ballista najmniej 2 (binarki odrzucają BIO_TARGET_PARTITIONS < 2)."""
     _, df = series
     partitions = {
         key: {json.loads(e)["target_partitions"] for e in group["extra"]}
-        for key, group in df.filter(~pl.col("variant").str.starts_with("sail")).group_by(["variant", "n_nodes"])
+        for key, group in df.filter(pl.col("variant") != "sail").group_by(["variant", "parallelism"])
     }
     assert partitions == {
-        ("polars_bio_ref", 1): {1}, ("polars_bio_a", 1): {2}, ("polars_bio_b", 2): {4},
-        ("ballista", 1): {2}, ("ballista", 2): {4},
+        (REFERENCE_VARIANT, 1): {1}, (CONTROL_VARIANT, 2): {2}, ("polars_bio", 1): {1},
+        ("polars_bio", 2): {2}, ("ballista", 1): {2}, ("ballista", 2): {2},
     }
 
 
-@pytest.mark.nodes(2)
+@pytest.mark.parallelism(2)
 def test_every_runner_reports_checksum_time_and_first_batch(series):
     """Koszt sumy kontrolnej zależy od silnika (Python albo Rust) — każdy runner go podaje,
     poza t_total_s (specyfikacja 3b-2, 4.1); faza do pierwszej partii mieści się w t_total_s."""
@@ -90,21 +112,21 @@ def test_every_runner_reports_checksum_time_and_first_batch(series):
     assert all(0 <= f <= t for f, t in zip(first, df["t_total_s"]))
 
 
-@pytest.mark.nodes(2)
+@pytest.mark.parallelism(2)
 def test_memory_is_measured_per_process(series):
     _, df = series
 
-    def processes(variant: str, n: int) -> set[frozenset]:
-        rows = df.filter((pl.col("variant") == variant) & (pl.col("n_nodes") == n) & ~pl.col("is_control"))
-        return {frozenset(json.loads(p)) for p in rows["peak_rss"]}
+    def processes(variant: str, p: int) -> set[frozenset]:
+        rows = df.filter((pl.col("variant") == variant) & (pl.col("parallelism") == p) & ~pl.col("is_control"))
+        return {frozenset(json.loads(r)) for r in rows["peak_rss"]}
 
     assert processes("ballista", 2) == {frozenset({"runner", "scheduler", "executor_1", "executor_2"})}
     assert processes("sail", 1) == {frozenset({"runner", "sail_server"})}
-    assert processes("polars_bio_b", 2) == {frozenset({"runner"})}
+    assert processes("polars_bio", 2) == {frozenset({"runner"})}
     assert (df["peak_rss_sum"] > 10 * 2**20).all()
 
 
-@pytest.mark.nodes(2)
+@pytest.mark.parallelism(2)
 def test_ballista_shuffle_volume_is_measured(series):
     _, df = series
     ballista = df.filter(pl.col("variant") == "ballista")
@@ -112,18 +134,18 @@ def test_ballista_shuffle_volume_is_measured(series):
     assert df.filter(pl.col("variant") != "ballista")["shuffle_bytes"].is_null().all()
 
 
-@pytest.mark.nodes(1)
+@pytest.mark.parallelism(1)
 def test_main_resolves_relative_data_root(data_root, tmp_path, monkeypatch):
     """Runnery Pythona działają w katalogu repozytorium, a Ballisty w ballista_genomics/ —
     względna ścieżka danych musi zostać zamieniona na bezwzględną przed startem serii."""
     monkeypatch.chdir(data_root.parent)
-    monkeypatch.setattr(preflight, "check_cpus", lambda *args, **kwargs: None)
+    monkeypatch.setattr(preflight, "check_cpus", lambda *args, **kwargs: [])
     monkeypatch.setattr(orch, "Probe", functools.partial(orch.Probe, pswpout=lambda: 0, pswpin=lambda: 0))
     monkeypatch.setattr(metrics, "swap_used", lambda: 0)
     cfg = tmp_path / "series.yaml"
     cfg.write_text(yaml.safe_dump({
         "series": "paths", "scenarios": [{"op": "overlap", "pair": "1-2"}],
-        "variants": ["polars_bio_a"], "nodes": [1], "repeats": 1, "warmup": 0, "seed": 1,
+        "variants": ["polars_bio"], "parallelism": [1], "repeats": 1, "warmup": 0, "seed": 1,
         "control_tolerance": 100.0,
         "control": {"op": "overlap", "pair": "1-2"}, "control_repeats": 1,
     }))
@@ -135,21 +157,21 @@ def test_main_resolves_relative_data_root(data_root, tmp_path, monkeypatch):
     assert code == 0
 
 
-@pytest.mark.nodes(2)
+@pytest.mark.parallelism(2)
 def test_sail_reports_workers_and_phases(series):
-    """Każda sesja Saila ma N workerów (Sail 0.7.2); Sail mierzy czas polars-bio
+    """Każda sesja Saila ma P workerów (Sail 0.7.3, 1 slot na workera); Sail mierzy czas polars-bio
     (4 chromosomy z niepustą lewą stroną)."""
     _, df = series
     sail = df.filter(pl.col("variant").str.starts_with("sail") & ~pl.col("is_control"))
     assert set(sail["variant"]) == {"sail"}
     for row in sail.iter_rows(named=True):
         extra, phases = json.loads(row["extra"]), json.loads(row["phases"])
-        assert extra["sail_workers"] == row["n_nodes"], row
+        assert extra["sail_workers"] == row["parallelism"], row
         assert phases["pb_s"] > 0 and extra["udf_groups"] == 4
         assert "lock_wait_s" not in phases
 
 
-@pytest.mark.nodes(2)
+@pytest.mark.parallelism(2)
 def test_ballista_broadcast_volume_is_measured(series):
     _, df = series
     ballista = df.filter((pl.col("variant") == "ballista") & ~pl.col("is_reference"))

@@ -1,5 +1,5 @@
-"""Konfiguracja serii (plan 3a, Zadanie 6; specyfikacja 8.2): walidacja przed pierwszym
-pomiarem, rozwinięcie w bloki (kolumny macierzy 7.1) i odtwarzalna kolejność scenariuszy."""
+"""Konfiguracja serii (plan 3a, Zadanie 6; specyfikacja 8.2; etap 4: semantyka P): walidacja
+przed pierwszym pomiarem, rozwinięcie w bloki (wariant × P) i odtwarzalna kolejność scenariuszy."""
 
 from __future__ import annotations
 
@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from bench.config import Block, ConfigError, Scenario, blocks, check_data, load, parse, round_order
+from bench.config import (
+    DEFAULT_PARALLELISM, VARIANTS, Block, ConfigError, Scenario, blocks, check_data, load, parse, round_order,
+)
 from bench.data.datasets import DATASETS
 
 REPO = Path(__file__).resolve().parents[2]
@@ -25,8 +27,8 @@ def raw(**overrides) -> dict:
     base = {
         "series": "test",
         "scenarios": [{"op": "overlap", "pair": "1-2"}, {"op": "merge", "dataset": 1}],
-        "variants": ["polars_bio_a", "ballista"],
-        "nodes": [1, 3],
+        "variants": ["polars_bio", "ballista"],
+        "parallelism": [4, 1],
         "seed": 7,
     }
     for key, value in overrides.items():
@@ -42,7 +44,7 @@ def test_minimal_config_gets_spec_defaults():
     assert cfg.scenarios == (Scenario("overlap", "1-2"), Scenario("merge", "1"))
     assert [s.id for s in cfg.scenarios] == ["overlap/1-2", "merge/1"]
     assert (cfg.repeats, cfg.warmup, cfg.timeout_s, cfg.control_tolerance) == (5, 1, 1200.0, 0.10)
-    assert (cfg.nodes, cfg.seed) == ((1, 3), 7)
+    assert (cfg.parallelism, cfg.seed) == ((1, 4), 7)
     # Przebieg kontrolny (specyfikacja 3b-2, 4.2): overlap 7-0, 10 przebiegów na każdym końcu bloku.
     assert (cfg.control, cfg.control_repeats) == (Scenario("overlap", "7-0"), 10)
     assert cfg.explain is False
@@ -56,7 +58,8 @@ def test_smoke_config_is_the_full_matrix_on_pair_1_2():
     assert {s.id for s in cfg.scenarios} == {
         "overlap/1-2", "nearest/1-2", "coverage/1-2", "merge/1", "subtract/1-2",
     }
-    assert len(blocks(cfg)) == 9
+    assert cfg.variants == ("polars_bio", "ballista", "sail") and cfg.parallelism == (1, 2)
+    assert len(blocks(cfg)) == 6
     assert cfg.explain is True
     assert cfg.settle_s == 3.0
 
@@ -86,15 +89,17 @@ def test_smoke_config_is_the_full_matrix_on_pair_1_2():
         ),
         ({"variants": ["spark"]}, "variants: unknown"),
         ({"variants": "ballista"}, "variants: expected a non-empty list"),
-        ({"nodes": [4]}, "nodes"),
-        ({"nodes": [True]}, "nodes"),
-        ({"nodes": [1.0]}, "nodes"),
-        ({"nodes": [1, 1]}, "repeated items"),
+        ({"parallelism": [0]}, "parallelism"),
+        ({"parallelism": [True]}, "parallelism"),
+        ({"parallelism": [1.0]}, "parallelism"),
+        ({"parallelism": ["2"]}, "parallelism"),
+        ({"parallelism": []}, "parallelism: expected a non-empty list"),
+        ({"parallelism": 2}, "parallelism: expected a non-empty list"),
+        ({"parallelism": [1, 1]}, "repeated items"),
         ({"repeats": 0}, "repeats"),
         ({"warmup": -1}, "warmup"),
         ({"timeout_s": 0}, "timeout_s"),
         ({"control_tolerance": "10%"}, "control_tolerance"),
-        ({"variants": ["polars_bio_b"], "nodes": [1]}, "no blocks"),
         ({"control": "overlap"}, "control: expected a mapping"),
         ({"control": {"op": "merge", "pair": "1-2"}}, "control: merge works on a single dataset"),
         ({"control": {"op": "overlap", "pair": "1-9"}}, "control: pair"),
@@ -106,7 +111,12 @@ def test_smoke_config_is_the_full_matrix_on_pair_1_2():
         ({"expected_invalid": [{"scenario": "nearest/1-2", "variant": "sail"}]}, "not a scenario of this series"),
         ({"expected_invalid": [{"scenario": "merge/1", "variant": "spark"}]}, "unknown variant"),
         ({"expected_invalid": [{"scenario": "merge/1", "variant": "sail", "x": 1}]}, "unknown keys"),
-        ({"expected_invalid": [{"scenario": "merge/1", "variant": "sail", "nodes": 4}]}, "nodes"),
+        ({"expected_invalid": [{"scenario": "merge/1", "variant": "sail", "parallelism": 0}]}, "parallelism"),
+        ({"expected_invalid": [{"scenario": "merge/1", "variant": "sail", "parallelism": True}]}, "parallelism"),
+        (
+            {"expected_invalid": [{"scenario": "merge/1", "variant": "sail", "nodes": 2}]},
+            r"expected_invalid\[0\]: nodes: renamed to parallelism",
+        ),
     ],
 )
 def test_invalid_config_is_rejected_before_any_run(overrides, message):
@@ -114,17 +124,29 @@ def test_invalid_config_is_rejected_before_any_run(overrides, message):
         parse(raw(**overrides))
 
 
-def test_blocks_follow_matrix_columns():
-    """polars-bio A raz (N = 1, niezależny od N), B tylko dla N ≥ 2 (dla N = 1 tożsamy z A),
-    Ballista i Sail dla każdego N; kolejność wariantów stała, N rosnąco."""
-    cfg = parse(raw(
-        variants=["sail", "polars_bio_b", "ballista", "polars_bio_a"], nodes=[3, 1],
-    ))
-    assert blocks(cfg) == [
-        Block("polars_bio_a", 1), Block("polars_bio_b", 3), Block("ballista", 1),
-        Block("ballista", 3), Block("sail", 1), Block("sail", 3),
-    ]
-    assert Block("ballista", 3).label == "ballista N=3"
+def test_parallelism_defaults_to_1_2_4_8():
+    cfg = parse(raw(parallelism=_DELETE))
+    assert cfg.parallelism == (1, 2, 4, 8) == DEFAULT_PARALLELISM
+
+
+def test_nodes_key_reports_rename():
+    with pytest.raises(ConfigError, match="nodes: renamed to parallelism"):
+        parse(raw(nodes=[1, 2]))
+
+
+def test_blocks_are_variants_times_parallelism():
+    """Każdy wariant dla każdego P; kolejność wariantów stała (VARIANTS), P rosnąco."""
+    cfg = parse(raw(variants=["sail", "polars_bio", "ballista"], parallelism=_DELETE))
+    assert VARIANTS == ("polars_bio", "ballista", "sail")
+    assert blocks(cfg) == [Block(v, p) for v in VARIANTS for p in (1, 2, 4, 8)]
+    assert len(blocks(cfg)) == 12
+    assert Block("ballista", 4).label == "ballista P=4"
+
+
+@pytest.mark.parametrize("variant", ["polars_bio_a", "polars_bio_b", "sail_lock", "sail_udtf"])
+def test_removed_variants_are_rejected(variant):
+    with pytest.raises(ConfigError, match="variants: unknown"):
+        parse(raw(variants=[variant]))
 
 
 def test_round_order_is_a_reproducible_permutation():
@@ -188,19 +210,19 @@ def test_load_rejects_non_mapping(tmp_path):
 
 def test_expected_invalid_entries_match_rows():
     cfg = parse(raw(expected_invalid=[
-        {"scenario": "merge/1", "variant": "ballista", "nodes": 3, "reason": "timeout"},
+        {"scenario": "merge/1", "variant": "ballista", "parallelism": 4, "reason": "timeout"},
     ]))
     (entry,) = cfg.expected_invalid
-    row = {"scenario_id": "merge/1", "variant": "ballista", "n_nodes": 3, "invalid_reason": "timeout"}
+    row = {"scenario_id": "merge/1", "variant": "ballista", "parallelism": 4, "invalid_reason": "timeout"}
     assert entry.matches(row)
-    assert not entry.matches({**row, "n_nodes": 1})
+    assert not entry.matches({**row, "parallelism": 1})
     assert not entry.matches({**row, "invalid_reason": "skipped: timeout"})
     assert not entry.matches({**row, "variant": "sail"})
 
 
 def test_broadcast_check_config_covers_the_broadcast_cells():
     cfg = load(REPO / "bench" / "conf" / "broadcast_check.yaml")
-    assert cfg.variants == ("ballista",) and cfg.nodes == (1, 2, 3)
+    assert cfg.variants == ("ballista",) and cfg.parallelism == (1, 2, 4, 8)
     assert {s.id for s in cfg.scenarios} == {"nearest/2-7", "coverage/2-7", "nearest/7-0", "coverage/7-0"}
     assert cfg.explain is True
     assert cfg.control_tolerance == 100.0 and cfg.timeout_s == 600

@@ -1,4 +1,4 @@
-"""Plan 3a, Zadanie 5: Sail jako osobny proces serwera (local-cluster, N workerów) i runner-
+"""Plan 3a, Zadanie 5: Sail jako osobny proces serwera (local-cluster, P workerów) i runner-
 -klient (specyfikacja 8.3): wynik zgodny z polars-bio, protokół jak w bench_client."""
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ def report(r: subprocess.CompletedProcess) -> dict:
     return json.loads(lines[0])
 
 
-def test_sail_env_for_three_nodes():
+def test_sail_env_for_parallelism_3():
     assert sail_env(3) == {
         "SAIL_MODE": "local-cluster",
         "SAIL_CLUSTER__WORKER_INITIAL_COUNT": "3",
@@ -98,7 +98,7 @@ def test_empty_result_reports_zero_rows(server, tmp_path):
 
 
 def test_server_keeps_exactly_n_workers(server, parquet_dirs):
-    """Przy 2 slotach Sail dokładałby workery ponad N (sonda 01.10.2026); tu N = 2.
+    """Przy 2 slotach Sail dokładałby workery ponad liczbę zadaną (sonda 01.10.2026); tu P = 2.
 
     Sail tworzy driver i pulę workerów dla KAŻDEJ sesji Spark Connect (przy pierwszym RPC
     sesji — w runnerze rozgrzewka `warm_up` przed zegarem) i zamyka je razem z sesją, więc

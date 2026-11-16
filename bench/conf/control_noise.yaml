@@ -1,16 +1,19 @@
 # Badanie szumu przebiegu kontrolnego (specyfikacja 3b-2, 4.2): zadanie kontrolne (overlap 7-0,
-# polars-bio A) zmierzone 20 razy pod rząd. Wynik ocenia:
+# polars-bio z 2 wątkami na obu wątkach pierwszego rdzenia poza systemowym) zmierzone 20 razy pod
+# rząd na początku jedynego bloku. Próbką są przebiegi kontrolne, bo wariant kontrolny różni się od
+# wariantów serii; blok (polars-bio, P = 1) jest tylko nośnikiem. Wynik ocenia:
 #   uv run python -m bench.control_noise bench/results/control-noise/<znacznik czasu>
 # Seria pomiarowa — tylko po checkliście RAM (zamknięty VS Code, pusty swap).
 series: control-noise
 scenarios:
   - {op: overlap, pair: "7-0"}
-variants: [polars_bio_a]
-nodes: [1]
-repeats: 20
+variants: [polars_bio]
+parallelism: [1]
+repeats: 1
 warmup: 1
-# Przebiegi kontrolne samego bloku mierzą to samo zadanie; jeden na koniec wystarczy.
-control_repeats: 1
+# 20 przebiegów kontrolnych na początku bloku to próbka badania (bench.control_noise bierze tylko
+# te z początku); tyle samo wykona się na końcu bloku.
+control_repeats: 20
 # Własny test dryfu bloku nie może odrzucić próbki szumu: badanie samo ocenia próg 10%
 # (jak w testach integracyjnych).
 control_tolerance: 100.0
