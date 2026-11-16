@@ -41,17 +41,6 @@ jobs:
           workspaces: engines/ballista-genomics -> target
           cache-on-failure: true
 
-      # protoc for the build script of the substrait crate (a ballista-scheduler dependency);
-      # the runner does not have it.
-      - name: Install protoc
-        env:
-          PROTOC_SHA256: 0ad949f04a6a174da83cdcbdb36dee0a4925272a5b6d83f79a6bf9852076d53f
-        run: |
-          curl -fsSL -o "$RUNNER_TEMP/protoc.zip" https://github.com/protocolbuffers/protobuf/releases/download/v28.3/protoc-28.3-linux-x86_64.zip
-          echo "$PROTOC_SHA256  $RUNNER_TEMP/protoc.zip" | sha256sum -c -
-          sudo unzip -q -o "$RUNNER_TEMP/protoc.zip" -d /usr/local bin/protoc 'include/*'
-          protoc --version
-
       # Debug binaries: the tests run them on small data; measurements use release builds.
       - name: Build Ballista binaries
         working-directory: engines/ballista-genomics

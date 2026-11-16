@@ -34,7 +34,7 @@ A query involves three kinds of processes:
 |---|---|---|---|
 | client | `bench_client`, `dist_ops`, `ballista_genomics` | the logical plan | the result (Arrow Flight) |
 | scheduler | `ballista_node scheduler` | the physical plan, its stages and the tasks | the logical plan (gRPC) |
-| executor | `ballista_node executor` | nothing; runs the tasks it receives | the physical plan of each task (gRPC), shuffle partitions of earlier stages (Arrow Flight) |
+| executor | `ballista_node executor` | nothing; runs the tasks it receives | the physical plan of each task (gRPC), shuffle partitions of earlier stages written by other executors (Arrow Flight) |
 
 In standalone mode (`BALLISTA_SCHEDULER_URL` unset) `SessionContext::standalone_with_state`
 starts a scheduler and one executor inside the client process and hands them the client's
@@ -232,8 +232,14 @@ each input with more than one partition; `IntervalJoinExec` in `CollectLeft` req
 `NearestExec` and `CountOverlapsExec` declare no requirement. Ballista's adaptive planner
 (`DistributedExchangeRule`) turns the hash repartitions and the coalesce into stage boundaries:
 the producing stage ends in a `SortShuffleWriterExec` (hash) or `ShuffleWriterExec`, the
-consuming stage starts with a `ShuffleReaderExec`. The final stage's output partitions are
-fetched by the client over Arrow Flight (`fetch_partition`).
+consuming stage starts with a `ShuffleReaderExec`. A `ShuffleReaderExec` reads the partitions its
+own executor wrote straight from the work directory (`fetch_partition_local`) and fetches the
+others from the executors that wrote them (`fetch_partition_remote`) through their Arrow Flight
+service: by default as an Arrow IPC block transfer, `do_action` with the `IO_BLOCK_TRANSPORT`
+action (`ballista.shuffle.remote_read_prefer_flight` is false). The overlap and merge plans of
+section 6 show both kinds (`local_partitions=2, remote_partitions=2` in the readers' metrics). The
+final stage's output partitions are fetched by the client with Arrow Flight `do_get`
+(`fetch_partition`).
 
 A stage has one task per input partition (`ballista.scheduler.max_partitions_per_task`, section 7).
 Before sending a task, Ballista 55 narrows the leaves of its plan to the task's partitions
@@ -266,7 +272,11 @@ So the codec sends the table and the executor rebuilds the index:
    "broadcast table of N bytes (R rows) x 2 (safety margin) exceeds the gRPC message limit of L
    bytes". The error reaches the client as a query error. The margin is the number of table copies
    one `launch_multi_task` message can carry: one per task bound to the executor in a scheduling
-   round, at most its number of slots; the rest of a plan is tens of kilobytes.
+   round, at most its number of slots; the rest of a plan is tens of kilobytes. The guard is
+   therefore exact only for executors with **at most two task slots** (`--concurrent-tasks` ≤ 2;
+   the measurement setup uses 1). With more slots the round-robin binding can put more tasks of
+   the stage into one message, so a table between limit / slots and limit / 2 passes the guard
+   and can still hang the query ([section 8](#8-known-limitations)).
 3. **Task launch (scheduler → executor).** Ballista encodes the plan once per task, so every task
    carries its own copy of the table, and the message to an executor carries one copy per task in
    it.
@@ -491,8 +501,11 @@ differ. `bench_client --version-info` prints the values read from the cluster co
   scheduler logs "Failed to launch new task ... decoded message length too large", removes the
   executor, retries after about 60 s, and the client waits until its own timeout. Observed with
   executors limited to 16 MiB and a 21 113 832 B message (nearest on pair 1-2, two slots per
-  executor). The broadcast guard prevents this when every process uses the same
-  `BALLISTA_GRPC_MAX_MESSAGE_BYTES`.
+  executor). The broadcast guard prevents this only when every process uses the same
+  `BALLISTA_GRPC_MAX_MESSAGE_BYTES` and every executor has at most two task slots
+  (`MESSAGE_SIZE_MARGIN` = 2 copies of the table per message, [section 5](#5-broadcast-of-the-indexed-table-nearest-coverage));
+  with more slots a broadcast table larger than limit / slots but smaller than limit / 2 passes the
+  guard and still hangs the query.
 - **Overlap indexes the whole build side in every task.** The join has no hash-partitioned
   parallelism: its parallelism comes from the probe side's partitions, and every join task
   fetches and indexes the whole build side ([section 6.1](#61-overlap)). Memory and index-building
@@ -509,8 +522,13 @@ differ. `bench_client --version-info` prints the values read from the cluster co
 - **Shared file system.** The logical payload carries the input paths as given; the client and
   the scheduler resolve them in their working directories when they register the tables, and the
   physical plan carries absolute file paths that every executor opens itself. All processes must
-  see the same files at the same paths (on several machines: shared storage), and the client and
-  the scheduler must run in the same directory when relative paths are used.
+  see the same files at the same paths, and the client and the scheduler must run in the same
+  directory when relative paths are used.
+- **One machine.** `ballista_node` binds the scheduler and the executors to 127.0.0.1 and the
+  executors announce themselves (and find the scheduler) as `localhost` (`run_scheduler`,
+  `run_executor` in `src/bin/ballista_node.rs`), so a cluster of these processes runs on a single
+  host. Several machines would need configurable addresses in `ballista_node` and storage that
+  every machine sees under the same paths.
 - **Same build everywhere.** The codec payloads are not versioned, and the codecs assume the
   algorithm and memory mode of `BioConfig::default()`; the client, the scheduler and the executors
   must run binaries built from the same source.
@@ -543,8 +561,11 @@ public fields) changes only those functions.
 
 ## 10. Building
 
-- Rust from `rust-toolchain.toml`; `protoc` must be installed (the `substrait` crate, a
-  dependency of the Ballista scheduler, needs it in its build script; CI uses 28.3).
+- Rust from `rust-toolchain.toml` and a C toolchain for linking. `protoc` is not needed: no build
+  script in the dependency tree runs it with the features used here (`ballista-core` ships its
+  generated protobuf code and compiles `.proto` files only when its `proto/` directory is present,
+  which the published crate does not include; `ballista-scheduler` compiles protobuf only with its
+  `keda-scaler` feature, which is not enabled).
 - `cargo build --bins` builds the debug binaries the tests use;
   `cargo build --release --bins` builds the binaries for measurements.
 - **Memory limits.** Every binary links the Ballista scheduler and executor with all of

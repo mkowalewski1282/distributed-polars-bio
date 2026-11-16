@@ -218,7 +218,8 @@ the procedure.
   `required-version = "==0.12.22"` (`uv self update 0.12.22`). Python 3.12 is installed by uv.
 - [rustup](https://rustup.rs/): the Rust toolchain is pinned in the Ballista submodule
   (`rust-toolchain.toml`) and installed on the first `cargo` call.
-- `protoc` 28.3 (a build dependency of Ballista's scheduler).
+- No `protoc`: the Ballista crates ship their generated protobuf code, and no build script in
+  the dependency tree runs `protoc`.
 - Network access for `setup.sh` (submodules, crates, the dataset).
 - RAM: the validation series ran on a WSL2 laptop limited to 5 GB with VS Code and all other
   applications closed. Linking a Ballista binary needs several GB, hence one build job by default

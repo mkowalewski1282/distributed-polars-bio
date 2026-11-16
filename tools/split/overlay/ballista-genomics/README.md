@@ -38,7 +38,8 @@ adds what is missing:
   `CountOverlapsExec` discards the table it indexes, so it cannot be serialized.
 - **A broadcast guard** (`src/broadcast.rs`): nearest and coverage ship their indexed table inside
   the physical plan; a table too large for the gRPC message limit fails at planning time instead
-  of hanging the query.
+  of hanging the query, provided every executor has at most two task slots (the guard counts two
+  copies of the table per message; see TECHNICAL.md).
 - **One session configuration for every process** (`src/cluster.rs`): codecs, the bio planner
   rules and the Ballista settings the plans depend on.
 
@@ -62,8 +63,9 @@ inside the client process).
 One query on a cluster of separate processes, from the client to the result. Names are the
 functions, types and messages in this repository (`src/`), in Ballista 55.0.0 and in DataFusion
 55.2.0. Capitals mark where the plan is serialized (LOGICAL PLAN, PHYSICAL PLAN) and where data
-crosses processes: shuffle partitions between executors and the final result to the client, both
-over Arrow Flight, and the broadcast table inside the physical plan (nearest and coverage only).
+crosses processes: shuffle partitions between executors (Arrow Flight `do_action` block transfer),
+the final result to the client (Arrow Flight `do_get`), and the broadcast table inside the physical
+plan (nearest and coverage only).
 
 ```mermaid
 sequenceDiagram
@@ -83,7 +85,7 @@ sequenceDiagram
         S->>E: gRPC launch_multi_task(LaunchMultiTaskParams), one MultiTaskDefinition per task<br/>PHYSICAL PLAN SERIALIZED, encoded separately for every task<br/>nearest / coverage: the indexed table inside the plan as Arrow IPC
         E->>E: ExecutorServer::launch_multi_task → get_task_definition_vec<br/>BioRangesPhysicalCodec::try_decode → MergeExec / SubtractExec / NearestExec / DistCoverageExec<br/>IntervalJoinPhysicalCodec::try_decode → IntervalJoinExec (alg=Coitrees)
         E->>E: Executor::execute_query_stage<br/>ShuffleReaderExec reads the inputs of earlier stages<br/>ShuffleWriterExec / SortShuffleWriterExec writes partitions to the work directory
-        E->>E: SHUFFLE DATA BETWEEN EXECUTORS: ShuffleReaderExec fetch_partition_remote<br/>→ Arrow Flight do_get on the executor that wrote the partition (BallistaFlightService)
+        E->>E: SHUFFLE DATA BETWEEN EXECUTORS: ShuffleReaderExec, remote partitions: fetch_partition_remote<br/>→ Arrow Flight do_action IO_BLOCK_TRANSPORT on the executor that wrote them (BallistaFlightService)<br/>local partitions: fetch_partition_local, read from the work directory
         E-->>S: gRPC update_task_status(UpdateTaskStatusParams)
     end
     S-->>C: job status stream (GetJobStatusResult): successful, final partition locations
@@ -212,17 +214,12 @@ polars-bio 0.38).
 
 ## Building
 
-Linux x86_64. Requirements: a C toolchain for linking (`build-essential` on Debian/Ubuntu),
+Linux x86_64. Requirements: a C toolchain for linking (`build-essential` on Debian/Ubuntu) and
 [rustup](https://rustup.rs) (the toolchain pinned in `rust-toolchain.toml` is installed on first
-use) and `protoc`, which the `substrait` crate (a dependency of `ballista-scheduler`) needs in its
-build script. CI uses protoc 28.3:
+use). `protoc` is not needed: the Ballista crates ship their generated protobuf code, and no build
+script in the dependency tree runs `protoc` with the features used here.
 
-```bash
-curl -fsSLO https://github.com/protocolbuffers/protobuf/releases/download/v28.3/protoc-28.3-linux-x86_64.zip
-sudo unzip -o protoc-28.3-linux-x86_64.zip -d /usr/local bin/protoc 'include/*'
-```
-
-Then, in the repository root:
+In the repository root:
 
 ```bash
 cargo build --release --bins --locked   # binaries for examples and measurements
@@ -247,8 +244,9 @@ Standalone mode (scheduler and executor in the client process):
 ./target/release/dist_ops merge
 ```
 
-A cluster of separate processes, each command in its own terminal. The scheduler has to listen
-before the executors start: an executor connects to it once, at start-up.
+A cluster of separate processes on one machine (`ballista_node` binds to 127.0.0.1 and announces
+itself as `localhost`), each command in its own terminal. The scheduler has to listen before the
+executors start: an executor connects to it once, at start-up.
 
 ```bash
 ./target/release/ballista_node scheduler --port 50050

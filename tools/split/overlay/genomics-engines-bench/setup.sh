@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-time setup after `git clone --recursive`: engine submodules, the Python environment, the
 # Ballista release binaries and the databio-8p dataset (in ~/bench_data or $BENCH_DATA_ROOT).
-# Needs: uv, rustup, protoc, network access.
+# Needs: uv, rustup, network access.
 set -euo pipefail
 cd "$(dirname "$0")"
 
