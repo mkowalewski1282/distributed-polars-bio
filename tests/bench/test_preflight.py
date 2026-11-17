@@ -80,6 +80,9 @@ def test_used_swap_is_rejected():
     assert "wsl --shutdown" in str(info.value) and "sudo swapoff -a && sudo swapon -a" in str(info.value)
 
 
+@pytest.mark.parallelism(2)
 def test_this_machine_fits_the_smallest_series():
-    """On the test machine (laptop or CI), P = 1 and the control run fit."""
+    """On the test machine (laptop or CI), P = 1 and the control run fit. The control run needs
+    two CPUs outside the system core, so the test is skipped on smaller machines (for example a
+    2-vCPU runner, where the series cannot run at all)."""
     assert preflight.check_cpus(config([1]), preflight.cpu_layout()) == []
