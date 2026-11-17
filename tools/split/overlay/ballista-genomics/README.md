@@ -76,10 +76,10 @@ sequenceDiagram
 
     Note over C: 1. Build the query:<br/>SQL with our table function,<br/>e.g. dist_overlap(...)
     C->>S: 2. LOGICAL PLAN,<br/>serialized by our logical codec
-    Note over S: 3. Decode our table provider,<br/>plan the stages: shuffle by<br/>chromosome, or broadcast
+    Note over S: 3. Decode our table provider,<br/>plan the stages: shuffle<br/>or broadcast
     loop every stage
         S->>E: 4. Tasks: PHYSICAL PLAN,<br/>serialized by our physical codec
-        Note over E: 5. Run our operators,<br/>exchange SHUFFLE DATA<br/>between executors
+        Note over E: 5. Run the interval operators<br/>(vendored), exchange SHUFFLE<br/>DATA between executors (if any)
         E-->>S: 6. Task status
     end
     S-->>C: 7. Job done, locations<br/>of the final partitions
@@ -94,9 +94,10 @@ In words:
 3. The scheduler decodes our table provider and cuts the plan into stages: rows are shuffled by
    chromosome (merge, subtract), the build side goes through a shuffle (overlap), or the indexed
    table is broadcast inside the plan (nearest, coverage).
-4. For every stage the scheduler sends tasks to the executors; our physical codec serializes our
-   operators in the plan of every task.
-5. Executors run our operators (the vendored algorithms) and exchange shuffle data.
+4. For every stage the scheduler sends tasks to the executors; our physical codec serializes the
+   interval operators in the plan of every task.
+5. Executors run the interval operators (from the vendored crate) and exchange shuffle data
+   where the plan has a shuffle.
 6. Executors report the task status; the scheduler starts the next stage.
 7. When the last stage is done, the client learns where the final partitions are.
 8. The client fetches the result directly from the executors.
@@ -132,8 +133,9 @@ sequenceDiagram
 
 #### Step 3: planning in the scheduler
 
-The scheduler rebuilds our table provider from the plan, our provider's `scan` chooses the
-strategy, and DataFusion and Ballista cut the physical plan into stages.
+The scheduler rebuilds our table provider from the plan; our provider's `scan` builds the
+operators (fixing overlap to CollectLeft and checking that a broadcast table fits), and DataFusion
+and Ballista cut the physical plan into stages.
 
 ```mermaid
 %%{init: {"sequence": {"mirrorActors": false}}}%%
@@ -152,8 +154,8 @@ sequenceDiagram
 #### Steps 4 to 6: tasks, execution, shuffle
 
 For every runnable stage, one task per input partition: the scheduler encodes the plan of every
-task with our physical codec, the executor decodes our operators, runs the stage and reads the
-inputs of earlier stages from the executors that wrote them.
+task with our physical codec, the executor decodes the interval operators with the same codec,
+runs the stage and reads the inputs of earlier stages from the executors that wrote them.
 
 ```mermaid
 %%{init: {"sequence": {"mirrorActors": false}}}%%
@@ -164,7 +166,7 @@ sequenceDiagram
 
     Note over S: 4a. TaskManager::launch_multi_task<br/>→ prepare_multi_task_definition<br/>→ restrict_plan_to_partitions
     Note over S: 4b. PhysicalPlanNode::<br/>try_from_physical_plan<br/>BioRangesPhysicalCodec::try_encode<br/>→ IntervalJoinPhysicalCodec::try_encode
-    S->>E: 4c. gRPC launch_multi_task<br/>(LaunchMultiTaskParams), one<br/>MultiTaskDefinition per task:<br/>PHYSICAL PLAN encoded per task<br/>(nearest, coverage: the indexed<br/>table inside, as Arrow IPC)
+    S->>E: 4c. gRPC launch_multi_task<br/>(LaunchMultiTaskParams), one<br/>MultiTaskDefinition per task:<br/>PHYSICAL PLAN encoded per task<br/>(nearest, coverage: the BROADCAST<br/>TABLE inside, as Arrow IPC)
     Note over E: 5a. ExecutorServer::launch_multi_task<br/>→ get_task_definition_vec
     Note over E: 5b. BioRangesPhysicalCodec::try_decode<br/>→ MergeExec / SubtractExec /<br/>NearestExec / DistCoverageExec<br/>IntervalJoinPhysicalCodec::try_decode<br/>→ IntervalJoinExec (alg=Coitrees)
     Note over E: 5c. Executor::execute_query_stage

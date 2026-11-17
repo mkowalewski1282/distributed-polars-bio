@@ -72,7 +72,8 @@ In words:
 6. polars-bio returns a polars DataFrame with its own column names.
 7. Our function renames the columns to the output schema and returns one Arrow table to the
    worker.
-8. The workers assemble the result and the client receives it as Arrow batches.
+8. The workers unnest the per-chromosome tables; the driver sends the result to the client over
+   Spark Connect as Arrow batches.
 
 In detail: [steps 1 and 2](#steps-1-and-2-client-and-plan) ·
 [step 3](#step-3-stages-and-shuffle-in-the-workers) ·
@@ -134,13 +135,13 @@ sequenceDiagram
     participant P as polars_bio<br/>(Python + Rust,<br/>DataFusion 53)
 
     W->>F: 4. RUST TO PYTHON: ProjectionExec<br/>calls the UDF binary, which calls<br/>evaluate(op, left, right, phase_log)<br/>with two pyarrow Tables
-    Note over F: 4a. _frame(table): pl.from_arrow,<br/>cast chrom/start/end,<br/>set_coordinate_system(df, True)<br/>(0-based)
-    Note over F: 4b. pb_context.install()<br/>(idempotent)
+    Note over F: 4a. _frame(table): pl.from_arrow,<br/>cast chrom/start/end,<br/>set_coordinate_system(df, True)<br/>(0-based)<br/>4b. pb_context.install()<br/>(idempotent)
     F->>P: 5a. _call_polars_bio: pb.overlap(<br/>left, right, cols1, cols2,<br/>output_type="polars.DataFrame")
     Note over P: 5b. range_op.range_operation(<br/>df1, df2, options, output_type, ctx)<br/>replaced by<br/>pb_context._range_operation:<br/>ctx taken from the pool queue
     Note over P: 5c. PYTHON TO RUST:<br/>range_operation_frame(ctx,<br/>reader1, reader2, options)<br/>BioSessionContext, tables s1/s2,<br/>interval join on DataFusion 53<br/>in this process
-    P-->>F: 6a. RUST TO PYTHON:<br/>result.to_polars() (polars<br/>DataFrame with polars-bio<br/>column names)
-    Note over P: 6b. _pool.put(ctx): the<br/>context returns to the pool
+    Note over P: 5d. RUST TO PYTHON:<br/>result.to_polars()
+    Note over P: 5e. _pool.put(ctx): the<br/>context returns to the pool
+    P-->>F: 6. polars DataFrame with<br/>polars-bio column names
     Note over F: 7a. RENAME: rename_polars_bio(<br/>op, result, _PB_COLS),<br/>.to_arrow().cast(arrow_schema(op))<br/>chrom_1 start_1 end_1<br/>chrom_2 start_2 end_2
     F-->>W: 7b. PYTHON TO RUST: Arrow table,<br/>one result per chromosome
 ```
@@ -202,8 +203,8 @@ In words:
   `applyInArrow`.
 - **Sail**: the server: the driver plans the query, the workers run it and call our Python
   function through an embedded interpreter.
-- **polars-bio**: runs the range operation itself, on its own DataFusion 53, inside the worker
-  process.
+- **polars-bio**: runs the range operation itself, on its own DataFusion 53, inside the Sail server
+  process, in the worker's thread.
 
 In detail: [client side](#client-side) · [inside a worker](#inside-a-worker)
 
@@ -242,7 +243,8 @@ flowchart TB
 
 #### Inside a worker
 
-What runs in the worker process for one chromosome: the call into our function and polars-bio.
+What runs in a worker (a thread of the Sail server process) for one chromosome: the call into
+our function and polars-bio.
 
 ```mermaid
 flowchart TB
