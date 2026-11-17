@@ -70,13 +70,14 @@ def test_pysail_is_required_only_for_sail_variants(monkeypatch):
 
 def test_importable_runs_a_real_import():
     assert preflight._importable("json")
-    assert not preflight._importable("no_such_module_3b2")
+    assert not preflight._importable("no_such_module_for_preflight")
 
 
 def test_used_swap_is_rejected():
     preflight.check_swap(0)
-    with pytest.raises(ConfigError, match=r"swap is not empty \(2 MiB used\)"):
+    with pytest.raises(ConfigError, match=r"swap is not empty \(2 MiB used\)") as info:
         preflight.check_swap(2 * 2**20)
+    assert "wsl --shutdown" in str(info.value) and "sudo swapoff -a && sudo swapon -a" in str(info.value)
 
 
 def test_this_machine_fits_the_smallest_series():

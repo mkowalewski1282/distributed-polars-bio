@@ -278,7 +278,8 @@ INTERVALS_B = [
 #: (`ballista.scheduler.max_partitions_per_task` = 1, `cluster.rs`); with the default
 #: 0 both files went as one task to one executor (nearest, coverage).
 #: `overlap` reads single files (data/intervals_*.csv) and has no hash
-#: parallelism (a known limitation); for it we require >= 1
+#: parallelism (a known limitation: every join task indexes the whole build side, see
+#: OPIS.md); for it we require >= 1
 #: executor, and the actual distribution goes to the evidence file.
 MULTI_TASK_OPS = {"merge", "subtract", "nearest", "coverage"}
 #: Operations with a hash shuffle by chromosome: the plan must have >= 2 stages.

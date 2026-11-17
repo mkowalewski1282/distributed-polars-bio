@@ -1,7 +1,7 @@
 """
-Formal correctness tests for the merge operation on Ballista (local; see
-ballista_genomics/OPIS.md on the missing hook for full distribution of this
-operation).
+Formal correctness tests for the merge operation on Ballista (local: the `merge_local` binary runs
+the vendored MergeExec on plain DataFusion in one process). The distributed merge (`dist_ops
+merge`, hash shuffle by chromosome) is tested in test_ballista_distributed_ops.py.
 
 Run: pytest tests/test_merge_correctness.py -v
 """

@@ -1,6 +1,6 @@
 """A pool of polars-bio contexts — a bridging solution.
 
-polars-bio 0.36 keeps one global context (BioSessionContext) and registers the tables of
+polars-bio 0.37 keeps one global context (BioSessionContext) and registers the tables of
 operations on frames in it under the fixed names s1/s2: concurrent pb.*() calls in threads of
 one process fail with "The table s1 already exists" (in 0.28 — with a silent overwrite of the
 tables). Sail runs Python functions in threads of the server process, so without a pool they
@@ -30,8 +30,8 @@ replacement — a change of the internals in a new version shows up at once. The
 itself is not modified.
 
 The replacement is switched on explicitly by install() (idempotent; sail_genomics.arrow.evaluate
-calls it in the server process). It works only in the process that imported it — the polars-bio
-runner (the reference) does not import it."""
+calls it in the server process). It works only in the process that called install(); polars-bio
+used directly in another process keeps its original range_operation."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ import threading
 import polars_bio.range_op as _range_op
 from polars_bio.polars_bio import BioSessionContext
 
-#: Options of a pooled context: as in the global polars-bio 0.36 context (polars_bio/context.py,
+#: Options of a pooled context: as in the global polars-bio 0.37 context (polars_bio/context.py,
 #: Context.__init__) plus a fallback 0-based coordinate system (the databio-8p data is 0-based,
 #: half-open); the frame's coordinate metadata decides the system, the context option is only a
 #: fallback.

@@ -136,8 +136,9 @@ def test_ballista_shuffle_volume_is_measured(series):
 
 @pytest.mark.parallelism(1)
 def test_main_resolves_relative_data_root(data_root, tmp_path, monkeypatch):
-    """Python runners run in the repository directory, and Ballista ones in ballista_genomics/;
-    a relative data path must be converted to an absolute one before the series starts."""
+    """Python runners run in the repository directory, and Ballista ones in the Ballista project
+    directory (engines.BALLISTA_DIR); a relative data path must be converted to an absolute one
+    before the series starts."""
     monkeypatch.chdir(data_root.parent)
     monkeypatch.setattr(preflight, "check_cpus", lambda *args, **kwargs: [])
     monkeypatch.setattr(orch, "Probe", functools.partial(orch.Probe, pswpout=lambda: 0, pswpin=lambda: 0))

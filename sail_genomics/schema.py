@@ -1,8 +1,8 @@
 """Schema of the operations and results of the package — independent of the rest of the repository.
 
-Result column names in the normalised schema (identical to bench/ops.py; a test,
-tests/test_sail_arrow.py, enforces the agreement) and the renaming of polars-bio columns to
-this schema."""
+Result column names in the normalised schema (the same as in the genomics-engines-bench harness,
+whose test `tests/test_sail_arrow.py` enforces the agreement with its `bench/ops.py`) and the
+renaming of polars-bio columns to this schema."""
 
 from __future__ import annotations
 

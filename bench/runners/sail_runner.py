@@ -5,7 +5,7 @@ Always applyInArrow with pooled polars-bio contexts (sail_genomics.arrow, the `s
 The function records phases from the inside (the time of the polars-bio calls) to a temporary
 file, which the runner sums after the query: `phases.pb_s`, `extra.udf_groups`.
 
-Time: from building the query (reading Parquet, grouping, view, SQL) to the last result batch;
+Time: from building the query (reading Parquet, grouping, applyInArrow) to the last result batch;
 excluding session startup and warm-up. The first RPC of a session is always `warm_up` (before
 the clock) — that is when Sail starts the session's driver and workers, so the startup of the
 session's "cluster" is also before the measurement.

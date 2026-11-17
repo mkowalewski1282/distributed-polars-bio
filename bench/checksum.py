@@ -1,7 +1,7 @@
 """Row-order-independent checksum of an operation result.
 
-Definition — shared with ballista_genomics/src/checksum.rs (agreement is enforced by a test on
-the reference values in tests/bench/checksum_vectors.py):
+Definition — shared with ballista_genomics/src/checksum.rs (agreement is enforced by a test of
+genomics-engines-bench on the reference values in its tests/bench/checksum_vectors.py):
 
 - columns: `KEY_COLUMNS[op]` from bench/ops.py — the same ones `row_multiset` compares, so the
   checksum is a digest of the same multiset (nearest without the neighbour's identity);

@@ -4,7 +4,7 @@ every run and one result row per run. Block CPUs come from the machine layout (b
 a block with a P larger than the number of CPUs outside the system core is skipped with a stated
 reason (one row per scenario) and does not spoil the exit code.
 
-Usage (a measurement series: from Windows Terminal, VS Code closed — the RAM checklist):
+Usage (a measurement series: only on an idle machine, see README, Run protocol):
     uv run python -m bench.orchestrator bench/conf/smoke.yaml [--ballista-profile debug]
 Exit codes: 0 — the series passed (every invalid run is on the expected_invalid list);
 1 — unexpected invalid runs or interrupted blocks; 2 — a configuration error, missing data or

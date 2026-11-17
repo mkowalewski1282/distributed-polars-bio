@@ -112,8 +112,13 @@ def test_package_schema_matches_bench_schema():
 
 def test_package_does_not_import_bench():
     import ast
-    import pathlib
-    for path in pathlib.Path("sail_genomics").glob("*.py"):
+
+    import sail_genomics
+    # The installed package, wherever it lives (sail_genomics/ here, the engines/sail-genomics
+    # submodule in the benchmark repository), independent of the working directory.
+    paths = sorted(Path(sail_genomics.__file__).parent.glob("*.py"))
+    assert paths, sail_genomics.__file__
+    for path in paths:
         tree = ast.parse(path.read_text())
         names = [n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)] + \
                 [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]

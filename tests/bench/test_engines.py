@@ -195,9 +195,9 @@ def test_sail_engine_pins_server_to_the_block_cpus(laptop, tmp_path):
 
 
 def test_ballista_dir_prefers_submodule(tmp_path, monkeypatch):
-    """The benchmark repository has Ballista in the engines/ballista-genomics submodule;
-    the monorepo has it in ballista_genomics/. Missing binaries in the submodule are an error
-    with a build command for that directory, not a FileNotFoundError."""
+    """The benchmark repository has Ballista in the engines/ballista-genomics submodule; a
+    single-repository layout has it in `ballista_genomics/` next to `bench/`. Missing binaries in
+    the submodule are an error with a build command for that directory, not a FileNotFoundError."""
     monkeypatch.setattr(engines, "REPO", tmp_path)
     assert engines.ballista_dir() == tmp_path / "ballista_genomics"
     submodule = tmp_path / "engines" / "ballista-genomics"
@@ -209,6 +209,20 @@ def test_ballista_dir_prefers_submodule(tmp_path, monkeypatch):
     with pytest.raises(EngineError, match=r"missing binary .*cd engines/ballista-genomics && "
                                           r"CARGO_BUILD_JOBS=1 cargo build --release"):
         engines.require_ballista_binaries("release")
+
+
+def test_uninitialised_submodule_is_reported_with_submodule_command(tmp_path, monkeypatch):
+    """A clone without --recursive leaves engines/ballista-genomics empty: the error names the
+    submodule command first, then the build in the submodule (not the fallback directory)."""
+    monkeypatch.setattr(engines, "REPO", tmp_path)
+    (tmp_path / "engines" / "ballista-genomics").mkdir(parents=True)
+    monkeypatch.setattr(engines, "BALLISTA_DIR", engines.ballista_dir())
+    with pytest.raises(EngineError) as info:
+        engines.require_ballista_binaries("release")
+    message = str(info.value)
+    assert "git submodule update --init --recursive, then build: cd engines/ballista-genomics && " \
+           "CARGO_BUILD_JOBS=1 cargo build --release --bin ballista_node" in message
+    assert "ballista_genomics" not in message
 
 
 def test_missing_ballista_binaries_are_reported_with_build_command(tmp_path, monkeypatch):

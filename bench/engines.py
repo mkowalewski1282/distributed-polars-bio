@@ -41,12 +41,16 @@ from bench.runners.sail_server import sail_env
 REPO = Path(__file__).resolve().parent.parent
 
 
+def _ballista_submodule() -> Path:
+    return REPO / "engines" / "ballista-genomics"
+
+
 def ballista_dir() -> Path:
     """Ballista project directory: the engines/ballista-genomics submodule (in the benchmark
-    repository), if it has a Cargo.toml, otherwise ballista_genomics/ of the monorepo. An
-    uninitialised submodule is an empty directory — then the monorepo is used too, and missing
-    binaries are reported by require_ballista_binaries."""
-    submodule = REPO / "engines" / "ballista-genomics"
+    repository), if it has a Cargo.toml, otherwise a single-repository layout with
+    `ballista_genomics/` next to `bench/`. An uninitialised submodule is an empty directory: the
+    fallback is used then too, and require_ballista_binaries asks to initialise the submodule."""
+    submodule = _ballista_submodule()
     return submodule if (submodule / "Cargo.toml").is_file() else REPO / "ballista_genomics"
 
 
@@ -215,6 +219,14 @@ def require_ballista_binaries(profile: str) -> None:
         f" (if cargo has nothing to rebuild, touch {where}/src/lib.rs first)"
     )
     missing = [str(b) for b in binaries.values() if not b.exists()]
+    submodule = _ballista_submodule()
+    if missing and submodule.is_dir() and not (submodule / "Cargo.toml").is_file():
+        sub = _shown(submodule)
+        raise EngineError(
+            f"missing Ballista binaries: the {sub} submodule is not initialised - run "
+            f"git submodule update --init --recursive, then build: cd {sub} && CARGO_BUILD_JOBS=1 "
+            f"cargo build {flag}--bin ballista_node --bin bench_client"
+        )
     if missing:
         raise EngineError(f"missing binary {', '.join(missing)} - build it: {build}")
     for name, binary in binaries.items():

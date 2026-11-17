@@ -69,7 +69,8 @@ def check_swap(used: int) -> None:
     if used > 0:
         raise ConfigError(
             f"swap is not empty ({used // 2**20} MiB used) - a run touching swap is invalid, so "
-            "a series starts from empty swap: run 'wsl --shutdown' in Windows and reopen the terminal"
+            "a series starts from empty swap: on WSL2 run 'wsl --shutdown' in Windows and reopen "
+            "the terminal; on native Linux run 'sudo swapoff -a && sudo swapon -a'"
         )
 
 

@@ -2,7 +2,7 @@
 # P = 1, 2, 4, 8 — completion under the 512 MiB gRPC limit, broadcast_bytes and peak memory.
 # Each of the P executors holds its own copy of the broadcast table, so memory is tightest at
 # P = 8.
-# A measurement series — run it only after the RAM checklist (VS Code closed, swap empty).
+# A measurement series — run it only on an idle machine with empty swap (see README, Run protocol).
 series: broadcast-check
 scenarios:
   - {op: nearest, pair: "2-7"}
