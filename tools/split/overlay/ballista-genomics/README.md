@@ -60,37 +60,136 @@ inside the client process).
 
 ## Query flow
 
-One query on a cluster of separate processes, from the client to the result. Names are the
-functions, types and messages in this repository (`src/`), in Ballista 55.0.0 and in DataFusion
-55.2.0. Capitals mark where the plan is serialized (LOGICAL PLAN, PHYSICAL PLAN) and where data
-crosses processes: shuffle partitions between executors (Arrow Flight `do_action` block transfer),
-the final result to the client (Arrow Flight `do_get`), and the broadcast table inside the physical
+One query on a cluster of separate processes, from the client to the result: first an overview,
+then every step in detail. Arrows are messages between processes; boxes are work inside one
+process. Capitals mark where the plan is serialized (LOGICAL PLAN, PHYSICAL PLAN) and where data
+crosses processes: shuffle data between executors (Arrow Flight `do_action` block transfer), the
+final result to the client (Arrow Flight `do_get`), and the broadcast table inside the physical
 plan (nearest and coverage only).
 
 ```mermaid
+%%{init: {"sequence": {"mirrorActors": false}}}%%
 sequenceDiagram
-    autonumber
+    participant C as Client
+    participant S as Scheduler
+    participant E as Executors
+
+    Note over C: 1. Build the query:<br/>SQL with our table function,<br/>e.g. dist_overlap(...)
+    C->>S: 2. LOGICAL PLAN,<br/>serialized by our logical codec
+    Note over S: 3. Decode our table provider,<br/>plan the stages: shuffle by<br/>chromosome, or broadcast
+    loop every stage
+        S->>E: 4. Tasks: PHYSICAL PLAN,<br/>serialized by our physical codec
+        Note over E: 5. Run our operators,<br/>exchange SHUFFLE DATA<br/>between executors
+        E-->>S: 6. Task status
+    end
+    S-->>C: 7. Job done, locations<br/>of the final partitions
+    C->>E: 8. Fetch the RESULT (Arrow Flight)
+    E-->>C: result batches
+```
+
+In words:
+
+1. The client builds the query: SQL that calls one of our table functions.
+2. The logical plan goes to the scheduler; our logical codec serializes our part of it.
+3. The scheduler decodes our table provider and cuts the plan into stages: rows are shuffled by
+   chromosome (merge, subtract), the build side goes through a shuffle (overlap), or the indexed
+   table is broadcast inside the plan (nearest, coverage).
+4. For every stage the scheduler sends tasks to the executors; our physical codec serializes our
+   operators in the plan of every task.
+5. Executors run our operators (the vendored algorithms) and exchange shuffle data.
+6. Executors report the task status; the scheduler starts the next stage.
+7. When the last stage is done, the client learns where the final partitions are.
+8. The client fetches the result directly from the executors.
+
+In detail: [steps 1 and 2](#steps-1-and-2-client-and-logical-plan) ·
+[step 3](#step-3-planning-in-the-scheduler) ·
+[steps 4 to 6](#steps-4-to-6-tasks-execution-shuffle) ·
+[steps 7 and 8](#steps-7-and-8-result)
+
+### Query flow in detail
+
+Names are the functions, types and messages in this repository (`src/`), in Ballista 55.0.0 and
+in DataFusion 55.2.0. Step numbers match the overview.
+
+#### Steps 1 and 2: client and logical plan
+
+The client connects with our session settings, our table function builds the table provider,
+and Ballista sends the logical plan with our provider serialized by our logical codec.
+
+```mermaid
+%%{init: {"sequence": {"mirrorActors": false}}}%%
+sequenceDiagram
     participant C as Client process<br/>dist_ops / bench_client
     participant S as Scheduler process<br/>ballista_node scheduler
-    participant E as Executor processes<br/>ballista_node executor (one or more)
 
-    Note over C: runner::connect_from_env<br/>bio_session_state(bio_ballista_config())<br/>SessionContext::remote_with_state
-    C->>C: ctx.sql("SELECT ... FROM dist_merge(...)")<br/>DistTableFunction::call → DistBioProvider::build<br/>(own bio session, registers the input files)
-    C->>S: gRPC execute_query_push(ExecuteQueryParams)<br/>LOGICAL PLAN SERIALIZED: BallistaQueryPlanner → DistributedQueryExec::execute<br/>LogicalPlanNode with BioDistLogicalCodec::try_encode_table_provider (DistPayload::encode)
-    S->>S: SchedulerServer::parse_plan<br/>BioDistLogicalCodec::try_decode_table_provider<br/>DistPayload::decode → DistBioProvider::build (session from bio_session_state)
-    S->>S: TaskManager::submit_plan → AdaptiveExecutionGraph::try_new<br/>AdaptivePlanner::try_new → create_physical_plan → DistBioProvider::scan<br/>vendored provider scan → collect_left_at_planning → check_broadcast_fits
-    S->>S: EnsureRequirements (hash RepartitionExec on the chromosome,<br/>CoalescePartitionsExec over a CollectLeft build side)<br/>DistributedExchangeRule → stages ending in ShuffleWriterExec / SortShuffleWriterExec
-    loop every runnable stage, one task per input partition
-        S->>S: TaskManager::launch_multi_task → prepare_multi_task_definition<br/>restrict_plan_to_partitions, PhysicalPlanNode::try_from_physical_plan<br/>BioRangesPhysicalCodec::try_encode (→ IntervalJoinPhysicalCodec::try_encode)
-        S->>E: gRPC launch_multi_task(LaunchMultiTaskParams), one MultiTaskDefinition per task<br/>PHYSICAL PLAN SERIALIZED, encoded separately for every task<br/>nearest / coverage: the indexed table inside the plan as Arrow IPC
-        E->>E: ExecutorServer::launch_multi_task → get_task_definition_vec<br/>BioRangesPhysicalCodec::try_decode → MergeExec / SubtractExec / NearestExec / DistCoverageExec<br/>IntervalJoinPhysicalCodec::try_decode → IntervalJoinExec (alg=Coitrees)
-        E->>E: Executor::execute_query_stage<br/>ShuffleReaderExec reads the inputs of earlier stages<br/>ShuffleWriterExec / SortShuffleWriterExec writes partitions to the work directory
-        E->>E: SHUFFLE DATA BETWEEN EXECUTORS: ShuffleReaderExec, remote partitions: fetch_partition_remote<br/>→ Arrow Flight do_action IO_BLOCK_TRANSPORT on the executor that wrote them (BallistaFlightService)<br/>local partitions: fetch_partition_local, read from the work directory
-        E-->>S: gRPC update_task_status(UpdateTaskStatusParams)
-    end
-    S-->>C: job status stream (GetJobStatusResult): successful, final partition locations
-    C->>E: RESULT: fetch_partition → Arrow Flight do_get for every final partition
-    E-->>C: RecordBatch stream (bench_client checksums it, dist_ops prints it)
+    Note over C: 1a. runner::connect_from_env<br/>bio_session_state(<br/>bio_ballista_config())<br/>SessionContext::remote_with_state
+    Note over C: 1b. ctx.sql("SELECT ... FROM<br/>dist_merge(...)")
+    Note over C: 1c. DistTableFunction::call<br/>→ DistBioProvider::build<br/>(own bio session, registers<br/>the input files)
+    Note over C: 2a. BallistaQueryPlanner<br/>→ DistributedQueryExec::execute
+    Note over C: 2b. LogicalPlanNode with<br/>BioDistLogicalCodec::<br/>try_encode_table_provider<br/>(DistPayload::encode)
+    C->>S: 2c. LOGICAL PLAN SERIALIZED:<br/>gRPC execute_query_push<br/>(ExecuteQueryParams)
+```
+
+#### Step 3: planning in the scheduler
+
+The scheduler rebuilds our table provider from the plan, our provider's `scan` chooses the
+strategy, and DataFusion and Ballista cut the physical plan into stages.
+
+```mermaid
+%%{init: {"sequence": {"mirrorActors": false}}}%%
+sequenceDiagram
+    participant S as Scheduler process<br/>ballista_node scheduler
+
+    Note over S: 3a. SchedulerServer::parse_plan<br/>BioDistLogicalCodec::<br/>try_decode_table_provider
+    Note over S: 3b. DistPayload::decode<br/>→ DistBioProvider::build<br/>(session from bio_session_state)
+    Note over S: 3c. TaskManager::submit_plan<br/>→ AdaptiveExecutionGraph::try_new
+    Note over S: 3d. AdaptivePlanner::try_new<br/>→ create_physical_plan<br/>→ DistBioProvider::scan
+    Note over S: 3e. vendored provider scan<br/>→ collect_left_at_planning<br/>→ check_broadcast_fits
+    Note over S: 3f. EnsureRequirements: hash<br/>RepartitionExec on the chromosome,<br/>CoalescePartitionsExec over a<br/>CollectLeft build side
+    Note over S: 3g. DistributedExchangeRule<br/>→ stages ending in ShuffleWriterExec<br/>or SortShuffleWriterExec
+```
+
+#### Steps 4 to 6: tasks, execution, shuffle
+
+For every runnable stage, one task per input partition: the scheduler encodes the plan of every
+task with our physical codec, the executor decodes our operators, runs the stage and reads the
+inputs of earlier stages from the executors that wrote them.
+
+```mermaid
+%%{init: {"sequence": {"mirrorActors": false}}}%%
+sequenceDiagram
+    participant S as Scheduler
+    participant E as Executor
+    participant O as Other executor<br/>(ran an earlier stage)
+
+    Note over S: 4a. TaskManager::launch_multi_task<br/>→ prepare_multi_task_definition<br/>→ restrict_plan_to_partitions
+    Note over S: 4b. PhysicalPlanNode::<br/>try_from_physical_plan<br/>BioRangesPhysicalCodec::try_encode<br/>→ IntervalJoinPhysicalCodec::try_encode
+    S->>E: 4c. gRPC launch_multi_task<br/>(LaunchMultiTaskParams), one<br/>MultiTaskDefinition per task:<br/>PHYSICAL PLAN encoded per task<br/>(nearest, coverage: the indexed<br/>table inside, as Arrow IPC)
+    Note over E: 5a. ExecutorServer::launch_multi_task<br/>→ get_task_definition_vec
+    Note over E: 5b. BioRangesPhysicalCodec::try_decode<br/>→ MergeExec / SubtractExec /<br/>NearestExec / DistCoverageExec<br/>IntervalJoinPhysicalCodec::try_decode<br/>→ IntervalJoinExec (alg=Coitrees)
+    Note over E: 5c. Executor::execute_query_stage
+    E->>O: 5d. SHUFFLE DATA: ShuffleReaderExec<br/>fetch_partition_remote<br/>→ Arrow Flight do_action<br/>IO_BLOCK_TRANSPORT
+    O-->>E: partitions of the earlier stage<br/>(BallistaFlightService)
+    Note over E: 5e. own partitions:<br/>fetch_partition_local<br/>(read from the work directory)
+    Note over E: 5f. ShuffleWriterExec or<br/>SortShuffleWriterExec writes<br/>this stage's partitions<br/>to the work directory
+    E-->>S: 6. gRPC update_task_status<br/>(UpdateTaskStatusParams)
+```
+
+#### Steps 7 and 8: result
+
+When the last stage is done, the client reads the final partitions straight from the executors.
+
+```mermaid
+%%{init: {"sequence": {"mirrorActors": false}}}%%
+sequenceDiagram
+    participant C as Client process
+    participant S as Scheduler process
+    participant E as Executor processes
+
+    S-->>C: 7. job status stream<br/>(GetJobStatusResult):<br/>successful, final<br/>partition locations
+    C->>E: 8a. RESULT: fetch_partition<br/>→ Arrow Flight do_get<br/>for every final partition
+    E-->>C: 8b. RecordBatch stream
+    Note over C: 8c. bench_client checksums it,<br/>dist_ops prints it
 ```
 
 In standalone mode (no `BALLISTA_SCHEDULER_URL`) the same steps run inside the client process:
