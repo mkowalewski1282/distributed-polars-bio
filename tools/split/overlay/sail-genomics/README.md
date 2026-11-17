@@ -34,47 +34,132 @@ environment, with the package installed or the repository as working directory.
 ## Query flow
 
 One overlap query (a cogroup of two tables) from the client to the result, on a Sail server in
-`local-cluster` mode. The server is a separate process here; with `local_session()` the same
-server runs inside the client's Python process. Names are the functions, types and messages in
-this repository (`src/sail_genomics/`), in PySpark 4.2.1, polars-bio 0.37.0 and the Sail server
-(pysail 0.7.3); the plan and message names in the middle come from `df.explain(True)` and from
-the server's debug log (`RUST_LOG=sail_execution=debug`) of the same query. Marked in capitals:
-the points where control crosses between Python and Rust (RUST to PYTHON, PYTHON to RUST) and the
-point where polars-bio column names are renamed to the output schema (RENAME).
+`local-cluster` mode: first an overview, then every step in detail. The server is a separate
+process here; with `local_session()` the same server runs inside the client's Python process.
+Arrows are messages or calls between the parts; boxes are work inside one part. Marked in
+capitals: the points where control crosses between Python and Rust (RUST TO PYTHON, PYTHON TO
+RUST) and the point where polars-bio column names are renamed to the output schema (RENAME).
 
 ```mermaid
+%%{init: {"sequence": {"mirrorActors": false}}}%%
 sequenceDiagram
-    autonumber
-    participant C as PySpark client<br/>(Python)
-    participant D as Sail server, driver<br/>(Rust)
-    participant W as Sail workers<br/>(threads of the same process)
-    participant F as sail_genomics.arrow<br/>(Python, in the worker)
-    participant P as polars_bio<br/>(Python + Rust, DataFusion 53)
+    participant C as PySpark client
+    participant S as Sail server
+    participant F as sail_genomics<br/>(our function)
+    participant P as polars-bio
 
-    Note over C: build_query(spark, op, left, right)<br/>spark.read.parquet + select(cast, alias chrom/start/end)
-    C->>C: groupBy("chrom").cogroup(other.groupBy("chrom")).applyInArrow(binary, schema)<br/>binary is pickled by cloudpickle, schema = ddl_schema(op)
-    C->>D: Spark Connect gRPC: CoGroupMap relation with the pickled function<br/>(executed on the first action: collect, show, write)
-    D->>D: logical plan: Aggregate collect_batch per side, Full Join on chrom,<br/>Projection binary(...), Unnest, Projection get_field(...)
-    D->>W: RunTaskBatchRequest per stage and partition<br/>stages 0 and 2: AggregateExec Partial collect_batch over DataSourceExec parquet
-    W->>W: ShuffleWriteExec Hash(chrom): rows of one chromosome go to one partition
-    W->>W: stages 1 and 3: ShuffleReadExec, AggregateExec FinalPartitioned collect_batch<br/>(all rows of a chromosome collected into Arrow batches)
-    W->>W: stage 4: ShuffleReadExec (both sides), HashJoinExec Partitioned Full on chrom<br/>left and right batches of one chromosome side by side
-    W->>F: RUST to PYTHON: ProjectionExec calls the UDF binary, which calls<br/>evaluate(op, left, right, phase_log) with two pyarrow Tables
-    F->>F: _frame(table): pl.from_arrow, cast chrom/start/end,<br/>set_coordinate_system(df, True) (0-based)
-    F->>F: pb_context.install() (idempotent)
-    F->>P: _call_polars_bio: pb.overlap(left, right, cols1, cols2, output_type="polars.DataFrame")
-    P->>P: range_op.range_operation(df1, df2, options, output_type, ctx)<br/>replaced by pb_context._range_operation: ctx taken from the pool queue
-    P->>P: PYTHON to RUST: range_operation_frame(ctx, reader1, reader2, options)<br/>BioSessionContext, tables s1/s2, interval join on DataFusion 53 in this process
-    P-->>F: RUST to PYTHON: result.to_polars() (polars DataFrame with polars-bio column names)
-    P->>P: _pool.put(ctx): the context returns to the pool
-    F->>F: RENAME: rename_polars_bio(op, result, _PB_COLS), .to_arrow().cast(arrow_schema(op))<br/>chrom_1 start_1 end_1 chrom_2 start_2 end_2
-    F-->>W: PYTHON to RUST: Arrow table, one result per chromosome
-    W->>W: UnnestExec, ProjectionExec get_field(chrom_1 ... end_2)
-    W-->>D: ReportTaskStatusRequest (stage 4 partitions)
-    D-->>C: Spark Connect gRPC: Arrow result batches
+    Note over C: 1. Build the query: group<br/>both tables by chromosome,<br/>apply our Arrow function
+    C->>S: 2. PLAN via Spark Connect,<br/>with our pickled function
+    Note over S: 3. Driver plans the stages,<br/>workers shuffle the rows<br/>by chromosome and collect<br/>them per chromosome
+    S->>F: 4. RUST TO PYTHON: two<br/>Arrow tables, one chromosome
+    F->>P: 5. Range operation, context<br/>from our pool
+    P-->>F: 6. Result with polars-bio<br/>column names
+    F-->>S: 7. RENAME, PYTHON TO RUST:<br/>one Arrow table
+    S-->>C: 8. RESULT batches
 ```
 
-Notes on the diagram:
+In words:
+
+1. The client builds the query: both tables grouped by chromosome, and our Arrow function
+   applied to every pair of groups (`cogroup(...).applyInArrow`).
+2. The plan goes to the Sail server through Spark Connect, with our function pickled inside.
+3. The driver plans the stages; the workers shuffle the rows so that all rows of one chromosome
+   meet in one partition, and collect them into Arrow batches.
+4. For every chromosome a worker calls our Python function with two Arrow tables (left and
+   right).
+5. Our function runs the polars-bio range operation on them, with a polars-bio context taken
+   from our pool; polars-bio itself goes from Python to Rust here.
+6. polars-bio returns a polars DataFrame with its own column names.
+7. Our function renames the columns to the output schema and returns one Arrow table to the
+   worker.
+8. The workers assemble the result and the client receives it as Arrow batches.
+
+In detail: [steps 1 and 2](#steps-1-and-2-client-and-plan) ·
+[step 3](#step-3-stages-and-shuffle-in-the-workers) ·
+[steps 4 to 7](#steps-4-to-7-our-function-and-polars-bio) ·
+[step 8](#step-8-result)
+
+### Query flow in detail
+
+Names are the functions, types and messages in this repository (`src/sail_genomics/`), in
+PySpark 4.2.1, polars-bio 0.37.0 and the Sail server (pysail 0.7.3); the plan and message names
+in steps 3 and 8 come from `df.explain(True)` and from the server's debug log
+(`RUST_LOG=sail_execution=debug`) of the same query. Step numbers match the overview.
+
+#### Steps 1 and 2: client and plan
+
+The client builds the cogroup with our function; nothing runs until the first action.
+
+```mermaid
+%%{init: {"sequence": {"mirrorActors": false}}}%%
+sequenceDiagram
+    participant C as PySpark client<br/>(Python)
+    participant D as Sail server, driver<br/>(Rust)
+
+    Note over C: 1a. build_query(spark, op,<br/>left, right)<br/>spark.read.parquet + select(cast,<br/>alias chrom/start/end)
+    Note over C: 1b. groupBy("chrom").cogroup(<br/>other.groupBy("chrom"))<br/>.applyInArrow(binary, schema)
+    Note over C: 1c. binary is pickled by<br/>cloudpickle, schema =<br/>ddl_schema(op)
+    C->>D: 2. Spark Connect gRPC:<br/>CoGroupMap relation with the<br/>pickled function (executed on<br/>the first action: collect,<br/>show, write)
+```
+
+#### Step 3: stages and shuffle in the workers
+
+The driver turns the cogroup into a plan; the workers bring all rows of one chromosome together
+and put the left and right batches of that chromosome side by side.
+
+```mermaid
+%%{init: {"sequence": {"mirrorActors": false}}}%%
+sequenceDiagram
+    participant D as Sail server, driver<br/>(Rust)
+    participant W as Sail workers<br/>(threads of the same process)
+
+    Note over D: 3a. logical plan: Aggregate<br/>collect_batch per side,<br/>Full Join on chrom,<br/>Projection binary(...),<br/>Unnest, Projection get_field(...)
+    D->>W: 3b. RunTaskBatchRequest<br/>per stage and partition
+    Note over W: 3c. stages 0 and 2: AggregateExec<br/>Partial collect_batch over<br/>DataSourceExec parquet
+    Note over W: 3d. ShuffleWriteExec Hash(chrom):<br/>rows of one chromosome go<br/>to one partition
+    Note over W: 3e. stages 1 and 3:<br/>ShuffleReadExec, AggregateExec<br/>FinalPartitioned collect_batch<br/>(all rows of a chromosome<br/>collected into Arrow batches)
+    Note over W: 3f. stage 4: ShuffleReadExec<br/>(both sides), HashJoinExec<br/>Partitioned Full on chrom:<br/>left and right batches of one<br/>chromosome side by side
+```
+
+#### Steps 4 to 7: our function and polars-bio
+
+Inside a worker: the call into our Python function, polars-bio with a context from our pool, and
+the renamed result going back to Rust.
+
+```mermaid
+%%{init: {"sequence": {"mirrorActors": false}}}%%
+sequenceDiagram
+    participant W as Sail worker<br/>(Rust)
+    participant F as sail_genomics.arrow<br/>(Python, in the worker)
+    participant P as polars_bio<br/>(Python + Rust,<br/>DataFusion 53)
+
+    W->>F: 4. RUST TO PYTHON: ProjectionExec<br/>calls the UDF binary, which calls<br/>evaluate(op, left, right, phase_log)<br/>with two pyarrow Tables
+    Note over F: 4a. _frame(table): pl.from_arrow,<br/>cast chrom/start/end,<br/>set_coordinate_system(df, True)<br/>(0-based)
+    Note over F: 4b. pb_context.install()<br/>(idempotent)
+    F->>P: 5a. _call_polars_bio: pb.overlap(<br/>left, right, cols1, cols2,<br/>output_type="polars.DataFrame")
+    Note over P: 5b. range_op.range_operation(<br/>df1, df2, options, output_type, ctx)<br/>replaced by<br/>pb_context._range_operation:<br/>ctx taken from the pool queue
+    Note over P: 5c. PYTHON TO RUST:<br/>range_operation_frame(ctx,<br/>reader1, reader2, options)<br/>BioSessionContext, tables s1/s2,<br/>interval join on DataFusion 53<br/>in this process
+    P-->>F: 6a. RUST TO PYTHON:<br/>result.to_polars() (polars<br/>DataFrame with polars-bio<br/>column names)
+    Note over P: 6b. _pool.put(ctx): the<br/>context returns to the pool
+    Note over F: 7a. RENAME: rename_polars_bio(<br/>op, result, _PB_COLS),<br/>.to_arrow().cast(arrow_schema(op))<br/>chrom_1 start_1 end_1<br/>chrom_2 start_2 end_2
+    F-->>W: 7b. PYTHON TO RUST: Arrow table,<br/>one result per chromosome
+```
+
+#### Step 8: result
+
+```mermaid
+%%{init: {"sequence": {"mirrorActors": false}}}%%
+sequenceDiagram
+    participant C as PySpark client
+    participant D as Sail server, driver
+    participant W as Sail workers
+
+    Note over W: 8a. UnnestExec, ProjectionExec<br/>get_field(chrom_1 ... end_2)
+    W-->>D: 8b. ReportTaskStatusRequest<br/>(stage 4 partitions)
+    D-->>C: 8c. RESULT: Spark Connect gRPC,<br/>Arrow result batches
+```
+
+Notes on the diagrams:
 
 - For `merge` there is one table: `groupBy("chrom").applyInArrow(unary, schema)` becomes one
   aggregate whose aggregate function is the Python function itself (no `collect_batch`, no join);
