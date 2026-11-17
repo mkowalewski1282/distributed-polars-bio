@@ -104,7 +104,9 @@ def test_bench_client_matches_polars_bio_on_parquet(op, parquet_dirs, parquet_ex
 def test_bench_client_reads_csv_with_reserved_column_names(tmp_path):
     """The existing CSV data: columns chrom, start, end (`end` is an SQL keyword)."""
     from tests.merge_oracle import reference_merge_intervals
-    from tests.test_ballista_distributed_ops import INTERVALS_A
+    # test_ballista_multiprocess.py is in both repositories (test_ballista_distributed_ops.py,
+    # with the same data, only in the Ballista one).
+    from tests.test_ballista_multiprocess import INTERVALS_A
 
     out = tmp_path / "merge.parquet"
     r = run_client(

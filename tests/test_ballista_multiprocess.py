@@ -255,8 +255,8 @@ def test_scheduler_sees_two_separate_executors(cluster):
     assert len({e["port"] for e in executors}) == 2, executors
 
 
-# Canonical dataset, identical to tests/test_ballista_distributed_ops.py
-# (that file guards the agreement with data/parts_a and data/parts_b).
+# Canonical dataset, identical to the one in test_ballista_distributed_ops.py of the Ballista
+# repository (that file guards the agreement with data/parts_a and data/parts_b).
 INTERVALS_A = [
     ("chr1", 100, 200, "gene_A1"),
     ("chr1", 150, 300, "gene_A2"),
@@ -280,7 +280,8 @@ INTERVALS_B = [
 #: `overlap` reads single files (data/intervals_*.csv) and has no hash
 #: parallelism (a known limitation: every join task indexes the whole build side, see
 #: OPIS.md); for it we require >= 1
-#: executor, and the actual distribution goes to the evidence file.
+#: executor, and the actual distribution is checked by test_ballista_distribution_evidence.py
+#: of the Ballista repository.
 MULTI_TASK_OPS = {"merge", "subtract", "nearest", "coverage"}
 #: Operations with a hash shuffle by chromosome: the plan must have >= 2 stages.
 SHUFFLE_OPS = {"merge", "subtract"}
@@ -336,8 +337,8 @@ def _stages_by_job(work_dir: Path) -> dict[str, set[str]]:
 
 def _check_against_oracle(op: str, output_dir: Path) -> None:
     """Evidence 2: client result == local polars-bio (oracles as in
-    tests/test_ballista_distributed_ops.py). Imports are lazy: the cluster-only tests
-    do not need polars-bio."""
+    test_ballista_distributed_ops.py of the Ballista repository). Imports are lazy: the
+    cluster-only tests do not need polars-bio."""
     import pandas as pd
 
     df = pd.read_csv(output_dir / f"dist_{op}_result.csv")
@@ -365,7 +366,7 @@ def _check_against_oracle(op: str, output_dir: Path) -> None:
         expected = reference_coverage(INTERVALS_A, INTERVALS_B)
     elif op == "nearest":
         # We compare DISTANCES, not the chosen neighbours: ties are broken
-        # arbitrarily (see tests/test_nearest_correctness.py).
+        # arbitrarily (see test_nearest_correctness.py of the Ballista repository).
         from tests.nearest_oracle import reference_nearest_min_distances
 
         # One row per interval of A; A is the right (queried) table of dist_nearest.
