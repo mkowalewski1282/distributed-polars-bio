@@ -7,8 +7,8 @@
 //! - row hash: `mix64(sum M_j * code_j)` in arithmetic modulo 2^64 (the splitmix64 finalizer);
 //! - checksum: the sum of the row hashes modulo 2^64, as `0x` + 16 hexadecimal digits.
 //!
-//! Agreement with Python: `tests/test_bench_client_protocol.py` (reference values from the
-//! checksum test vectors, computed through `bench_client --checksum`).
+//! Agreement with Python: `tests/test_bench_client_protocol.py` of genomics-engines-bench
+//! (reference values from the checksum test vectors, computed through `bench_client --checksum`).
 
 use datafusion::arrow::array::{Array, AsArray};
 use datafusion::arrow::compute::cast;

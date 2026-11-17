@@ -118,13 +118,15 @@ pub async fn connect_from_env() -> Result<DFSessionContext> {
 ///
 /// Why a single place: the internal session builds the physical plans of the children
 /// (`create_physical_plan()`), so it decides the number of partitions on which the
-/// scheduler's `EnforceDistribution` later bases the decision whether to insert a shuffle.
+/// scheduler's `EnsureRequirements` rule (DataFusion 55; it replaced `EnforceDistribution`)
+/// later bases the decision whether to insert a shuffle.
 /// A mismatch between these configurations silently broke the distribution.
 ///
 /// `target_partitions >= 2` is REQUIRED, not cosmetic: with
 /// `target_partitions == 1` DataFusion does not insert hash repartitioning at all
-/// (`enforce_distribution.rs`, `add_hash_on_top`: `if n_target == 1 && count == 1
-/// { return input }`), so the query would compute correctly but in ONE
+/// (`ensure_requirements/enforce_distribution.rs`, `ensure_distribution`: a single-partition
+/// input already satisfies a hash requirement and `target_partitions > child_partitions` is
+/// false, so no `RepartitionExec` is added), so the query would compute correctly but in ONE
 /// stage - and the claim of distribution would be empty. There is no visible symptom;
 /// it is detectable only through `EXPLAIN ANALYZE`. Value: `BIO_TARGET_PARTITIONS` (4 by default).
 ///

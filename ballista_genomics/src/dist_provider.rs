@@ -62,8 +62,8 @@ impl DistBioProvider {
     ///
     /// The session uses THE SAME `bio_session_config()` as the client/scheduler session.
     /// This matters: this session builds the physical plans of the children, so it decides
-    /// the number of partitions on which the scheduler's `EnforceDistribution` later bases its
-    /// decision to insert a shuffle. A configuration mismatch between these two places
+    /// the number of partitions on which the scheduler's `EnsureRequirements` rule later bases
+    /// its decision to insert a shuffle. A configuration mismatch between these two places
     /// silently broke the distribution.
     pub async fn build(payload: DistPayload) -> Result<Self> {
         let session = Arc::new(DFSessionContext::new_with_bio(bio_session_config()));

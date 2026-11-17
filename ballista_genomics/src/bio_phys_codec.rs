@@ -239,8 +239,9 @@ fn build_nearest_exec(
     recompute_with_children(Arc::new(exec), vec![right])
 }
 
-/// The size of the received broadcast payload: the orchestrator sums these lines from the
-/// executor logs into the `broadcast_bytes` column (the pattern is in `bench/logscan.py`).
+/// The size of the received broadcast payload, logged by the executor that decodes the node.
+/// The genomics-engines-bench orchestrator sums these lines from the executor logs into its
+/// `broadcast_bytes` column.
 fn log_broadcast_decoded(bytes: usize) {
     tracing::info!("broadcast payload decoded: {bytes} bytes");
 }

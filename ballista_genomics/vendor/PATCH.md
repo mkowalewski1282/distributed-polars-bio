@@ -28,8 +28,8 @@ re-applied unchanged - the structs have the same fields as in 0.18.0 and 0.22.2 
 **Transitional period:** polars-bio 0.37 is built from v0.24.0 (DataFusion 53), while Ballista
 uses the v0.25.0 copy (DataFusion 55.2). v0.24.x -> v0.25.0 is only a port to the DataFusion 55
 API (plus a deterministic change of the hash function for equality keys in `IntervalJoinExec`),
-with no change to the interval algorithms; `tests/test_algorithm_versions.py`
-(`EQUIVALENT_RANGES`) explicitly allows this equivalence. The asymmetry should disappear with
+with no change to the interval algorithms; the genomics-engines-bench test
+`tests/test_algorithm_versions.py` (`EQUIVALENT_RANGES`) explicitly allows this equivalence. The asymmetry should disappear with
 polars-bio 0.38 (polars-bio's main branch already has DataFusion 55.2 and v0.25.0; there is no
 release yet - it may get v0.26.0, which does not change the ranges crate).
 
@@ -158,7 +158,6 @@ them").
 
 ## Why vendored locally rather than as a GitHub fork
 
-Vendoring (a copy in the repository, not a separate fork under the user's account) was chosen
-deliberately: it does not require creating a new repository/account on the user's behalf or
-maintaining a remote fork - the whole change fits in this one file, so it is fully transparent
-and easy to verify in the commit diff.
+Vendoring (a copy in the repository, not a fork maintained separately) was chosen deliberately:
+it needs no extra repository and no remote fork to keep in sync - the whole change fits in this
+one file, so it is fully transparent and easy to verify in the commit diff.
