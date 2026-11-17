@@ -144,7 +144,8 @@ flowchart TB
 
     BINS --> CLUSTER
     BINS --> BCLIENT
-    CLUSTER -->|"codecs and settings in SessionConfig"| BCODEC
+    CLUSTER -->|"registers in SessionConfig"| LCODEC
+    CLUSTER -->|"registers in SessionConfig"| PCODEC
     CLUSTER --> BSESS
     UDTF --> PROV
     PROV -->|"scan() delegates to"| BPROV
@@ -177,7 +178,10 @@ flowchart TB
 From `EXPLAIN ANALYZE` on a cluster of separate processes with two executors of one slot each
 (`BIO_TARGET_PARTITIONS=2`, release binaries, `bench_client --explain-analyze`), on the
 databio-8p pair 2-7: the first table is `exons` (438 694 intervals), the second `ex-anno`
-(1 194 285 intervals); merge runs on `ex-anno` alone. The operator names are as they appear in
+(1 194 285 intervals); merge runs on `ex-anno` alone. databio-8p is the interval dataset of the
+polars-bio benchmark (polars-bio-bench), Parquet files in 8 parts per dataset;
+[genomics-engines-bench](https://github.com/mkowalewski1282/genomics-engines-bench) downloads it
+with its `bench/data/download.py`. The operator names are as they appear in
 the plans.
 
 | Operation | Physical node | How the work is split | Stages observed (tasks) | Crosses processes |
@@ -188,8 +192,9 @@ the plans.
 | nearest | `NearestExec` | Broadcast: the indexed table (`ex-anno`) travels inside the physical plan as Arrow IPC; every task rebuilds the index and processes its own partition of the queried side (`exons`). No shuffle. | 1: `NearestExec` directly over the scan of `exons` (2); payload 28 751 052 B per task | the broadcast payload inside `launch_multi_task` |
 | coverage | `DistCoverageExec` over `CountOverlapsExec` | As nearest: `DistCoverageExec: coverage=true, broadcast_rows=1194285` carries the indexed table. | 1: `DistCoverageExec` directly over the scan of `exons` (2); payload 28 751 052 B per task | the broadcast payload inside `launch_multi_task` |
 
-Every stage ends in a `ShuffleWriterExec`; the client reads the partitions of the last stage from
-the executors over Arrow Flight. `bench_client` queries have no `ORDER BY`, so the last stage is
+Every stage ends in a shuffle writer (`SortShuffleWriterExec` for a hash shuffle,
+`ShuffleWriterExec` otherwise); the client reads the partitions of the last stage from the
+executors over Arrow Flight. `bench_client` queries have no `ORDER BY`, so the last stage is
 the operation's stage. `dist_ops` sorts its result, which adds one single-partition stage
 (`SortPreservingMergeExec` ← `RangeShuffleReaderExec`); on its CSV data overlap stays in one stage
 because each side is a single file and already satisfies `CollectLeft`. TECHNICAL.md describes
@@ -261,7 +266,8 @@ BALLISTA_SCHEDULER_URL=df://localhost:50050 DIST_OUTPUT_DIR=output/cluster \
     ./target/release/dist_ops merge
 ```
 
-Output of the client:
+Output of the client (abridged: the title banner, the separator line and the lines naming the
+written result and plan files are left out):
 
 ```text
 Connecting to external Ballista scheduler: df://localhost:50050
@@ -310,8 +316,8 @@ the client and by `ballista_node`:
 
 The tests are Python (pytest): they run the debug binaries and compare their results with
 polars-bio 0.37, and they check the shape of the distributed plans. Requirements: the debug
-binaries (`cargo build --bins --locked`) and [uv](https://docs.astral.sh/uv/) 0.12.22 (the
-version is pinned in `pyproject.toml`; uv installs Python 3.12).
+binaries (`cargo build --bins --locked`) and [uv](https://docs.astral.sh/uv/) 0.12.x (CI uses
+0.12.22; `pyproject.toml` requires `>=0.12.22,<0.13`); uv installs Python 3.12.
 
 ```bash
 cargo test --lib --locked

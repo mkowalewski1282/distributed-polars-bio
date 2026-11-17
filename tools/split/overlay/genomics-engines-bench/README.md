@@ -11,11 +11,19 @@ subtract) on three engines at equal CPU budgets:
 
 The repository contains the `bench/` tool (orchestrator, runners, validity rules, report) and its
 tests. The two engine repositories are git submodules under `engines/`; their own READMEs describe
-how each engine runs a query: [engines/ballista-genomics/README.md](engines/ballista-genomics/README.md)
-and [engines/sail-genomics/README.md](engines/sail-genomics/README.md).
+how each engine runs a query:
+[ballista-genomics/README.md](https://github.com/mkowalewski1282/ballista-genomics/blob/main/README.md)
+and [sail-genomics/README.md](https://github.com/mkowalewski1282/sail-genomics/blob/main/README.md).
 
 The tool runs on Linux only: it pins processes with `taskset` and reads the CPU topology from
 `/sys/devices/system/cpu`.
+
+The data is databio-8p, the interval datasets of the polars-bio benchmark (polars-bio-bench):
+nine datasets with the identifiers 0-8 (for example 2 = `exons`, 7 = `ex-anno`), each stored as 8
+Parquet files with the columns `contig`, `pos_start`, `pos_end` (0-based, half-open). A pair `a-b`
+means df1 = dataset a and df2 = dataset b. `bench/data/download.py` downloads the `databio-8p.zip`
+archive (about 1.2 GB) from the Google Drive location polars-bio-bench uses and checks the files
+and the row counts.
 
 ## What it measures
 
@@ -135,7 +143,7 @@ RAM) and downloads the databio-8p dataset into `~/bench_data` (or `$BENCH_DATA_R
 Then, with the machine idle (see [Run protocol](#run-protocol)):
 
 ```bash
-# 1. Smoke series: every engine at P = 1 and 2 on the smallest pair, a few minutes.
+# 1. Smoke series: every engine at P = 1 and 2 on the smallest pair, about 15-20 minutes.
 uv run python -m bench.orchestrator bench/conf/smoke.yaml
 
 # 2. Scaling series: 3 engines x P = 1, 2, 4, 8 x 10 scenarios, about 1.5 hours.
@@ -171,19 +179,22 @@ A series is a list of blocks, one per (engine, P). Each block follows the same p
 - **Warm-up.** Warm-up rounds run before the measured repeats. They are recorded but marked as
   warm-up and excluded from the medians.
 - **Control run.** At the start and at the end of every block the same control task runs: overlap
-  7-0 on polars-bio with 2 threads, pinned to both threads of the first non-system core,
-  independent of P. If the medians of the valid control runs differ by more than the tolerance, the
+  7-0 on polars-bio with 2 threads, pinned to both threads of the first non-system core (or to the
+  first two CPUs outside the system core on a machine without SMT), independent of P. If the medians of the valid control runs differ by more than the tolerance, the
   block is invalid (default tolerance 10%) and is repeated once; if the second attempt drifts too, it stays invalid. Fewer
   than half valid control runs at either end also invalidates the block.
-- **Settle time.** Every run is preceded by a pause (`settle_s = 3`). It lets WSL2 return memory to
-  the host. With it, the control-run noise was 1.8% (the control task measured 20 times in a row,
+- **Settle time.** Every run is preceded by a pause (`settle_s`: 3 s in the shipped configurations,
+  0 when a configuration leaves it out). It lets WSL2 return memory to the host. With it, the control-run noise was 1.8% (the control task measured 20 times in a row,
   2026-10-10, validation laptop).
 - **Swap.** A series starts only from empty swap (the preflight refuses to start otherwise). A run
   that increases `pswpout` or `pswpin` is invalid.
 - **Memory guard and timeout.** A run is killed when available memory falls below 300 MiB or when
   it exceeds the time limit (`timeout_s`, 1200 s by default); it is recorded as invalid with the reason, and the engine restarts.
-- **Preflight.** Before the first run the tool checks the CPU topology, the data, the swap and
-  that the Ballista binaries exist and are newer than their sources.
+- **Preflight.** Before the first run the tool checks that the data of every scenario is present,
+  that the CPU topology can be read and leaves P = 1 and the two control-run CPUs outside the
+  system core, that swap is empty, that `taskset` is installed and `pysail` can be imported (series
+  with Sail), and that the Ballista binaries exist and are newer than their sources (series with
+  Ballista).
 
 Only valid runs enter the medians of the report. The scaling series is 12 blocks x 80 runs = 960
 runs plus 10 reference runs, about 1.5 hours; when every block repeats after control-run drift it
@@ -214,20 +225,21 @@ the procedure.
 ## Requirements
 
 - Linux x86_64 (WSL2 works). The tool uses `taskset`, `/proc` and the sysfs CPU topology.
-- [uv](https://docs.astral.sh/uv/) 0.12.22 exactly: `pyproject.toml` pins
-  `required-version = "==0.12.22"` (`uv self update 0.12.22`). Python 3.12 is installed by uv.
+- [uv](https://docs.astral.sh/uv/) 0.12.x (CI uses 0.12.22): `pyproject.toml` sets
+  `required-version = ">=0.12.22,<0.13"`. Python 3.12.15 (`.python-version`, installed by uv).
 - [rustup](https://rustup.rs/): the Rust toolchain is pinned in the Ballista submodule
   (`rust-toolchain.toml`) and installed on the first `cargo` call.
 - No `protoc`: the Ballista crates ship their generated protobuf code, and no build script in
   the dependency tree runs `protoc`.
 - Network access for `setup.sh` (submodules, crates, the dataset).
-- RAM: the validation series ran on a WSL2 laptop limited to 5 GB with VS Code and all other
+- RAM: the validation series ran on a WSL2 laptop limited to 5 GB with editors and all other
   applications closed. Linking a Ballista binary needs several GB, hence one build job by default
   (`CARGO_BUILD_JOBS=N` raises it).
 
 Before a series: close editors and background applications, leave the machine idle, and start
-from empty swap (`free -h` shows `Swap` used 0B; on WSL2 run `wsl --shutdown` in Windows if not,
-and limit memory with `memory=` in `.wslconfig`).
+from empty swap (`free -h` shows `Swap` used 0B). If it is not empty: on WSL2 run `wsl --shutdown`
+in Windows (and limit memory with `memory=` in `.wslconfig`); on native Linux run
+`sudo swapoff -a && sudo swapon -a`.
 
 ## How to read summary.md
 
@@ -241,8 +253,8 @@ table:
 | ballista | 2 | 1 | 1.618 | 1.618 | 1.618 | 1.53 | 0.10 |  |
 | sail | 2 | 1 | 0.342 | 0.342 | 0.342 | 1.09 | 0.49 |  |
 
-The rows above only show the shape of the table (a smoke series, one run per cell, small data); they
-are not results.
+The rows above are abridged from a smoke series (one run per cell, small data; the P = 1 rows of
+`ballista` and `sail` are left out). They only show the shape of the table and are not results.
 
 - `variant`: `polars_bio`, `ballista` or `sail`.
 - `P`: the parallelism. A trailing `*` marks a point whose CPUs include SMT siblings.
@@ -271,20 +283,29 @@ time against P for the three engines; hollow markers are SMT points. The raw per
 - **Local mode only.** Everything runs on one machine; there is no network between nodes.
 - **SMT at P = 8 on a 6-core laptop.** Three of the eight CPUs are second threads of cores that
   already run another CPU of the block. Such points are marked in the tables and plots.
-- **An extra stage in Ballista overlap.** Ballista overlap has one more stage that shuffles the
-  left side once (a Ballista 55 restriction on the per-task plan; see
-  [engines/ballista-genomics/TECHNICAL.md](engines/ballista-genomics/TECHNICAL.md)).
+- **A separate build-side stage in Ballista overlap.** Ballista overlap scans the second table of
+  the pair (the join's build side) in a separate stage, and every join task reads all of it
+  through a shuffle: Ballista 55 narrows each task's plan to the task's own partitions, and only
+  a stage boundary gives every task the whole build side (see section 6.1 of
+  [ballista-genomics/TECHNICAL.md](https://github.com/mkowalewski1282/ballista-genomics/blob/main/TECHNICAL.md#61-overlap)).
 - **Byte counters.** `shuffle_bytes` and `broadcast_bytes` follow Ballista 55's per-task encoding
   of the plan, so they are not comparable with counters of older Ballista versions.
-- **One partition at Ballista P = 1.** Ballista needs at least 2 partitions, so P = 1 is "2
+- **Two partitions at Ballista P = 1.** Ballista needs at least 2 partitions, so P = 1 is "2
   partitions on one CPU", see [What it measures](#what-it-measures).
 
 ## Tests and CI
 
-`uv run pytest -m "not real_data" -ra` runs the tests without the real dataset. The GitHub
-Actions workflow does the same on a 4-vCPU runner with debug Ballista binaries: it checks
-correctness, never performance, and the tests that need a given P are skipped when the runner has
-fewer CPUs outside the system core (P up to 2 there).
+The tests run the debug Ballista binaries (`setup.sh` builds only the release ones), so build
+them first; then run the tests without the real dataset:
+
+```bash
+(cd engines/ballista-genomics && cargo build --bins --locked)
+uv run pytest -m "not real_data" -ra
+```
+
+The GitHub Actions workflow does the same on a 4-vCPU runner: it checks correctness, never
+performance, and the tests that need a given P are skipped when the runner has fewer CPUs outside
+the system core (P up to 2 there).
 
 ## Results
 

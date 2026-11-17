@@ -13,7 +13,7 @@ uv sync --locked
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
 echo "Building the Ballista release binaries (engines/ballista-genomics, CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS)."
 echo "A cold release build takes a long time: from about 15 minutes to over an hour, depending on the machine."
-(cd engines/ballista-genomics && cargo build --release --bins)
+(cd engines/ballista-genomics && cargo build --release --bins --locked)
 
 uv run python -m bench.data.download
 echo "Setup done. Run a series with ./run_series.sh"

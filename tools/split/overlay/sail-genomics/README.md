@@ -34,7 +34,8 @@ environment, with the package installed or the repository as working directory.
 ## Query flow
 
 One overlap query (a cogroup of two tables) from the client to the result, on a Sail server in
-`local-cluster` mode. Names are the functions, types and messages in this repository
+`local-cluster` mode. The server is a separate process here; with `local_session()` the same
+server runs inside the client's Python process. Names are the functions, types and messages in this repository
 (`src/sail_genomics/`), in PySpark 4.2.1, polars-bio 0.37.0 and the Sail server (pysail 0.7.3);
 the plan and message names in the middle come from `df.explain(True)` and from the server's
 debug log (`RUST_LOG=sail_execution=debug`) of the same query. Marked in capitals: the points
@@ -86,7 +87,10 @@ Notes on the diagram:
   (`evaluate` returns the empty output table); present only on the left, polars-bio gets an
   empty right table and decides the semantics itself. This is why the join is a Full Join.
 - The coordinate system is fixed in `_frame`: frames are tagged 0-based (the benchmark data,
-  databio-8p, is 0-based half-open).
+  databio-8p, is 0-based half-open; it is the interval dataset of the polars-bio benchmark,
+  polars-bio-bench, which
+  [genomics-engines-bench](https://github.com/mkowalewski1282/genomics-engines-bench) downloads
+  with its `bench/data/download.py`).
 
 ## Components
 
@@ -147,7 +151,7 @@ extension, running in the same process as the worker.
 ## Why applyInArrow, not a UDTF
 
 The obvious alternative is a Python UDTF called with `LATERAL`. A measurement on 2026-10-11 (laptop, Ryzen 5
-4600H, WSL2, Sail 0.7.2, overlap on the chromosome pair 7-0, one worker) gave 41.6 s for the UDTF
+4600H, WSL2, Sail 0.7.2, overlap on the databio-8p dataset pair 7-0, one worker) gave 41.6 s for the UDTF
 path against 2.57 s for `applyInArrow` with the pool of contexts. `LATERAL` repeats the outer row
 for every output row, so memory grows quadratically with the result, and every row passes through
 Python objects; PySpark UDTFs in Sail did not accept `TABLE` arguments, so a whole chromosome
@@ -197,7 +201,7 @@ It depends on polars-bio internals, so the version is pinned (`polars-bio==0.37.
 
 ## Usage
 
-Install (Linux, Python 3.12, [uv](https://docs.astral.sh/uv/) 0.12.22):
+Install (Linux, Python 3.12, [uv](https://docs.astral.sh/uv/) 0.12.x; CI uses 0.12.22):
 
 ```bash
 uv sync --locked
@@ -269,9 +273,9 @@ import time
 while s.running: time.sleep(1)"
 ```
 
-With Sail 0.7.3, one task slot per worker and a default parallelism equal to the worker count
-gave exactly that many workers in a probe (P = 1, 2, 4, one run per cell); with more slots per
-worker Sail adds workers on its own.
+With Sail 0.7.3, a default parallelism equal to the worker count gave exactly that many workers
+in a probe (P = 1, 2, 4 workers with 1 or 8 slots each, one run per cell). With one slot per
+worker, a default parallelism above the worker count makes Sail add workers on its own.
 
 ## Tests
 

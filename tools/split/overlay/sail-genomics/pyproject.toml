@@ -21,8 +21,8 @@ requires = ["uv_build>=0.12.22,<0.13"]
 build-backend = "uv_build"
 
 [tool.uv]
-# The same uv version locally and in CI (astral-sh/setup-uv reads it from here).
-required-version = "==0.12.22"
+# uv 0.12.x from 0.12.22 on; CI pins 0.12.22 in the setup-uv step of the workflow.
+required-version = ">=0.12.22,<0.13"
 package = true
 
 [tool.pytest.ini_options]

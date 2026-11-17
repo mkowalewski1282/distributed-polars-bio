@@ -517,8 +517,9 @@ differ. `bench_client --version-info` prints the values read from the cluster co
 - **`target_partitions` ≥ 2.** With 1 partition per scan DataFusion inserts no hash
   repartitioning (it is needed only for inputs with more than one partition), so merge and
   subtract would run in one stage on one executor and the query would be correct but not
-  distributed. The binaries reject `BIO_TARGET_PARTITIONS` < 2 with exit code 2. A different value
-  in different processes breaks the distribution silently.
+  distributed. `ballista_node` and `bench_client` reject `BIO_TARGET_PARTITIONS` < 2 at start-up
+  with exit code 2; `dist_ops` and `ballista_genomics` stop with a panic in `bio_session_config`
+  (exit code 101). A different value in different processes breaks the distribution silently.
 - **Shared file system.** The logical payload carries the input paths as given; the client and
   the scheduler resolve them in their working directories when they register the tables, and the
   physical plan carries absolute file paths that every executor opens itself. All processes must
@@ -571,8 +572,9 @@ public fields) changes only those functions.
 - **Memory limits.** Every binary links the Ballista scheduler and executor with all of
   DataFusion. On a machine with little memory build with `CARGO_BUILD_JOBS=1`, so that only one
   binary is linked at a time; the `dev` profile has no debug info for the same reason (with full
-  debug info the linker exhausted RAM and swap on a laptop with 5 GB of RAM for Linux). With one
-  job a cold release build takes on the order of an hour on a 6-core laptop.
+  debug info the linker exhausted RAM and swap on the development laptop, whose Linux VM had
+  3.5 GB of RAM at the time; see the comment in `Cargo.toml`). With one job a cold release build
+  takes on the order of an hour on a 6-core laptop.
 
 ## 11. Reproducing the plans
 
@@ -581,12 +583,17 @@ The plans of section 6 come from a cluster started as below (release binaries, r
 
 ```bash
 export BIO_TARGET_PARTITIONS=2
+# The scheduler's REST API listens on the same port as its gRPC service.
+executors() { curl -sf http://127.0.0.1:50050/api/executors | python3 -c 'import json, sys; print(len(json.load(sys.stdin)))'; }
 ./target/release/ballista_node scheduler --port 50050 &
+# An executor connects to the scheduler only once, at start-up: wait until the scheduler answers.
+until curl -sf http://127.0.0.1:50050/api/executors > /dev/null; do sleep 0.5; done
 mkdir -p /tmp/ex1 /tmp/ex2
 ./target/release/ballista_node executor --scheduler-port 50050 --port 50051 --grpc-port 50052 \
     --work-dir /tmp/ex1 --concurrent-tasks 1 &
 ./target/release/ballista_node executor --scheduler-port 50050 --port 50061 --grpc-port 50062 \
     --work-dir /tmp/ex2 --concurrent-tasks 1 &
+until [ "$(executors)" = 2 ]; do sleep 0.5; done
 export BALLISTA_SCHEDULER_URL=df://localhost:50050
 ./target/release/bench_client --op overlap --left $D/exons --right $D/ex-anno --explain-analyze overlap_2-7.txt
 ./target/release/bench_client --op merge --left $D/ex-anno --explain-analyze merge_7.txt
