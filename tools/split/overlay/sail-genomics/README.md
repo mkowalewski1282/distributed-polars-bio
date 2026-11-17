@@ -35,12 +35,12 @@ environment, with the package installed or the repository as working directory.
 
 One overlap query (a cogroup of two tables) from the client to the result, on a Sail server in
 `local-cluster` mode. The server is a separate process here; with `local_session()` the same
-server runs inside the client's Python process. Names are the functions, types and messages in this repository
-(`src/sail_genomics/`), in PySpark 4.2.1, polars-bio 0.37.0 and the Sail server (pysail 0.7.3);
-the plan and message names in the middle come from `df.explain(True)` and from the server's
-debug log (`RUST_LOG=sail_execution=debug`) of the same query. Marked in capitals: the points
-where control crosses between Python and Rust (RUST to PYTHON, PYTHON to RUST) and the point
-where polars-bio column names are renamed to the output schema (RENAME).
+server runs inside the client's Python process. Names are the functions, types and messages in
+this repository (`src/sail_genomics/`), in PySpark 4.2.1, polars-bio 0.37.0 and the Sail server
+(pysail 0.7.3); the plan and message names in the middle come from `df.explain(True)` and from
+the server's debug log (`RUST_LOG=sail_execution=debug`) of the same query. Marked in capitals:
+the points where control crosses between Python and Rust (RUST to PYTHON, PYTHON to RUST) and the
+point where polars-bio column names are renamed to the output schema (RENAME).
 
 ```mermaid
 sequenceDiagram
@@ -88,9 +88,8 @@ Notes on the diagram:
   empty right table and decides the semantics itself. This is why the join is a Full Join.
 - The coordinate system is fixed in `_frame`: frames are tagged 0-based (the benchmark data,
   databio-8p, is 0-based half-open; it is the interval dataset of the polars-bio benchmark,
-  polars-bio-bench, which
-  [genomics-engines-bench](https://github.com/mkowalewski1282/genomics-engines-bench) downloads
-  with its `bench/data/download.py`).
+  polars-bio-bench, which [genomics-engines-bench](https://github.com/mkowalewski1282/genomics-engines-bench)
+  downloads with its `bench/data/download.py`).
 
 ## Components
 

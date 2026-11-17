@@ -180,12 +180,14 @@ A series is a list of blocks, one per (engine, P). Each block follows the same p
   warm-up and excluded from the medians.
 - **Control run.** At the start and at the end of every block the same control task runs: overlap
   7-0 on polars-bio with 2 threads, pinned to both threads of the first non-system core (or to the
-  first two CPUs outside the system core on a machine without SMT), independent of P. If the medians of the valid control runs differ by more than the tolerance, the
-  block is invalid (default tolerance 10%) and is repeated once; if the second attempt drifts too, it stays invalid. Fewer
-  than half valid control runs at either end also invalidates the block.
+  first two CPUs outside the system core on a machine without SMT), independent of P. If the
+  medians of the valid control runs differ by more than the tolerance, the block is invalid
+  (default tolerance 10%) and is repeated once; if the second attempt drifts too, it stays
+  invalid. Fewer than half valid control runs at either end also invalidates the block.
 - **Settle time.** Every run is preceded by a pause (`settle_s`: 3 s in the shipped configurations,
-  0 when a configuration leaves it out). It lets WSL2 return memory to the host. With it, the control-run noise was 1.8% (the control task measured 20 times in a row,
-  2026-10-10, validation laptop).
+  0 when a configuration leaves it out). It lets WSL2 return memory to the host. With it, the
+  control-run noise was 1.8% (the control task measured 20 times in a row, 2026-10-10, validation
+  laptop).
 - **Swap.** A series starts only from empty swap (the preflight refuses to start otherwise). A run
   that increases `pswpout` or `pswpin` is invalid.
 - **Memory guard and timeout.** A run is killed when available memory falls below 300 MiB or when
@@ -285,8 +287,9 @@ time against P for the three engines; hollow markers are SMT points. The raw per
   already run another CPU of the block. Such points are marked in the tables and plots.
 - **A separate build-side stage in Ballista overlap.** Ballista overlap scans the second table of
   the pair (the join's build side) in a separate stage, and every join task reads all of it
-  through a shuffle: Ballista 55 narrows each task's plan to the task's own partitions, and only
-  a stage boundary gives every task the whole build side (see section 6.1 of
+  through a shuffle: the `CollectLeft` join needs the whole build side in every task, and
+  Ballista 55's adaptive planner turns the `CoalescePartitionsExec` in front of it into a stage
+  boundary (see section 6.1 of
   [ballista-genomics/TECHNICAL.md](https://github.com/mkowalewski1282/ballista-genomics/blob/main/TECHNICAL.md#61-overlap)).
 - **Byte counters.** `shuffle_bytes` and `broadcast_bytes` follow Ballista 55's per-task encoding
   of the plan, so they are not comparable with counters of older Ballista versions.
