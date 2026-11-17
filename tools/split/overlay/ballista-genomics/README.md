@@ -199,58 +199,116 @@ executor pulls its tasks instead of receiving them (see the limitations in TECHN
 ## Components
 
 What is ours, what comes from Ballista and DataFusion, and what comes from the vendored algorithm
-crate (with the items the two visibility patches make public).
+crate: first an overview, then the parts in detail.
 
 ```mermaid
 flowchart TB
-    subgraph OURS ["ballista_genomics: this repository (src/)"]
+    OURS["ballista_genomics<br/>this repository (src/)"]
+    BALLISTA["Apache Ballista 55.0.0<br/>client, scheduler, executor"]
+    BIO["datafusion-bio-function-ranges<br/>v0.25.0 (vendor/, patched)"]
+    DF["Apache DataFusion 55.2.0"]
+
+    OURS -->|"binaries built on its parts,<br/>our codecs in its session"| BALLISTA
+    OURS -->|"our providers delegate<br/>scans and algorithms"| BIO
+    OURS -.->|"our codecs implement<br/>its codec interfaces"| DF
+    BALLISTA -->|"plans and runs on"| DF
+    BIO -->|"operators built on"| DF
+```
+
+In words:
+
+- **ballista_genomics** (this repository): the binaries, the table functions `dist_*`, our table
+  providers and our codecs.
+- **Apache Ballista**: the client, the scheduler and the executor; it cuts the plan into stages
+  and moves tasks and shuffle data between processes.
+- **datafusion-bio-function-ranges** (vendored): the interval algorithms (interval join, merge,
+  subtract, nearest, coverage); two visibility patches make public the items our codecs need.
+- **Apache DataFusion**: plans and runs the query in every process; our codecs implement its
+  codec interfaces (datafusion-proto).
+
+In detail: [building and planning the query](#building-and-planning-the-query) ·
+[codecs and serialization](#codecs-and-serialization) ·
+[Ballista scheduler and executor](#ballista-scheduler-and-executor)
+
+### Components in detail
+
+#### Building and planning the query
+
+Our binaries and session settings, our table function and providers, and the vendored providers
+and operators they delegate to.
+
+```mermaid
+flowchart TB
+    subgraph OURS ["ballista_genomics (src/)"]
         direction TB
-        BINS["binaries: ballista_node, bench_client, dist_ops<br/>runner::connect_from_env"]
+        BINS["binaries: ballista_node,<br/>bench_client, dist_ops<br/>runner::connect_from_env"]
         CLUSTER["cluster::bio_ballista_config<br/>cluster::bio_session_state"]
-        UDTF["DistTableFunction<br/>dist_overlap / dist_merge / dist_subtract / dist_nearest / dist_coverage"]
-        PROV["DistBioProvider + DistPayload<br/>scan: collect_left_at_planning, check_broadcast_fits"]
+        UDTF["DistTableFunction<br/>dist_overlap / dist_merge /<br/>dist_subtract / dist_nearest /<br/>dist_coverage"]
+        PROV["DistBioProvider + DistPayload<br/>scan: collect_left_at_planning,<br/>check_broadcast_fits"]
         COVP["DistCoverageProvider<br/>DistCoverageExec (carrier node)"]
-        LCODEC["BioDistLogicalCodec"]
-        PCODEC["BioRangesPhysicalCodec<br/>(MergeExec, SubtractExec, NearestExec, DistCoverageExec)"]
-        IJCODEC["IntervalJoinPhysicalCodec<br/>(IntervalJoinExec)"]
-        CIO["codec_io: binary encoding,<br/>schema as protobuf, RecordBatch as Arrow IPC"]
     end
 
-    subgraph BALLISTA ["Apache Ballista 55.0.0"]
-        direction TB
-        BCLIENT["client: SessionContextExt::remote_with_state / standalone_with_state<br/>BallistaQueryPlanner, DistributedQueryExec"]
-        BSCHED["scheduler: SchedulerServer, AdaptivePlanner,<br/>TaskManager::launch_multi_task, restrict_plan_to_partitions"]
-        BEXEC["executor: ExecutorServer, Executor::execute_query_stage,<br/>BallistaFlightService"]
-        BSHUF["ShuffleWriterExec, SortShuffleWriterExec,<br/>ShuffleReaderExec, RangeShuffleReaderExec"]
-        BCODEC["BallistaLogicalExtensionCodec,<br/>BallistaPhysicalExtensionCodec"]
+    subgraph BALLISTA ["Ballista 55.0.0"]
+        BCLIENT["client: SessionContextExt::<br/>remote_with_state /<br/>standalone_with_state"]
     end
 
-    subgraph DF ["Apache DataFusion 55.2.0"]
-        direction TB
-        DFCORE["SessionContext, TableProvider, ExecutionPlan,<br/>DataSourceExec (Parquet / CSV)"]
-        DFOPT["EnsureRequirements: RepartitionExec (Hash),<br/>CoalescePartitionsExec"]
-        DFPROTO["datafusion-proto: LogicalExtensionCodec, PhysicalExtensionCodec,<br/>serialize_physical_expr / parse_physical_expr"]
-        ARROW["Arrow IPC: StreamWriter / StreamReader"]
-    end
-
-    subgraph BIO ["datafusion-bio-function-ranges v0.25.0 (vendor/, patched)"]
+    subgraph BIOV ["datafusion-bio-function-ranges<br/>v0.25.0 (vendor/, patched)"]
         direction TB
         BSESS["BioSessionExt::new_with_bio<br/>IntervalJoinPhysicalOptimizationRule"]
-        BPROV["OverlapProvider, MergeProvider, SubtractProvider,<br/>NearestProvider, CountOverlapsProvider"]
-        BNODES["IntervalJoinExec (public constructor)<br/>MergeExec, SubtractExec, NearestExec, CountOverlapsExec<br/>(patch 2: pub struct and fields)"]
-        BIDX["patch 1: pub mod intervals → ColIntervals, parse_intervals<br/>patch 2: build_nearest_indexes, CountOverlapsIndex<br/>build_coitree_from_batches, build_count_index_from_batches"]
+        BPROV["OverlapProvider, MergeProvider,<br/>SubtractProvider, NearestProvider,<br/>CountOverlapsProvider"]
+        BNODES["IntervalJoinExec<br/>(public constructor)<br/>MergeExec, SubtractExec,<br/>NearestExec, CountOverlapsExec<br/>(patch 2: pub struct and fields)"]
+    end
+
+    subgraph DFG ["DataFusion 55.2.0"]
+        DFCORE["SessionContext, TableProvider,<br/>ExecutionPlan, DataSourceExec<br/>(Parquet / CSV)"]
     end
 
     BINS --> CLUSTER
     BINS --> BCLIENT
-    CLUSTER -->|"registers in SessionConfig"| LCODEC
-    CLUSTER -->|"registers in SessionConfig"| PCODEC
     CLUSTER --> BSESS
     UDTF --> PROV
     PROV -->|"scan() delegates to"| BPROV
     PROV --> COVP
     COVP -->|"wraps"| BNODES
-    LCODEC -->|"rebuilds"| PROV
+    BSESS --> BPROV
+    BPROV --> BNODES
+    BPROV --> DFCORE
+```
+
+#### Codecs and serialization
+
+Our three codecs, what each one delegates to, and the vendored items they rebuild on the other
+side (the items the two visibility patches make public).
+
+```mermaid
+flowchart TB
+    subgraph OURS ["ballista_genomics (src/)"]
+        direction TB
+        CLUSTER["cluster::bio_ballista_config"]
+        LCODEC["BioDistLogicalCodec<br/>(rebuilds DistBioProvider)"]
+        PCODEC["BioRangesPhysicalCodec<br/>(MergeExec, SubtractExec,<br/>NearestExec, DistCoverageExec)"]
+        IJCODEC["IntervalJoinPhysicalCodec<br/>(IntervalJoinExec)"]
+        CIO["codec_io: binary encoding,<br/>schema as protobuf,<br/>RecordBatch as Arrow IPC"]
+    end
+
+    subgraph BALLISTA ["Ballista 55.0.0"]
+        BCODEC["BallistaLogicalExtensionCodec,<br/>BallistaPhysicalExtensionCodec"]
+    end
+
+    subgraph DFG ["DataFusion 55.2.0"]
+        direction TB
+        DFPROTO["datafusion-proto:<br/>LogicalExtensionCodec,<br/>PhysicalExtensionCodec,<br/>serialize_physical_expr /<br/>parse_physical_expr"]
+        ARROW["Arrow IPC:<br/>StreamWriter / StreamReader"]
+    end
+
+    subgraph BIOV ["datafusion-bio-function-ranges<br/>v0.25.0 (vendor/, patched)"]
+        direction TB
+        BNODES["IntervalJoinExec, MergeExec,<br/>SubtractExec, NearestExec,<br/>CountOverlapsExec"]
+        BIDX["patch 1: pub mod intervals<br/>→ ColIntervals, parse_intervals<br/>patch 2: build_nearest_indexes,<br/>CountOverlapsIndex,<br/>build_coitree_from_batches,<br/>build_count_index_from_batches"]
+    end
+
+    CLUSTER -->|"registers in SessionConfig"| LCODEC
+    CLUSTER -->|"registers in SessionConfig"| PCODEC
     LCODEC -->|"delegates other nodes"| BCODEC
     PCODEC -->|"delegates other nodes"| IJCODEC
     IJCODEC -->|"delegates other nodes"| BCODEC
@@ -263,13 +321,30 @@ flowchart TB
     CIO --> ARROW
     LCODEC -.->|"implements"| DFPROTO
     PCODEC -.->|"implements"| DFPROTO
-    BCLIENT -->|"ExecuteQueryParams (logical plan)"| BSCHED
-    BSCHED -->|"LaunchMultiTaskParams (physical plans)"| BEXEC
+```
+
+#### Ballista scheduler and executor
+
+The Ballista parts the plans travel through, with the messages between them.
+
+```mermaid
+flowchart TB
+    subgraph BALLISTA ["Ballista 55.0.0"]
+        direction TB
+        BCLIENT["client: BallistaQueryPlanner,<br/>DistributedQueryExec"]
+        BSCHED["scheduler: SchedulerServer,<br/>AdaptivePlanner,<br/>TaskManager::launch_multi_task,<br/>restrict_plan_to_partitions"]
+        BEXEC["executor: ExecutorServer,<br/>Executor::execute_query_stage,<br/>BallistaFlightService"]
+        BSHUF["ShuffleWriterExec,<br/>SortShuffleWriterExec,<br/>ShuffleReaderExec,<br/>RangeShuffleReaderExec"]
+    end
+
+    subgraph DFG ["DataFusion 55.2.0"]
+        DFOPT["EnsureRequirements:<br/>RepartitionExec (Hash),<br/>CoalescePartitionsExec"]
+    end
+
+    BCLIENT -->|"ExecuteQueryParams<br/>(logical plan)"| BSCHED
+    BSCHED -->|"LaunchMultiTaskParams<br/>(physical plans)"| BEXEC
     BSCHED --> DFOPT
     BEXEC --> BSHUF
-    BPROV --> BNODES
-    BPROV --> DFCORE
-    BSESS --> BPROV
 ```
 
 ## Distribution strategy per operation
