@@ -178,54 +178,106 @@ Notes on the diagrams:
 
 ## Components
 
+What is ours, what comes from PySpark, Sail and polars-bio: first an overview, then the parts in
+detail.
+
+```mermaid
+flowchart TB
+    OURS["sail_genomics<br/>this repository"]
+    PYSPARK["PySpark 4.2.1<br/>client, Python"]
+    SAIL["Sail 0.7.3<br/>pysail, Rust,<br/>embeds DataFusion 55.2"]
+    PB["polars-bio 0.37.0<br/>Python + Rust, DataFusion 53"]
+
+    OURS -->|"builds the query with"| PYSPARK
+    PYSPARK -->|"Spark Connect gRPC"| SAIL
+    SAIL -->|"RUST TO PYTHON:<br/>calls our function"| OURS
+    OURS -->|"calls range operations,<br/>replaces range_operation"| PB
+```
+
+In words:
+
+- **sail_genomics** (this repository): builds the query, provides the Arrow function the workers
+  call, keeps the pool of polars-bio contexts and defines the output schema.
+- **PySpark**: the client API: the Spark Connect session and `groupBy` / `cogroup` /
+  `applyInArrow`.
+- **Sail**: the server: the driver plans the query, the workers run it and call our Python
+  function through an embedded interpreter.
+- **polars-bio**: runs the range operation itself, on its own DataFusion 53, inside the worker
+  process.
+
+In detail: [client side](#client-side) · [inside a worker](#inside-a-worker)
+
+### Components in detail
+
+#### Client side
+
+How our code builds the query with PySpark and reaches the Sail server.
+
 ```mermaid
 flowchart TB
     subgraph OURS ["sail_genomics (this repository)"]
         direction TB
-        BQ["arrow.build_query"]
-        EV["arrow.evaluate"]
-        FR["arrow._frame / _call_polars_bio"]
-        PBC["pb_context.install, _range_operation, _pool"]
-        SCH["schema: OUTPUT_COLUMNS, ddl_schema, arrow_schema, rename_polars_bio"]
         SES["session.local_session"]
+        BQ["arrow.build_query"]
+        SCH["schema: OUTPUT_COLUMNS,<br/>ddl_schema, arrow_schema,<br/>rename_polars_bio"]
     end
 
     subgraph PYSPARK ["PySpark 4.2.1 (client, Python)"]
         direction TB
         SS["SparkSession (Spark Connect)"]
-        GRP["GroupedData.groupBy, cogroup, applyInArrow"]
+        GRP["GroupedData.groupBy,<br/>cogroup, applyInArrow"]
     end
 
-    subgraph SAIL ["Sail 0.7.3 (pysail, Rust, embeds DataFusion 55.2)"]
-        direction TB
+    subgraph SAIL ["Sail 0.7.3 (pysail, Rust,<br/>embeds DataFusion 55.2)"]
         SRV["SparkConnectServer: driver"]
-        WRK["workers: ShuffleWriteExec, ShuffleReadExec, HashJoinExec, UnnestExec"]
-        PYU["Python UDF call (embedded interpreter)"]
-    end
-
-    subgraph PB ["polars-bio 0.37.0 (Python + Rust, DataFusion 53)"]
-        direction TB
-        API["pb.overlap, nearest, coverage, merge, subtract"]
-        RO["range_op.range_operation"]
-        RUST["range_operation_frame, BioSessionContext"]
     end
 
     SES --> SRV
     SES --> SS
     BQ --> SS
     BQ --> GRP
-    GRP -- "Spark Connect gRPC (CoGroupMap, GroupMap)" --> SRV
+    BQ --> SCH
+    GRP -->|"Spark Connect gRPC<br/>(CoGroupMap, GroupMap)"| SRV
+```
+
+#### Inside a worker
+
+What runs in the worker process for one chromosome: the call into our function and polars-bio.
+
+```mermaid
+flowchart TB
+    subgraph SAIL ["Sail 0.7.3 (pysail, Rust,<br/>embeds DataFusion 55.2)"]
+        direction TB
+        SRV["SparkConnectServer: driver"]
+        WRK["workers: ShuffleWriteExec,<br/>ShuffleReadExec, HashJoinExec,<br/>UnnestExec"]
+        PYU["Python UDF call<br/>(embedded interpreter)"]
+    end
+
+    subgraph OURS ["sail_genomics (this repository)"]
+        direction TB
+        EV["arrow.evaluate"]
+        FR["arrow._frame / _call_polars_bio"]
+        PBC["pb_context.install,<br/>_range_operation, _pool"]
+        SCH["schema: OUTPUT_COLUMNS,<br/>ddl_schema, arrow_schema,<br/>rename_polars_bio"]
+    end
+
+    subgraph PB ["polars-bio 0.37.0<br/>(Python + Rust, DataFusion 53)"]
+        direction TB
+        API["pb.overlap, nearest, coverage,<br/>merge, subtract"]
+        RO["range_op.range_operation"]
+        RUST["range_operation_frame,<br/>BioSessionContext"]
+    end
+
     SRV --> WRK
-    WRK -- "RUST to PYTHON" --> PYU
+    WRK -->|"RUST to PYTHON"| PYU
     PYU --> EV
     EV --> FR
-    FR --> API
     EV --> PBC
-    PBC -. "replaces" .-> RO
-    API --> RO
-    RO -- "PYTHON to RUST" --> RUST
     EV --> SCH
-    BQ --> SCH
+    FR --> API
+    API --> RO
+    PBC -.->|"replaces"| RO
+    RO -->|"PYTHON to RUST"| RUST
 ```
 
 Two DataFusion copies are involved and they do not interact beyond Arrow data: Sail embeds
