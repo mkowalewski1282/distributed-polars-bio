@@ -45,9 +45,10 @@ jobs:
       - name: Disk usage
         run: df -h / && du -sh target
 
-      # The uv version comes from required-version in pyproject.toml.
+      # uv 0.12.22 exactly (pyproject.toml accepts any 0.12.x from 0.12.22 on).
       - uses: astral-sh/setup-uv@v10.2.0
         with:
+          version: "0.12.22"
           enable-cache: true
           cache-python: true
 
@@ -55,6 +56,5 @@ jobs:
         run: uv sync --locked
 
       # Integration tests: the binaries against polars-bio on the test data (no real data in CI).
-      # Tests marked parallelism(p) are skipped when the runner has fewer CPUs (4 vCPUs -> P <= 2).
       - name: Tests (without real data)
         run: uv run --locked pytest -m "not real_data" -ra

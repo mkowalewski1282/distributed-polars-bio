@@ -19,7 +19,6 @@ STAYS_IN_WORKSHOP = {"tests/test_split.py", "tests/test_code_language.py"}
 
 #: Testy trafiajace jawnie do kilku repozytoriow (reszta: dokladnie do jednego).
 IN_SEVERAL_REPOS = {
-    "tests/test_ballista_distribution_evidence.py",
     "tests/test_ballista_multiprocess.py",
     "tests/test_ballista_parquet.py",
     "tests/test_generic_oracle.py",
@@ -117,7 +116,6 @@ def test_rewrites_remove_bench_imports():
     sample = (
         "from bench import checksum as cs\n"
         "from bench.ops import OPS, UNARY_OPS\n"
-        "from bench.cpus import read_layout\n"
         "from bench.checksum import checksum_rows\n"
         "from bench.data.datasets import COLUMNS\n"
         'BALLISTA_DIR = Path(__file__).resolve().parent.parent / "ballista_genomics"\n'
@@ -135,6 +133,25 @@ def test_rewrites_remove_bench_imports():
     out = split.rewrite_text("sail-genomics", sail_sample)
     assert not split.BENCH_IMPORT.search(out)
     assert "from sail_genomics.schema import OPS, UNARY_OPS" in out
+
+
+def test_ballista_gets_no_cpu_layout_module():
+    """Ballista nie ma testow ze znacznikiem parallelism(p) — bench/cpus.py tam nie trafia."""
+    assert split.map_path("ballista-genomics", "bench/cpus.py") is None
+    conftest = REPO / "tools" / "split" / "overlay" / "ballista-genomics" / "tests" / "conftest.py"
+    assert "parallelism" not in conftest.read_text(encoding="utf-8")
+
+
+def test_bench_rewrites_crate_file_paths():
+    sample = (
+        "# see ballista_genomics/src/runner.rs and ballista_genomics/OPIS.md\n"
+        'BALLISTA_DIR = REPO / "ballista_genomics"\n'
+        'LOG = "ballista_genomics::cluster"\n'
+    )
+    out = split.rewrite_text("genomics-engines-bench", sample, python=False)
+    assert "engines/ballista-genomics/src/runner.rs" in out
+    assert "engines/ballista-genomics/TECHNICAL.md" in out
+    assert 'REPO / "ballista_genomics"' in out and '"ballista_genomics::cluster"' in out
 
 
 def test_rewrites_on_real_ballista_test():
@@ -174,6 +191,10 @@ def test_technical_doc_rewrites_resolve_per_repo():
     for out in (ballista, bench):
         assert "OPIS" not in out
     assert (REPO / "tools" / "split" / "overlay" / "ballista-genomics" / "TECHNICAL.md").is_file()
+    # Plany z output/ pisza tylko testy dist_ops (repo Ballisty) — w repo pomiarowym ten plik
+    # bylby zawsze pomijany, wiec trafia tylko do ballista-genomics.
+    evidence = "tests/test_ballista_distribution_evidence.py"
+    assert {r for r in split.REPOS if split.map_path(r, evidence)} == {"ballista-genomics"}
 
 
 def test_technical_doc_declares_each_checked_setting_once():

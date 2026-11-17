@@ -9,7 +9,8 @@ found for overlap (see `test_overlap_crosses_serialization_boundary` below).
 Ballista implements `EXPLAIN ANALYZE` so that it returns sections
 `=========SuccessfulStage[stage_id=N, partitions=M]=========` with the operator
 tree and per-stage metrics. The `dist_ops` binary dumps this to
-`output/dist_<op>_explain.txt`, and this file is parsed here.
+`output/dist_<op>_explain.txt`, and this file is parsed here (a missing file is
+generated first by running `dist_ops <op>` in standalone mode).
 
 This module deliberately does not import polars_bio, so it runs in a few seconds
 (importing polars_bio takes ~4.5 min) and gives a fast feedback loop when working
@@ -31,6 +32,7 @@ BALLISTA_DIR = Path(__file__).resolve().parent.parent / "ballista_genomics"
 OUTPUT_DIR = BALLISTA_DIR / "output"
 OPIS = BALLISTA_DIR / "OPIS.md"
 CLIENT_BINARY = BALLISTA_DIR / "target" / "debug" / "bench_client"
+DIST_BINARY = BALLISTA_DIR / "target" / "debug" / "dist_ops"
 
 STAGE_RE = re.compile(r"SuccessfulStage\[stage_id=(\d+), partitions=(\d+)\]")
 #: Keyed shuffle reader in Ballista 55: `ShuffleReaderExec: upstream_stage: N,
@@ -38,15 +40,15 @@ STAGE_RE = re.compile(r"SuccessfulStage\[stage_id=(\d+), partitions=(\d+)\]")
 HASH_READER_RE = re.compile(r"ShuffleReaderExec: upstream_stage: \d+, partitioning: Hash\(\[chrom")
 
 
-def _run_client(args: list[str], timeout: int) -> subprocess.CompletedProcess:
-    """Runs `bench_client` (standalone mode); a missing binary is an error, not a skip."""
-    if not CLIENT_BINARY.exists():
+def _run_binary(binary: Path, args: list[str], timeout: int) -> subprocess.CompletedProcess:
+    """Runs a debug binary in standalone mode; a missing binary is an error, not a skip."""
+    if not binary.exists():
         pytest.fail(
-            f"missing binary {CLIENT_BINARY.name} - build it: "
+            f"missing binary {binary.name} - build it: "
             "cd ballista_genomics && CARGO_BUILD_JOBS=1 cargo build --bins"
         )
     return subprocess.run(
-        [str(CLIENT_BINARY), *args],
+        [str(binary), *args],
         cwd=BALLISTA_DIR,
         capture_output=True,
         text=True,
@@ -54,14 +56,21 @@ def _run_client(args: list[str], timeout: int) -> subprocess.CompletedProcess:
     )
 
 
+def _run_client(args: list[str], timeout: int) -> subprocess.CompletedProcess:
+    """Runs `bench_client` (standalone mode)."""
+    return _run_binary(CLIENT_BINARY, args, timeout)
+
+
 def _explain(op: str) -> tuple[str, list[tuple[int, int]]]:
-    """Returns (raw plan text, [(stage_id, number_of_partitions), ...])."""
+    """Returns (raw plan text, [(stage_id, number_of_partitions), ...]). A missing plan file is
+    generated with `dist_ops <op>` (standalone mode, as test_ballista_distributed_ops.py and
+    test_ballista_overlap.py run it), so the result does not depend on the order of the test
+    files."""
     path = OUTPUT_DIR / f"dist_{op}_explain.txt"
     if not path.exists():
-        pytest.skip(
-            f"no {path} - run first: "
-            f"cd ballista_genomics && ./target/debug/dist_ops {op}"
-        )
+        r = _run_binary(DIST_BINARY, [op], timeout=180)
+        assert r.returncode == 0, f"dist_ops {op} failed:\n{r.stdout}\n{r.stderr[-3000:]}"
+        assert path.exists(), f"dist_ops {op} did not write {path}"
     txt = path.read_text()
     stages = [(int(a), int(b)) for a, b in STAGE_RE.findall(txt)]
     return txt, stages
@@ -278,10 +287,10 @@ def test_overlap_crosses_serialization_boundary():
     """
     txt, stages = _explain("overlap")
     assert len(stages) >= 1, txt
-    first_stage = txt[txt.index("SuccessfulStage"):]
-    assert "ShuffleWriterExec" in first_stage, txt
-    assert "IntervalJoinExec: mode=CollectLeft" in first_stage, txt
-    assert "alg=Coitrees" in first_stage, f"COITrees are not used on the executor side:\n{txt}"
+    stages_text = txt[txt.index("SuccessfulStage"):]
+    assert "ShuffleWriterExec" in stages_text, txt
+    assert "IntervalJoinExec: mode=CollectLeft" in stages_text, txt
+    assert "alg=Coitrees" in stages_text, f"COITrees are not used on the executor side:\n{txt}"
 
 
 def test_overlap_has_no_hash_partitioned_parallelism():
@@ -394,8 +403,8 @@ def test_aqe_setting_is_explicit():
     assert declared in ("true", "false"), declared
     assert _version_info()["adaptive_query_planner"] == (declared == "true")
     _, stages = _explain("merge")
-    first_stage = min(stage_id for stage_id, _ in stages)
-    assert first_stage == (0 if declared == "true" else 1), stages
+    first_stage_id = min(stage_id for stage_id, _ in stages)
+    assert first_stage_id == (0 if declared == "true" else 1), stages
 
 
 def test_scheduling_settings_are_explicit():

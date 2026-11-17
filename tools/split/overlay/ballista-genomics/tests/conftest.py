@@ -50,26 +50,3 @@ def pytest_configure(config):
         "markers",
         "real_data: needs the full databio-8p dataset (excluded in CI with -m 'not real_data')",
     )
-    config.addinivalue_line(
-        "markers",
-        "parallelism(p): needs p CPUs outside the system core (tests/support/cpus.py); "
-        "skipped when the machine has fewer or its CPU topology is unreadable",
-    )
-
-
-def pytest_runtest_setup(item):
-    """Marker parallelism(p): a test that runs an engine with P CPUs is skipped when this machine
-    does not have P CPUs outside the system core (CI: 4 vCPUs -> P <= 2) or when the topology
-    cannot be read."""
-    marker = item.get_closest_marker("parallelism")
-    if marker is None:
-        return
-    from tests.support import cpus
-
-    p = marker.args[0]
-    try:
-        available = cpus.max_parallelism(cpus.read_layout())
-    except cpus.TopologyError as e:
-        pytest.skip(f"needs P = {p} CPUs; CPU topology unreadable: {e}")
-    if available < p:
-        pytest.skip(f"needs P = {p} CPUs; this machine has {available} CPUs outside the system core")

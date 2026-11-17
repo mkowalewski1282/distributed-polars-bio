@@ -34,10 +34,12 @@ EXCLUDES_ALL = (
 )
 
 # Ballista wspolna z repo pomiarowym tylko przez nakladke — testy tylko dla Ballisty nie
-# trafiaja do genomics-engines-bench.
+# trafiaja do genomics-engines-bench. Testy dowodow rozproszenia czytaja plany z output/, ktore
+# pisza testy dist_ops (tylko w ballista-genomics) — w repo pomiarowym bylyby zawsze pomijane.
 _BALLISTA_ONLY_TESTS = (
     "tests/test_ballista_overlap.py",
     "tests/test_ballista_distributed_ops.py",
+    "tests/test_ballista_distribution_evidence.py",
     "tests/test_*_correctness.py",
     "tests/test_oracle_sanity.py",
 )
@@ -77,7 +79,6 @@ MAPPING: dict[str, list[tuple[str, str]]] = {
         + [
             ("bench/ops.py", "tests/support/ops.py"),
             ("bench/checksum.py", "tests/support/checksum.py"),
-            ("bench/cpus.py", "tests/support/cpus.py"),
         ]
     ),
     "sail-genomics": (
@@ -99,8 +100,8 @@ IMPORT_REWRITES: dict[str, list[tuple[str, str]]] = {
             "\\1\n#: Interval columns of the input files (databio-8p layout).\n"
             'COLUMNS = ("contig", "pos_start", "pos_end")\n',
         ),
-        (r"\bfrom bench\.(ops|checksum|cpus)\b", r"from tests.support.\1"),
-        (r"\bfrom bench import (ops|checksum|cpus)\b", r"from tests.support import \1"),
+        (r"\bfrom bench\.(ops|checksum)\b", r"from tests.support.\1"),
+        (r"\bfrom bench import (ops|checksum)\b", r"from tests.support import \1"),
         (
             r'Path\(__file__\)\.resolve\(\)\.parent\.parent / "ballista_genomics"',
             r"Path(__file__).resolve().parent.parent",
@@ -136,7 +137,7 @@ PATH_REWRITES: dict[str, list[tuple[str, str]]] = {
         (r"\bthe `ballista_genomics/` directory", "the repository root"),
         (r"\bin ballista_genomics/(?=\s)", "in the repository root"),
         (r"\bballista_genomics/(?=[\w.])", ""),
-        (r"\bbench/(ops|checksum|cpus)\.py\b", r"tests/support/\1.py"),
+        (r"\bbench/(ops|checksum)\.py\b", r"tests/support/\1.py"),
         (r"\bOPIS\.md\b", "TECHNICAL.md"),
         (r"\bOPIS\b", "TECHNICAL_DOC"),
     ],
@@ -146,6 +147,9 @@ PATH_REWRITES: dict[str, list[tuple[str, str]]] = {
         (r'"OPIS\.md"', '"TECHNICAL.md"'),
         (r"\b(?:ballista_genomics/)?OPIS\.md\b", "engines/ballista-genomics/TECHNICAL.md"),
         (r"\bOPIS\b", "TECHNICAL_DOC"),
+        # Sciezki plikow crate'a (np. ballista_genomics/src/runner.rs) — nie `/ "ballista_genomics"`
+        # ani `ballista_genomics::` (nazwa crate'a w logach i kodzie Rusta).
+        (r"\bballista_genomics/(?=[\w.])", "engines/ballista-genomics/"),
     ],
 }
 
