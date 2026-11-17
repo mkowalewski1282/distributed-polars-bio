@@ -6,7 +6,15 @@ Kod pracy magisterskiej „Porównanie udostępnianych na otwartych licencjach r
 zapytań pod kątem analiz danych genomicznych” (promotor: dr inż. Marek Wiewiórka). Operacje na
 przedziałach genomowych z [polars-bio](https://github.com/biodatageeks/polars-bio) (`overlap`,
 `nearest`, `coverage`, `merge`, `subtract`) wykonywane w Apache Ballista (`ballista_genomics/`)
-i w Sailu (`sail_bio.py`) oraz narzędzie pomiarowe (`bench/`).
+i w Sailu (`sail_genomics/`) oraz narzędzie pomiarowe (`bench/`).
+
+Kod integracji i procedura pomiarowa rozwijają się w trzech osobnych repozytoriach:
+
+- [ballista-genomics](https://github.com/mkowalewski1282/ballista-genomics): operacje polars-bio
+  w Apache Ballista,
+- [sail-genomics](https://github.com/mkowalewski1282/sail-genomics): operacje polars-bio w Sailu,
+- [genomics-engines-bench](https://github.com/mkowalewski1282/genomics-engines-bench): procedura
+  pomiarowa (polars-bio, Ballista, Sail; P = 1, 2, 4, 8), z dwoma powyższymi jako submodułami.
 
 ## Środowisko
 
