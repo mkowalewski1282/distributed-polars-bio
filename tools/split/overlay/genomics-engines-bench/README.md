@@ -178,12 +178,15 @@ A series is a list of blocks, one per (engine, P). Each block follows the same p
   A run with a different row count or checksum is invalid.
 - **Warm-up.** Warm-up rounds run before the measured repeats. They are recorded but marked as
   warm-up and excluded from the medians.
-- **Control run.** At the start and at the end of every block the same control task runs: overlap
-  7-0 on polars-bio with 2 threads, pinned to both threads of the first non-system core (or to the
-  first two CPUs outside the system core on a machine without SMT), independent of P. If the
-  medians of the valid control runs differ by more than the tolerance, the block is invalid
-  (default tolerance 10%) and is repeated once; if the second attempt drifts too, it stays
-  invalid. Fewer than half valid control runs at either end also invalidates the block.
+- **Control run.** Before the block's engine starts and after it stops, the same control task runs
+  (10 times by default): overlap 7-0 on polars-bio with 2 threads, pinned to both threads of the
+  first non-system core (or to the first two CPUs outside the system core on a machine without
+  SMT), independent of P. It measures the machine, not the engine: an engine keeps the memory of
+  earlier queries (Ballista several GiB), and control runs next to it were consistently slower at
+  the end of a block. If the medians of the valid control runs differ by more than the tolerance,
+  the block is invalid (default tolerance 10%) and is repeated once; if the second attempt drifts
+  too, it stays invalid. Fewer than half valid control runs at either end also invalidates the
+  block.
 - **Settle time.** Every run is preceded by a pause (`settle_s`: 3 s in the shipped configurations,
   0 when a configuration leaves it out). It lets WSL2 return memory to the host. With it, the
   control-run noise was 1.8% (the control task measured 20 times in a row, 2026-10-10, validation

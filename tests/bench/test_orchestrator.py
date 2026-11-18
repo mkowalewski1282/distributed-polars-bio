@@ -21,7 +21,7 @@ from bench import orchestrator as orch
 from bench.config import parse
 from bench.cpus import CpuLayout, control_cpus, cpus_for, read_layout
 from bench.data.datasets import DATASETS
-from bench.engines import CONTROL_VARIANT, REFERENCE_VARIANT, Command
+from bench.engines import CONTROL_THREADS, CONTROL_VARIANT, REFERENCE_VARIANT, Command
 from bench.procutil import EngineError
 from tests.bench.fake_sysfs import make
 
@@ -304,6 +304,33 @@ def _control_times(tmp_path, times: list[float]):
         return ["--t-file", str(path)] if variant == CONTROL_VARIANT else []
 
     return make_factory(args_for)
+
+
+def test_control_runs_happen_while_the_block_engine_is_stopped(tmp_path):
+    """The control runs measure the machine, not the state of the engine: the block's engine
+    starts after the start control runs and stops before the end control runs (an engine keeps
+    the memory of earlier queries, which slowed the end control runs down)."""
+
+    def customize(engine):
+        original = engine.command
+
+        def command(scenario):
+            engine.log.append(("run", engine.variant, engine.n))
+            return original(scenario)
+
+        engine.command = command
+
+    factory = make_factory(customize=customize)
+    run(tmp_path, cfg=config(variants=["ballista"]), factory=factory)
+    labels = {
+        ("run", CONTROL_VARIANT, CONTROL_THREADS): "control",
+        ("start", "ballista", 1): "start",
+        ("run", "ballista", 1): "run",
+        ("stop", "ballista", 1): "stop",
+    }
+    events = [labels[e] for e in factory.log if e in labels]
+    collapsed = [e for i, e in enumerate(events) if i == 0 or e != events[i - 1]]
+    assert collapsed == ["control", "start", "run", "stop", "control"]
 
 
 def test_control_drift_repeats_block_once(tmp_path):

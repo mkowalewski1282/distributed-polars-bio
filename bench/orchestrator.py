@@ -435,9 +435,11 @@ class _Series:
         return expected
 
     def run_block(self, block: Block, attempt: int, expected: dict[str, Expected], rows: list[dict]) -> bool:
-        """A block: control runs → warm-up → rounds → control runs. Rows go to `rows` as they
-        are produced (the caller saves them also after an interruption). True = drift or
-        invalid control runs."""
+        """A block: control runs → engine start → warm-up → rounds → engine stop → control runs.
+        The control runs measure the machine, so they run while the block's engine is stopped:
+        an engine keeps the memory of earlier queries (Ballista several GiB), which slowed the
+        end control runs down. Rows go to `rows` as they are produced (the caller saves them also
+        after an interruption). True = drift or invalid control runs."""
         engine = self.factory(block.variant, block.parallelism)
         control = self.factory(CONTROL_VARIANT, CONTROL_THREADS)
         self.record_env("control", control)
@@ -475,20 +477,20 @@ class _Series:
                     times.append(row["t_total_s"])
             return times
 
+        start = controls("start")
         engine.start()
         try:
-            start = controls("start")
             for w in range(1, self.cfg.warmup + 1):
                 for scenario in round_order(self.cfg, block, f"warmup-{w}"):
                     run(scenario, 0, warmup=True)
             for r in range(1, self.cfg.repeats + 1):
                 for scenario in round_order(self.cfg, block, str(r)):
                     run(scenario, r)
-            end = controls("end")
             if self.cfg.explain:
                 self.explain_pass(engine, block, skipped)
         finally:
             engine.stop()
+        end = controls("end")
         reason = control_drift(
             start, end, repeats=self.cfg.control_repeats, tolerance=self.cfg.control_tolerance
         )
