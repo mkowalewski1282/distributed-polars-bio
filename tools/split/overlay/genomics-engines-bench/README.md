@@ -315,7 +315,29 @@ the system core (P up to 2 there).
 
 ## Results
 
-Results from the validation machine will be added here.
+The first scaling series on the validation machine (2026-11-18):
+[summary.md](bench/results/scaling/20261118-213559/summary.md), the raw runs in `runs.parquet` and
+one plot per scenario in [plots/](bench/results/scaling/20261118-213559/plots/).
+
+The machine is a laptop: AMD Ryzen 5 4600H (6 cores, 12 threads), WSL2 with 5 GB of RAM and 4 GB
+of swap; P = 8 uses SMT siblings. These are validation results of the procedure on a small
+machine, not final results. The data are the small pairs of databio-8p (at most 2.35 M intervals
+per side), so most queries take under a second and the times mostly show the fixed cost of each
+engine.
+
+938 of 970 runs are valid, and every valid run has the reference row count and checksum. All 32
+invalid runs touched swap or hit the memory guard; 28 of them are Ballista runs (Ballista keeps
+several GiB after its queries, and at P = 8 `nearest 7-0` has no valid run). The control-run drift
+stayed within 4.2% in all 12 blocks.
+
+![subtract 7-0: median time against P](bench/results/scaling/20261118-213559/plots/subtract_7-0.png)
+
+- On the short queries polars-bio is the fastest: the best Ballista and Sail times are 1.2 to 5.5
+  times slower.
+- On subtract 7-0, the heaviest scenario, the distributed engines catch up: Sail takes 4.8 s at
+  P = 4, polars-bio 5.5 s at best (P = 8), Ballista 6.3 s at P = 4.
+- Ballista is the fastest at P = 2 in 6 of the 10 scenarios and slower at larger P. P = 8, which
+  uses SMT siblings, gives little over P = 4 for Sail and, apart from subtract 7-0, for polars-bio.
 
 ## License
 
